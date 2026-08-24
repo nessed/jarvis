@@ -4,3 +4,5 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 coverage.xml
+tools/cloudflared.exe
+tools/*.log

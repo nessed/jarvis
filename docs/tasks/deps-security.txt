@@ -1,0 +1,1 @@
+# No additional dependencies required; FastAPI and Starlette are provided by the skeleton.

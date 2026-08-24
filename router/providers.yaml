@@ -1,0 +1,73 @@
+{
+  "providers": [
+    {
+      "name": "groq",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "key_env": "GROQ_API_KEY",
+      "priority": 1,
+      "default_model": "${GROQ_DEFAULT_MODEL}",
+      "task_profiles": ["latency", "batch"]
+    },
+    {
+      "name": "cerebras",
+      "endpoint": "https://api.cerebras.ai/v1",
+      "key_env": "CEREBRAS_API_KEY",
+      "priority": 2,
+      "default_model": "${CEREBRAS_DEFAULT_MODEL}",
+      "task_profiles": ["batch"]
+    },
+    {
+      "name": "nvidia_nim",
+      "endpoint": "https://integrate.api.nvidia.com/v1",
+      "key_env": "NVIDIA_API_KEY",
+      "priority": 3,
+      "default_model": "${NVIDIA_DEFAULT_MODEL}",
+      "task_profiles": ["latency", "batch", "vision", "reasoning"]
+    },
+    {
+      "name": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "key_env": "GEMINI_API_KEY",
+      "priority": 4,
+      "default_model": "${GEMINI_DEFAULT_MODEL}",
+      "task_profiles": ["long_context", "vision"]
+    },
+    {
+      "name": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "key_env": "OPENROUTER_API_KEY",
+      "priority": 5,
+      "default_model": "openrouter/free",
+      "task_profiles": ["latency", "batch", "long_context", "vision", "reasoning"]
+    },
+    {
+      "name": "deepseek",
+      "endpoint": "https://api.deepseek.com/v1",
+      "key_env": "DEEPSEEK_API_KEY",
+      "priority": 6,
+      "default_model": "deepseek-v4-flash",
+      "task_profiles": ["batch", "long_context", "reasoning"],
+      "paid_overflow": true
+    },
+    {
+      "name": "claude_max",
+      "endpoint": null,
+      "key_env": null,
+      "priority": 7,
+      "default_model": null,
+      "task_profiles": ["reasoning"],
+      "not_a_router_target": true,
+      "execution_path": "claude -p"
+    },
+    {
+      "name": "claude_api",
+      "endpoint": "${CLAUDE_API_BASE_URL}",
+      "key_env": "ANTHROPIC_API_KEY",
+      "priority": 8,
+      "default_model": "${CLAUDE_API_DEFAULT_MODEL}",
+      "task_profiles": ["reasoning"],
+      "emergency_only": true,
+      "capped": true
+    }
+  ]
+}
