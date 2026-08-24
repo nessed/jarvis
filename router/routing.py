@@ -49,6 +49,8 @@ class Provider:
     emergency_only: bool = False
     capped: bool = False
     paid_overflow: bool = False
+    model_env: str | None = None
+    discover_chat_model: bool = False
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,10 @@ class ProviderHealth:
 
 class ChatClient(Protocol):
     async def create_chat_completion(self, *, model: str, messages: Sequence[Mapping[str, Any]], **kwargs: Any) -> Any: ...
+
+
+class ModelDiscoveringChatClient(ChatClient, Protocol):
+    async def list_chat_models(self) -> Sequence[str]: ...
 
 
 ClientFactory = Callable[[str, str], ChatClient]
@@ -90,6 +96,19 @@ class OpenAIChatClient:
         )
         self.last_response_headers = dict(raw_response.headers)
         return raw_response.parse()
+
+    async def list_chat_models(self) -> Sequence[str]:
+        """Return chat-capable models granted to this API key.
+
+        Mistral's model roster and trial entitlements change independently of
+        this repository. The API's capability field is therefore the authority;
+        we never guess a model ID from a hard-coded free-tier roster.
+        """
+        raw_response = await self._client.with_raw_response.models.list()
+        self.last_response_headers = dict(raw_response.headers)
+        payload = raw_response.parse()
+        entries = getattr(payload, "data", payload)
+        return [model_id for item in entries if (model_id := _chat_model_id(item))]
 
 
 def openai_client_factory(base_url: str, api_key: str) -> OpenAIChatClient:
@@ -125,6 +144,8 @@ def load_providers(path: Path | None = None, environ: Mapping[str, str] | None =
             emergency_only=bool(item.get("emergency_only", False)),
             capped=bool(item.get("capped", False)),
             paid_overflow=bool(item.get("paid_overflow", False)),
+            model_env=item.get("model_env"),
+            discover_chat_model=bool(item.get("discover_chat_model", False)),
         )
         for item in raw
     ]
@@ -189,12 +210,12 @@ class ProviderRouter:
 
         failures: list[str] = []
         for provider in candidates:
-            provider_model = model or self._model_for(provider)
-            if not provider_model:
-                failures.append(f"{provider.name}: no model configured")
-                continue
             try:
                 client = self._client_factory(self._endpoint_for(provider), self._key_for(provider))
+                provider_model = model or await self._model_for(provider, client)
+                if not provider_model:
+                    failures.append(f"{provider.name}: no model configured")
+                    continue
                 response = await client.create_chat_completion(
                     model=provider_model, messages=messages, **request_options
                 )
@@ -207,6 +228,13 @@ class ProviderRouter:
                     self._record_cooldown(provider, status, headers)
                     failures.append(f"{provider.name}: HTTP {status}")
                     continue
+                # A Mistral Labs/workspace denial is not a malformed request.
+                # Record it as unavailable so future jobs do not repeatedly
+                # probe a key that cannot currently run chat completions, but
+                # surface the denial to the caller rather than silently moving
+                # the request to another (possibly paid) provider.
+                if provider.name == "mistral" and status in {401, 403}:
+                    self._record_cooldown(provider, status, headers)
                 raise
         raise NoEligibleProvider("all eligible providers failed: " + "; ".join(failures))
 
@@ -236,9 +264,17 @@ class ProviderRouter:
         assert provider.endpoint
         return provider.endpoint
 
-    def _model_for(self, provider: Provider) -> str | None:
+    async def _model_for(self, provider: Provider, client: ChatClient) -> str | None:
         if provider.name == "deepseek" and self._environ.get("DEEPSEEK_VIA_OPENROUTER", "").lower() == "true":
             return self._environ.get("OPENROUTER_DEEPSEEK_MODEL", provider.default_model)
+        if provider.model_env and (configured_model := self._environ.get(provider.model_env)):
+            return configured_model
+        if provider.discover_chat_model:
+            discover = getattr(client, "list_chat_models", None)
+            if discover is None:
+                return None
+            available = await discover()
+            return available[0] if available else None
         return provider.default_model
 
     def _in_cooldown(self, provider: Provider) -> bool:
@@ -314,6 +350,23 @@ def _duration_seconds(value: str) -> float | None:
     amount = float(match.group(1))
     unit = match.group(2).lower()
     return amount * {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}[unit]
+
+
+def _chat_model_id(item: Any) -> str | None:
+    """Extract an unarchived chat-capable model ID from a Mistral model card."""
+    if hasattr(item, "model_dump"):
+        item = item.model_dump(mode="json")
+    elif not isinstance(item, Mapping):
+        item = vars(item)
+    if not isinstance(item, Mapping):
+        return None
+    capabilities = item.get("capabilities")
+    if not isinstance(capabilities, Mapping) or capabilities.get("completion_chat") is not True:
+        return None
+    if item.get("archived") is True:
+        return None
+    model_id = item.get("id")
+    return model_id if isinstance(model_id, str) and model_id else None
 
 
 async def route(

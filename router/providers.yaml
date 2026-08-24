@@ -41,10 +41,20 @@
       "task_profiles": ["latency", "batch", "long_context", "vision", "reasoning"]
     },
     {
+      "name": "mistral",
+      "endpoint": "https://api.mistral.ai/v1",
+      "key_env": "MISTRAL_API_KEY",
+      "model_env": "MISTRAL_DEFAULT_MODEL",
+      "discover_chat_model": true,
+      "priority": 6,
+      "default_model": null,
+      "task_profiles": ["latency", "batch", "long_context", "vision", "reasoning"]
+    },
+    {
       "name": "deepseek",
       "endpoint": "https://api.deepseek.com/v1",
       "key_env": "DEEPSEEK_API_KEY",
-      "priority": 6,
+      "priority": 7,
       "default_model": "deepseek-v4-flash",
       "task_profiles": ["batch", "long_context", "reasoning"],
       "paid_overflow": true
@@ -53,7 +63,7 @@
       "name": "claude_max",
       "endpoint": null,
       "key_env": null,
-      "priority": 7,
+      "priority": 8,
       "default_model": null,
       "task_profiles": ["reasoning"],
       "not_a_router_target": true,
@@ -63,7 +73,7 @@
       "name": "claude_api",
       "endpoint": "${CLAUDE_API_BASE_URL}",
       "key_env": "ANTHROPIC_API_KEY",
-      "priority": 8,
+      "priority": 9,
       "default_model": "${CLAUDE_API_DEFAULT_MODEL}",
       "task_profiles": ["reasoning"],
       "emergency_only": true,

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from router import NoEligibleProvider, Provider, ProviderRequestError, ProviderRouter, load_providers
-from router.routing import _retry_delay_seconds
+from router.routing import _chat_model_id, _retry_delay_seconds
 
 
 class FakeClient:
@@ -19,6 +19,19 @@ class FakeClient:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class DiscoveringFakeClient(FakeClient):
+    def __init__(self, provider, outcomes, calls, models):
+        super().__init__(provider, outcomes, calls)
+        self.models = models
+        self.model_discovery_calls = 0
+
+    async def list_chat_models(self):
+        self.model_discovery_calls += 1
+        if isinstance(self.models, Exception):
+            raise self.models
+        return self.models
 
 
 def providers(names):
@@ -50,7 +63,7 @@ def router_for(names, outcomes, *, now=None, environ=None):
     )
 
 
-def test_manifest_has_eight_ordered_rungs_and_safe_model_configuration():
+def test_manifest_has_mistral_spare_rung_and_safe_model_configuration():
     manifest = load_providers(environ={})
     assert [provider.name for provider in manifest] == [
         "groq",
@@ -58,15 +71,114 @@ def test_manifest_has_eight_ordered_rungs_and_safe_model_configuration():
         "nvidia_nim",
         "gemini",
         "openrouter",
+        "mistral",
         "deepseek",
         "claude_max",
         "claude_api",
     ]
-    assert manifest[6].not_a_router_target
-    assert manifest[7].emergency_only and manifest[7].capped
+    assert manifest[7].not_a_router_target
+    assert manifest[8].emergency_only and manifest[8].capped
     assert manifest[4].default_model == "openrouter/free"
+    assert manifest[5].endpoint == "https://api.mistral.ai/v1"
+    assert manifest[5].model_env == "MISTRAL_DEFAULT_MODEL"
+    assert manifest[5].discover_chat_model
+    assert manifest[5].default_model is None
     # Provider-specific free model IDs are supplied through runtime env vars.
     assert manifest[0].default_model is None
+
+
+def test_mistral_uses_configured_model_before_dynamic_discovery():
+    mistral = Provider(
+        "mistral",
+        "https://api.mistral.ai/v1",
+        "MISTRAL_API_KEY",
+        1,
+        None,
+        ("batch",),
+        model_env="MISTRAL_DEFAULT_MODEL",
+        discover_chat_model=True,
+    )
+    calls = []
+    client = DiscoveringFakeClient("mistral", {}, calls, ["discovered-chat-model"])
+    router = ProviderRouter(
+        [mistral],
+        environ={"MISTRAL_API_KEY": "test-key", "MISTRAL_DEFAULT_MODEL": "workspace-approved-model"},
+        client_factory=lambda *_: client,
+    )
+
+    result = asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert result.model == "workspace-approved-model"
+    assert client.model_discovery_calls == 0
+    assert calls == [("mistral", "workspace-approved-model")]
+
+
+def test_mistral_discovers_only_current_chat_capable_models():
+    mistral = Provider(
+        "mistral",
+        "https://api.mistral.ai/v1",
+        "MISTRAL_API_KEY",
+        1,
+        None,
+        ("batch",),
+        discover_chat_model=True,
+    )
+    calls = []
+    client = DiscoveringFakeClient("mistral", {}, calls, ["current-chat-model"])
+    router = ProviderRouter(
+        [mistral], environ={"MISTRAL_API_KEY": "test-key"}, client_factory=lambda *_: client
+    )
+
+    result = asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert result.model == "current-chat-model"
+    assert client.model_discovery_calls == 1
+    assert calls == [("mistral", "current-chat-model")]
+
+
+def test_mistral_model_selector_rejects_non_chat_and_archived_cards():
+    assert _chat_model_id({"id": "live-chat", "capabilities": {"completion_chat": True}}) == "live-chat"
+    assert _chat_model_id({"id": "embeddings", "capabilities": {"completion_chat": False}}) is None
+    assert _chat_model_id({"id": "retired", "capabilities": {"completion_chat": True}, "archived": True}) is None
+
+
+def test_mistral_workspace_denial_cools_down_without_paid_fallback():
+    mistral = Provider(
+        "mistral",
+        "https://api.mistral.ai/v1",
+        "MISTRAL_API_KEY",
+        1,
+        None,
+        ("batch",),
+        discover_chat_model=True,
+    )
+    spare = Provider("spare", "https://spare.example/v1", "SPARE_KEY", 2, "spare-model", ("batch",))
+    calls = []
+    mistral_client = DiscoveringFakeClient(
+        "mistral", {}, calls, ProviderRequestError("workspace access denied", 403, {"Retry-After": "17"})
+    )
+    spare_client = FakeClient("spare", {}, calls)
+
+    def factory(endpoint, _key):
+        return mistral_client if endpoint == mistral.endpoint else spare_client
+
+    router = ProviderRouter(
+        [mistral, spare],
+        environ={"MISTRAL_API_KEY": "test-key", "SPARE_KEY": "test-key"},
+        client_factory=factory,
+    )
+
+    with pytest.raises(ProviderRequestError, match="workspace access denied"):
+        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert router.health["mistral"].last_status == 403
+    assert router.health["mistral"].cooldown_until > 0
+    assert router.health["mistral"].rate_limit_headers == {"retry-after": "17"}
+
+    result = asyncio.run(router.route("batch", [{"role": "user", "content": "retry"}]))
+
+    assert result.provider == "spare"
+    assert mistral_client.model_discovery_calls == 1
 
 
 def test_429_cascade_lands_on_every_successive_rung():
