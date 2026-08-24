@@ -75,6 +75,50 @@ def test_poll_once_claims_checkpoints_and_completes_one_job():
     ]
 
 
+def test_poll_once_dispatches_registered_handler_for_known_job_kind():
+    repository = FakeJobs(_job(checkpoint={"source": "meta"}))
+    handled: list[str] = []
+
+    result = poll_once(
+        repository=repository,
+        handlers={"whatsapp_webhook": lambda job: handled.append(job.id)},
+    )
+
+    assert result is not None and result.status == "done"
+    assert result.checkpoint == {"source": "meta", "phase": "executor_started"}
+    assert handled == ["job-1"]
+
+
+def test_poll_once_unknown_kind_fails_without_leaking_kind_or_payload():
+    job = _job()
+    job = replace(job, kind="unsupported-secret-kind", payload={"token": "do-not-store"})
+    repository = FakeJobs(job)
+
+    result = poll_once(repository=repository, handlers={})
+
+    assert result is not None and result.status == "failed"
+    assert result.checkpoint["error"] == {
+        "message": "executor handler failed (UnknownJobKindError)"
+    }
+    assert "unsupported-secret-kind" not in result.checkpoint["error"]["message"]
+    assert "do-not-store" not in result.checkpoint["error"]["message"]
+    assert repository.calls[-1] == ("fail", "executor handler failed (UnknownJobKindError)")
+
+
+def test_poll_once_explicit_handler_overrides_registered_kind_handler():
+    repository = FakeJobs(_job())
+    handled: list[str] = []
+
+    result = poll_once(
+        repository=repository,
+        handler=lambda job: handled.append(f"override:{job.id}"),
+        handlers={"whatsapp_webhook": lambda job: handled.append(f"registered:{job.id}")},
+    )
+
+    assert result is not None and result.status == "done"
+    assert handled == ["override:job-1"]
+
+
 def test_poll_once_returns_idle_without_any_mutation():
     repository = FakeJobs(None)
 

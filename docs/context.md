@@ -1,6 +1,6 @@
 # JARVIS project context
 
-Last updated: 24 August 2026 — Phase 0 inbound acceptance passed; Meta outbound-token follow-up remains.
+Last updated: 25 August 2026 — Phase 0 inbound acceptance passed; Phase 1 Ollama installation is blocked before model download; Meta outbound-token follow-up remains.
 
 ## Current state
 
@@ -8,6 +8,16 @@ The repository rules in `agents.md` make parallel, disjoint-file agent lanes
 the default. Every completed subtask updates this handoff. `docs/blueprint.md`
 is the architecture spec, but all fast-moving provider claims require current
 verification before use.
+
+Phase 1 is underway, local-first. The SQLite fact store, sqlite-vec semantic
+index, loopback-only Ollama adapter, injected `remember()` / `recall()` service,
+and opt-in resumable ingestion foundation are integrated (`32 focused tests`).
+`memory.db` and corpus inputs are ignored by Git. No personal notes, chats, or
+external corpus have been read or ingested. Ollama installation is in progress;
+memory remains dormant until a locally configured embedding model is available.
+
+Ollama’s non-secret local settings now specify `nomic-embed-text`, the loopback
+endpoint, and `memory.db`, but no local Ollama runtime or model is present yet.
 
 Source checkpoints:
 
@@ -68,6 +78,53 @@ OpenRouter, Mistral, and Meta App Secret are now configured locally. NVIDIA
 NIM is explicitly deferred and must not block Phase 0. Meta’s durable access
 token is also now configured locally.
 
+## Phase 1 Ollama readiness
+
+- **Activated 25 August 2026:** Ollama 0.32.15 is running on the loopback API;
+  `nomic-embed-text` was pulled locally. `ollama list` confirmed its presence.
+  A non-personal `POST /api/embed` dimension probe returned HTTP 200 with one
+  768-dimensional vector, and `open_local_memory()` opened and closed cleanly.
+  Focused memory tests: **31 passed in 0.60s**. The external Ollama/model
+  blocker is resolved; no personal corpus has been ingested.
+
+- On 25 August 2026, checks found no `ollama` command, Windows service, local
+  process, loopback listener on port 11434, or reachable `/api/tags` endpoint.
+- Windows Package Manager attempts to install the official `Ollama.Ollama`
+  package (including silent mode) reported the official installer download but
+  did not leave an installed package. An explicit `winget download` attempt
+  likewise left no installer file. Treat the local installation/download path
+  as blocked, not as a successful partial installation.
+- Required recovery action: complete a trusted official Ollama Windows install
+  and pull exactly `nomic-embed-text`; then verify `ollama list` and a local
+  `POST /api/embed` response before opening the memory runtime. This needs a
+  working network/download path but no credentials, login, or personal data.
+- Focused memory tests passed independently in the project virtual environment:
+  **27 passed** on 25 August 2026. System Python lacks pytest; use
+  `.venv\\Scripts\\python.exe` for these checks.
+
+## Phase 1 offline foundations
+
+- The local-only resumable backfill runner is complete. It accepts only a
+  caller-selected, manifest-verified source, persists through an injected
+  sink, and advances its serializable checkpoint only after a successful write.
+  It supports resume and rejects mismatched, negative, or out-of-bounds
+  checkpoints. Focused ingestion tests: **11 passed**.
+- The executor now dispatches registered job kinds through an injected seam.
+  Unknown kinds fail deterministically with type-only safe diagnostics and no
+  payload/provider leakage. Focused executor tests: **9 passed**.
+- The local-memory runtime lane is complete: startup performs its fixed,
+  non-personal dimension probe before constructing stores, handles explicit
+  environment configuration, and closes resources on partial initialization
+  failure. Offline focused memory tests: **31 passed**.
+- These offline foundations do not make memory active. Ollama itself and the
+  `nomic-embed-text` model are still the external local-install blocker before
+  a real local embedding/API smoke test or corpus backfill can begin.
+- Offline integration validation passed on 25 August 2026:
+  `.venv\\Scripts\\python.exe -m pytest -q --ignore=tests/db/test_jobs_integration.py`
+  completed **82 passed in 3.46s**. The excluded file is credential/live-
+  Supabase dependent. An earlier broad run reached that test but failed before
+  connecting with `WinError 10013`; it made no external change.
+
 OpenRouter live smoke testing passed through `openrouter/free`. Its successful
 response had no retry/rate-limit headers, so runtime cooldown capture correctly
 remained empty. Mistral model discovery succeeded, but a minimal free Labs chat
@@ -101,10 +158,10 @@ deprecations and pytest-cache filesystem warning.
 - Existing system user **whatsapp-bot** is Admin and already has full access to
   the WA 1st app and test WABA. Do not create another system user or reassign
   assets.
-- The previous Meta callback targets a retired Quick Tunnel. A single fresh,
-  externally verified tunnel now exists; Meta must be updated to its `/webhook`
-  endpoint and saved once more. The existing local verify token remains the
-  correct value; `messages` remains subscribed.
+- The active callback is the current Quick Tunnel `/webhook` endpoint; Meta
+  save and the closed-lid inbound acceptance have passed. `messages` remains
+  subscribed. Quick Tunnel URLs still change on restart, so switch to a named
+  tunnel or Phase 4 Oracle deployment before relying on a stable callback.
 - Meta’s App Secret and durable system-user token are now present locally.
   The Meta configuration form still fails to load in browser automation. A
   browser-control extension emitted an internal ad-blocker-module error, but

@@ -1,8 +1,8 @@
 """Pull-based laptop executor for Phase 0 durable jobs.
 
-The poller deliberately performs no LLM or WhatsApp work yet. Its default
-handler proves the durable queued -> running -> done lifecycle; later phases
-can supply local job handlers without moving that work into the webhook.
+The poller deliberately performs no LLM or WhatsApp work itself. Callers
+inject a deterministic mapping of job kinds to local handlers, so later phases
+can add local work without moving it into the webhook.
 """
 
 from __future__ import annotations
@@ -21,19 +21,27 @@ from router import RoutedResult, route
 
 
 JobHandler = Callable[[Job], None]
+JobHandlers = Mapping[str, JobHandler]
 DEFAULT_POLL_INTERVAL_SECONDS = 5.0
 logger = logging.getLogger(__name__)
+
+
+class UnknownJobKindError(Exception):
+    """Raised when a claimed job has no explicitly registered handler."""
 
 
 def poll_once(
     *,
     repository: JobRepository | None = None,
     handler: JobHandler | None = None,
+    handlers: JobHandlers | None = None,
 ) -> Job | None:
     """Atomically claim and finish one ready job, if any.
 
-    A handler error is recorded as a failed job. The stored diagnostic uses
-    only the exception type so locally supplied payloads or provider details
+    ``handler`` remains an explicit per-call override for diagnostics and
+    compatibility. Otherwise ``handlers`` supplies the registered handler for
+    the claimed job's kind. Missing kinds fail deterministically. Every stored
+    diagnostic uses only an exception type, so payloads or provider details
     cannot leak into the durable queue.
     """
     job = claim_next(repository=repository)
@@ -46,7 +54,7 @@ def poll_once(
         repository=repository,
     )
     try:
-        (handler or _phase_zero_handler)(job)
+        _resolve_handler(job, handler=handler, handlers=handlers)(job)
     except Exception as exc:
         return fail(
             job.id,
@@ -56,8 +64,15 @@ def poll_once(
     return complete(job.id, repository=repository)
 
 
-def _phase_zero_handler(job: Job) -> None:
-    """Leave work execution to later phases while proving queue lifecycle."""
+def _resolve_handler(
+    job: Job, *, handler: JobHandler | None, handlers: JobHandlers | None
+) -> JobHandler:
+    """Return the explicit override or registered handler for a job kind."""
+    if handler is not None:
+        return handler
+    if handlers is not None and (registered_handler := handlers.get(job.kind)) is not None:
+        return registered_handler
+    raise UnknownJobKindError
 
 
 def main(argv: Sequence[str] | None = None) -> int:

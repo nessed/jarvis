@@ -6,3 +6,5 @@ __pycache__/
 coverage.xml
 tools/cloudflared.exe
 tools/*.log
+memory.db
+memory.db-*

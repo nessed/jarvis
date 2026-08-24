@@ -1,0 +1,3 @@
+# Corpus files are an explicit local-only user choice and must never enter Git.
+*
+!.gitignore
