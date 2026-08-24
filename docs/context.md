@@ -1,6 +1,6 @@
 # JARVIS project context
 
-Last updated: 24 August 2026 — Phase 0 active, pending final provider and Meta dashboard handoff.
+Last updated: 24 August 2026 — Phase 0 active, pending replacement Meta callback Save and final phone acceptance.
 
 ## Current state
 
@@ -46,9 +46,9 @@ this file. `.env` is ignored and `.env.example` has empty placeholders.
 
 The FastAPI bus and Cloudflare Quick Tunnel are running.
 
-- Callback URL: `https://insulation-threatened-tip-bind.trycloudflare.com/webhook`
-- The external protected health route returned 401, confirming reachability and
-  bearer protection.
+- Callback URL: `https://iii-loose-ventures-flow.trycloudflare.com/webhook`
+- The external protected health route returned 401 after the fresh tunnel was
+  registered, confirming reachability and bearer protection.
 - This is a Quick Tunnel. Its URL dies when cloudflared or the laptop stops;
   Meta must be updated after each restart until a named tunnel or Phase 4 Oracle
   deployment replaces it.
@@ -60,16 +60,16 @@ Supabase publishable key, Supabase Secret key, DeepSeek direct key, Meta verify
 token, Meta Phone Number ID, Meta App ID, and bus bearer token. DeepSeek proxy
 mode is false/unset.
 
-OpenRouter and Mistral are now configured locally. NVIDIA NIM is explicitly
-deferred and must not block Phase 0. Still absent/pending: Meta App Secret and
-Meta durable access token.
+OpenRouter, Mistral, and Meta App Secret are now configured locally. NVIDIA
+NIM is explicitly deferred and must not block Phase 0. Meta’s durable access
+token is also now configured locally.
 
 OpenRouter live smoke testing passed through `openrouter/free`. Its successful
 response had no retry/rate-limit headers, so runtime cooldown capture correctly
 remained empty. Mistral model discovery succeeded, but a minimal free Labs chat
 request returned 403; treat Mistral as unavailable pending account/workspace
-resolution. It is also missing from `router/providers.yaml`, so a router lane
-must add the configured Mistral rung before it can ever act as a fallback.
+resolution. Its configured router rung is present; it cannot accept work until
+the provider-side denial is resolved.
 
 The Mistral router integration is now complete. It uses the official
 `https://api.mistral.ai/v1` endpoint ahead of paid DeepSeek, honors an explicit
@@ -80,8 +80,10 @@ surface the denial rather than silently falling through to paid work. Focused
 router tests: **15 passed**. The live Mistral workspace 403 still needs account
 resolution before that rung is usable.
 
-Full suite after the Mistral integration: **30 passed**. The only non-failing
-noise remains the Supabase SDK deprecations and pytest-cache filesystem warning.
+Full suite after the Mistral integration: **30 passed**. The final regression
+run after tunnel recovery also passed: **30 passed, 3 warnings**. The only
+non-failing noise remains the two Supabase SDK deprecations and pytest-cache
+filesystem warning.
 
 ## Meta state
 
@@ -90,43 +92,39 @@ noise remains the Supabase SDK deprecations and pytest-cache filesystem warning.
 - Existing system user **whatsapp-bot** is Admin and already has full access to
   the WA 1st app and test WABA. Do not create another system user or reassign
   assets.
-- App Settings → Basic is open at the masked App Secret **Show** control.
-- The system-token wizard is open with WA 1st selected, **Never** expiry, and
-  `whatsapp_business_messaging` plus `whatsapp_business_management` selected;
-  it awaits only final **Generate token**.
-- Existing webhook configuration is still stale `ngrok-free.dev`, with a masked
-  verify token and `messages` subscribed. The legacy configuration route did
-  not finish loading its callback form in browser automation; resume discovery
-  after the credential handoff, fill the current Quick Tunnel callback and
-  local verify token, then stop before the user’s final Save.
+- The prior Meta callback configuration pointed at the earlier Quick Tunnel,
+  which failed at Cloudflare. A fresh, externally verified tunnel now exists;
+  Meta must be updated to its `/webhook` endpoint and saved once more. The
+  existing local verify token remains the correct value; `messages` remains
+  subscribed.
+- Meta’s App Secret and durable system-user token are now present locally.
+  The Meta configuration form still fails to load in browser automation. A
+  browser-control extension emitted an internal ad-blocker-module error, but
+  this is not evidence that the user has an ad blocker installed; do not ask the
+  user to disable or whitelist any extension. The tunnel and Meta app state are
+  not implicated by the available diagnostics. A clean retry after token setup
+  still returned only Meta’s 832-character application shell after nine seconds
+  and exposed no callback/verify fields, so this is a reproducible browser-side
+  rendering failure rather than a navigation mistake. The in-app browser is not
+  available in this session, so there is no alternate authenticated browser
+  surface for recovery.
+- In Meta's redesigned dashboard, use **Use cases** → **Settings** →
+  **Configurations** → the WhatsApp card's **Connect** → **Basic setup** →
+  **Step 2. Production setup** → **Configure Webhooks**. The traditional layout
+  calls the same area **WhatsApp** → **Configuration**. The callback card now
+  renders in the signed-in Chrome session.
 - The app is unpublished: dashboard test events work, but production data will
   not be delivered until publication.
 
 ## Immediate user handoff
 
-The following pages are staged in Chrome. The user performs only login/2FA/
-captcha and final Create/Generate/Save actions; do not paste secrets into chat.
-
-1. Create free keys in OpenRouter, NVIDIA NIM, and Mistral, leaving each
-   revealed-key page open for secure local capture. NVIDIA may require Developer
-   Program email verification. Do not purchase OpenRouter credit.
-2. On Meta App Settings → Basic, reveal the App Secret and leave its revealed
-   page open.
-3. In the existing Meta system-token wizard, click final Generate token and
-   leave its revealed-token page open.
-
-OpenRouter’s API Keys page and Mistral’s login/key flow are freshly opened in
-Chrome. NVIDIA’s existing sign-in tab remains open; browser safety policy
-blocked agent control of that specific NVIDIA page, so the user must complete
-its signup/verification directly in that tab.
-
-After this batch, the agent securely writes the values only to local `.env`,
-runs the L4 live tests for the three new provider rungs, finishes Meta callback
-field staging, and stops only at the final Meta Save. Then run the final full
-suite, commit, and execute the two Phase 0 acceptance checks.
+Update Meta's callback to the current URL above, leave the existing verify token
+in place, and click **Verify and save**. The remaining user acceptance check is
+to send a WhatsApp message while the laptop is asleep, then wake it and observe
+the job lifecycle.
 
 ## Acceptance still required
 
 - With the laptop asleep: WhatsApp the test number, wake the laptop, and watch
   the job move queued → running → done.
-- An unsigned POST to the webhook returns 403.
+- Unsigned local POST to `/webhook` returned 403 on 24 August 2026.
