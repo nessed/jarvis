@@ -21,8 +21,9 @@ this file. `.env` is ignored and `.env.example` has empty placeholders.
 ## Completed and verified
 
 - FastAPI bus with HMAC-verified Meta webhooks, bearer-protected non-webhook
-  routes, request-ID JSON logging, protected `/status`, and enqueue-only
-  webhook behavior.
+  routes, request-ID JSON logging, real protected `/status` queue metadata, and
+  enqueue-only webhook behavior. The local bearer token is configured without
+  recording its value.
 - Supabase durable queue migration was applied successfully to the live target.
   `public.jobs` has RLS enabled with no public policies; public/anon/authenticated
   table and RPC access is revoked; queue RPCs are service-role-only.
@@ -81,9 +82,14 @@ router tests: **15 passed**. The live Mistral workspace 403 still needs account
 resolution before that rung is usable.
 
 Full suite after the Mistral integration: **30 passed**. The final regression
-run after tunnel recovery also passed: **30 passed, 3 warnings**. The only
-non-failing noise remains the two Supabase SDK deprecations and pytest-cache
-filesystem warning.
+run after tunnel recovery and executor/status integration passed: **38 passed,
+3 warnings**. The only non-failing noise remains the two Supabase SDK
+deprecations and pytest-cache filesystem warning.
+
+- Pull-based Phase 0 executor is implemented and running locally. It atomically
+  claims one job, checkpoints it, then completes it; transient repository errors
+  are retried with type-only diagnostics. A live disposable probe completed
+  queued → running → done on 24 August 2026.
 
 ## Meta state
 
@@ -108,6 +114,10 @@ filesystem warning.
   rendering failure rather than a navigation mistake. The in-app browser is not
   available in this session, so there is no alternate authenticated browser
   surface for recovery.
+- A read-only Graph API check using the stored Meta access token returned OAuth
+  error 190. Treat that token as invalid until it is regenerated and smoke-tested;
+  its value is not recorded here. This does not prevent inbound webhook HMAC
+  validation, but it blocks future Graph API sends.
 - In Meta's redesigned dashboard, use **Use cases** → **Settings** →
   **Configurations** → the WhatsApp card's **Connect** → **Basic setup** →
   **Step 2. Production setup** → **Configure Webhooks**. The traditional layout
@@ -118,13 +128,15 @@ filesystem warning.
 
 ## Immediate user handoff
 
-Update Meta's callback to the current URL above, leave the existing verify token
-in place, and click **Verify and save**. The remaining user acceptance check is
-to send a WhatsApp message while the laptop is asleep, then wake it and observe
-the job lifecycle.
+The remaining user acceptance check is to send a WhatsApp message while the
+laptop is asleep, then wake it and observe the job lifecycle. The bus, tunnel,
+and local executor are already running for that test.
 
 ## Acceptance still required
 
 - With the laptop asleep: WhatsApp the test number, wake the laptop, and watch
   the job move queued → running → done.
 - Unsigned local POST to `/webhook` returned 403 on 24 August 2026.
+- The executor's independent live lifecycle probe passed. No inbound
+  `whatsapp_webhook` job has yet appeared, so phone-originated delivery remains
+  the final acceptance proof.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from typing import Any
 
@@ -11,8 +10,8 @@ from fastapi import FastAPI, HTTPException, Request
 
 from bus.logging import RequestIDMiddleware, get_logger
 from bus.security import BearerAuthMiddleware, enforce_meta_signature, meta_webhook_handshake
-from bus.status import create_status_handler
-from db.jobs import JobRepository, enqueue
+from bus.status import QueueStatusReader, create_status_handler
+from db.jobs import JobRepository, SupabaseJobsRepository, enqueue
 from router import ProviderRouter
 
 load_dotenv()
@@ -25,6 +24,24 @@ def _empty_queue_depths() -> dict[str, int]:
 
 def _no_last_job() -> None:
     return None
+
+
+def _default_jobs() -> JobRepository | None:
+    """Connect the running app to the server-only queue when it is configured."""
+    try:
+        return SupabaseJobsRepository.from_env()
+    except RuntimeError:
+        return None
+
+
+def _queue_status_reader(jobs: JobRepository | None) -> QueueStatusReader | None:
+    """Use live observability only for the existing Supabase repository."""
+    if jobs is None:
+        return None
+    try:
+        return QueueStatusReader.from_repository(jobs)
+    except TypeError:
+        return None
 
 
 def _provider_health(router: ProviderRouter) -> dict[str, dict[str, Any]]:
@@ -46,13 +63,15 @@ def create_app(
     meta_app_secret: str | None = None,
     meta_verify_token: str | None = None,
     bearer_token: str | None = None,
-    queue_depths: Callable[[], Any] = _empty_queue_depths,
-    last_job: Callable[[], Any] = _no_last_job,
+    queue_depths: Callable[[], Any] | None = None,
+    last_job: Callable[[], Any] | None = None,
 ) -> FastAPI:
     """Build an injectable app; a webhook performs no work beyond enqueueing."""
     app = FastAPI(title="JARVIS bus")
     logger = get_logger()
-    app.state.jobs = jobs
+    active_jobs = jobs if jobs is not None else _default_jobs()
+    status_reader = _queue_status_reader(active_jobs)
+    app.state.jobs = active_jobs
     app.state.provider_router = provider_router or ProviderRouter()
     app.add_middleware(BearerAuthMiddleware, token=bearer_token)
     app.add_middleware(RequestIDMiddleware, logger=logger)
@@ -79,8 +98,12 @@ def create_app(
     app.add_api_route(
         "/status",
         create_status_handler(
-            queue_depths=queue_depths,
-            last_job=last_job,
+            queue_depths=queue_depths or (
+                status_reader.queue_depths if status_reader is not None else _empty_queue_depths
+            ),
+            last_job=last_job or (
+                status_reader.last_job if status_reader is not None else _no_last_job
+            ),
             provider_health=lambda: _provider_health(app.state.provider_router),
         ),
         methods=["GET"],
