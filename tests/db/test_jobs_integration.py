@@ -13,7 +13,10 @@ from db.jobs import SupabaseJobsRepository, checkpoint, claim_next, complete, en
 
 def _env_has_supabase_credentials() -> bool:
     """Check local configuration without emitting sensitive values."""
-    configured = bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_KEY"))
+    configured = bool(
+        os.environ.get("SUPABASE_URL")
+        and (os.environ.get("SUPABASE_SECRET_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
+    )
     if configured:
         return True
     env_path = Path(__file__).resolve().parents[2] / ".env"
@@ -22,18 +25,28 @@ def _env_has_supabase_credentials() -> bool:
     keys = set()
     for line in env_path.read_text(encoding="utf-8").splitlines():
         name, separator, value = line.partition("=")
-        if separator and value.strip() and name in {"SUPABASE_URL", "SUPABASE_KEY"}:
+        if separator and value.strip() and name in {
+            "SUPABASE_URL",
+            "SUPABASE_SECRET_KEY",
+            "SUPABASE_SERVICE_ROLE_KEY",
+        }:
             keys.add(name)
-    return keys == {"SUPABASE_URL", "SUPABASE_KEY"}
+    return "SUPABASE_URL" in keys and bool(
+        {"SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY"} & keys
+    )
 
 
 @pytest.mark.skipif(not _env_has_supabase_credentials(), reason="Supabase credentials are not configured")
 def test_real_supabase_full_job_lifecycle(monkeypatch):
-    # Load only the two required values into the process; nothing is logged.
+    # Load only the required values into the process; nothing is logged.
     env_path = Path(__file__).resolve().parents[2] / ".env"
     for line in env_path.read_text(encoding="utf-8").splitlines():
         name, separator, value = line.partition("=")
-        if separator and name in {"SUPABASE_URL", "SUPABASE_KEY"} and value.strip():
+        if separator and name in {
+            "SUPABASE_URL",
+            "SUPABASE_SECRET_KEY",
+            "SUPABASE_SERVICE_ROLE_KEY",
+        } and value.strip():
             monkeypatch.setenv(name, value.strip())
 
     repository = SupabaseJobsRepository.from_env()

@@ -6,10 +6,12 @@ RPC. Its row lock keeps separate executor processes from claiming one job twice.
 
 from __future__ import annotations
 
-import os
+from base64 import urlsafe_b64decode
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+import json
+import os
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -66,11 +68,13 @@ class SupabaseJobsRepository:
 
     @classmethod
     def from_env(cls) -> "SupabaseJobsRepository":
-        """Create a repository without ever exposing configured credentials."""
+        """Create a repository with a server-only Supabase credential."""
         url = os.environ.get("SUPABASE_URL")
-        key = os.environ.get("SUPABASE_KEY")
+        key = _server_key_from_env()
         if not url or not key:
-            raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be configured")
+            raise RuntimeError(
+                "SUPABASE_URL and a server-only Supabase secret/service-role key must be configured"
+            )
         try:
             from supabase import create_client
         except ImportError as exc:  # pragma: no cover - dependency integration
@@ -119,6 +123,34 @@ def _one_job(response: Any) -> Job:
     if not data:
         raise KeyError("job was not found")
     return Job.from_row(data)
+
+
+def _server_key_from_env() -> str | None:
+    """Return a server credential, never falling back to a publishable key."""
+    key = os.environ.get("SUPABASE_SECRET_KEY") or os.environ.get(
+        "SUPABASE_SERVICE_ROLE_KEY"
+    )
+    if not key:
+        return None
+    if key.startswith("sb_publishable_") or _legacy_key_role(key) == "anon":
+        raise RuntimeError("A publishable/anon Supabase key cannot access the job queue")
+    if key.startswith("sb_secret_") or _legacy_key_role(key) == "service_role":
+        return key
+    raise RuntimeError("Supabase job queue key must be a secret or service-role key")
+
+
+def _legacy_key_role(key: str) -> str | None:
+    """Read only the unverified JWT role claim to reject legacy anon keys."""
+    parts = key.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        encoded = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(urlsafe_b64decode(encoded).decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    role = claims.get("role")
+    return role if isinstance(role, str) else None
 
 
 def _repository_or_default(repository: JobRepository | None) -> JobRepository:

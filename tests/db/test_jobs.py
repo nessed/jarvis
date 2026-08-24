@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+import sys
+from types import SimpleNamespace
 from uuid import uuid4
 
-from db.jobs import Job, checkpoint, claim_next, complete, enqueue, fail
+import pytest
+
+from db.jobs import (
+    Job,
+    SupabaseJobsRepository,
+    checkpoint,
+    claim_next,
+    complete,
+    enqueue,
+    fail,
+)
 
 
 class InMemoryJobsRepository:
@@ -98,3 +111,48 @@ def test_complete_marks_claimed_job_done():
     done = complete(queued.id, repository=repository)
 
     assert done.status == "done"
+
+
+def test_repository_rejects_publishable_key_and_does_not_fall_back_to_old_key(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_KEY", "sb_publishable_should_not_be_used")
+    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="server-only"):
+        SupabaseJobsRepository.from_env()
+
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_publishable_rejected")
+    with pytest.raises(RuntimeError, match="publishable/anon"):
+        SupabaseJobsRepository.from_env()
+
+
+def test_repository_accepts_secret_key_without_exposing_it(monkeypatch):
+    created = []
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test_only")
+    monkeypatch.setitem(
+        sys.modules,
+        "supabase",
+        SimpleNamespace(create_client=lambda url, key: created.append((url, key)) or object()),
+    )
+
+    repository = SupabaseJobsRepository.from_env()
+
+    assert isinstance(repository, SupabaseJobsRepository)
+    assert len(created) == 1
+
+
+def test_migration_enables_rls_and_denies_public_queue_access():
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "db"
+        / "migrations"
+        / "0001_jobs.sql"
+    ).read_text(encoding="utf-8").lower()
+
+    assert "alter table public.jobs enable row level security" in migration
+    assert "revoke all on table public.jobs from public, anon, authenticated" in migration
+    assert "create policy" not in migration
+    for function in ("claim_next_job", "checkpoint_job", "complete_job", "fail_job"):
+        assert f"revoke execute on function public.{function}" in migration

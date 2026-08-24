@@ -6,6 +6,7 @@ import asyncio
 import email.utils
 import json
 import os
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -79,11 +80,16 @@ class OpenAIChatClient:
         from openai import AsyncOpenAI
 
         self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        self.last_response_headers: dict[str, str] = {}
 
     async def create_chat_completion(
         self, *, model: str, messages: Sequence[Mapping[str, Any]], **kwargs: Any
     ) -> Any:
-        return await self._client.chat.completions.create(model=model, messages=list(messages), **kwargs)
+        raw_response = await self._client.with_raw_response.chat.completions.create(
+            model=model, messages=list(messages), **kwargs
+        )
+        self.last_response_headers = dict(raw_response.headers)
+        return raw_response.parse()
 
 
 def openai_client_factory(base_url: str, api_key: str) -> OpenAIChatClient:
@@ -193,6 +199,7 @@ class ProviderRouter:
                     model=provider_model, messages=messages, **request_options
                 )
                 self.health[provider.name].last_status = 200
+                self._record_response_headers(provider, getattr(client, "last_response_headers", {}))
                 return RoutedResult(provider=provider.name, model=provider_model, response=response)
             except Exception as exc:  # SDK exception types intentionally vary by provider.
                 status, headers = _response_metadata(exc)
@@ -249,9 +256,15 @@ class ProviderRouter:
         health = self.health[provider.name]
         health.cooldown_until = self._clock() + cooldown
         health.last_status = status
-        health.rate_limit_headers = {
+        self._record_response_headers(provider, normalized)
+
+    def _record_response_headers(self, provider: Provider, headers: Mapping[str, str]) -> None:
+        normalized = {key.lower(): value for key, value in headers.items()}
+        rate_limit_headers = {
             key: value for key, value in normalized.items() if key == "retry-after" or key.startswith("x-ratelimit-")
         }
+        if rate_limit_headers:
+            self.health[provider.name].rate_limit_headers = rate_limit_headers
 
 
 def _response_metadata(exc: BaseException) -> tuple[int | None, Mapping[str, str]]:
@@ -279,6 +292,9 @@ def _retry_delay_seconds(headers: Mapping[str, str], default: int, *, now: datet
     # value as a relative delay first, then as a Unix epoch if it is in future.
     for key, value in headers.items():
         if key.startswith("x-ratelimit-") and "reset" in key:
+            duration = _duration_seconds(value)
+            if duration is not None:
+                return duration
             try:
                 reset = float(value)
             except ValueError:
@@ -288,6 +304,16 @@ def _retry_delay_seconds(headers: Mapping[str, str], default: int, *, now: datet
             if reset >= 0:
                 return reset
     return float(default)
+
+
+def _duration_seconds(value: str) -> float | None:
+    """Parse common provider reset durations such as ``250ms`` and ``1.5s``."""
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)\s*", value, flags=re.IGNORECASE)
+    if not match:
+        return None
+    amount = float(match.group(1))
+    unit = match.group(2).lower()
+    return amount * {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}[unit]
 
 
 async def route(

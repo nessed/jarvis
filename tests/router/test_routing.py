@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from router import NoEligibleProvider, Provider, ProviderRequestError, ProviderRouter, load_providers
+from router.routing import _retry_delay_seconds
 
 
 class FakeClient:
@@ -170,6 +171,40 @@ def test_deepseek_waits_during_peak_unless_urgent():
 
     assert [provider.name for provider in router.ordered_providers("reasoning")] == ["spare"]
     assert [provider.name for provider in router.ordered_providers("reasoning", urgent=True)] == ["deepseek", "spare"]
+
+
+def test_deepseek_peak_gate_defers_route_to_spare_without_calling_deepseek():
+    router, calls = router_for(
+        ["deepseek", "spare"],
+        {},
+        now=lambda: datetime(2026, 8, 23, 6, 30, tzinfo=UTC),
+    )
+
+    result = asyncio.run(router.route("reasoning", [{"role": "user", "content": "hi"}]))
+
+    assert result.provider == "spare"
+    assert calls == [("spare", "spare-configured-model")]
+
+
+def test_successful_response_records_live_style_rate_limit_headers():
+    configured = [Provider("first", "https://first", "FIRST_KEY", 1, "first-model", ("latency",))]
+    client = FakeClient("first", {}, [])
+    client.last_response_headers = {"X-RateLimit-Reset-Requests": "1.5s", "X-RateLimit-Remaining-Requests": "4"}
+    router = ProviderRouter(configured, environ={"FIRST_KEY": "test-key"}, client_factory=lambda *_: client)
+
+    asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert router.health["first"].rate_limit_headers == {
+        "x-ratelimit-reset-requests": "1.5s",
+        "x-ratelimit-remaining-requests": "4",
+    }
+
+
+def test_duration_reset_headers_parse_without_falling_back_to_default():
+    now = datetime(2026, 8, 23, tzinfo=UTC)
+
+    assert _retry_delay_seconds({"x-ratelimit-reset-requests": "1.5s"}, 60, now=now) == 1.5
+    assert _retry_delay_seconds({"x-ratelimit-reset-requests": "250ms"}, 60, now=now) == 0.25
 
 
 def test_deepseek_openrouter_fallback_preserves_rung_position():
