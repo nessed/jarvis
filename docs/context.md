@@ -86,6 +86,11 @@ token is also now configured locally.
   768-dimensional vector, and `open_local_memory()` opened and closed cleanly.
   Focused memory tests: **31 passed in 0.60s**. The external Ollama/model
   blocker is resolved; no personal corpus has been ingested.
+- Live local-memory smoke test passed on 25 August 2026 using an isolated
+  project-local temporary SQLite database and the generic fact “The local
+  memory smoke test uses a generic sample fact.” The project service remembered
+  and recalled the expected fact through Ollama; the temporary database and
+  SQLite sidecars were removed afterward. No user corpus was read or ingested.
 
 - On 25 August 2026, checks found no `ollama` command, Windows service, local
   process, loopback listener on port 11434, or reachable `/api/tags` endpoint.

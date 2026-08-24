@@ -1,11 +1,18 @@
 # JARVIS build rules
 
 `docs/blueprint.md` is the technical spec. Read it before task work. Treat
-claims in it about pricing, rate limits, model names, and free tiers as claims
-to verify with current sources before relying on them. `docs/context.md` is the
-source of truth for the current build state; read it rather than assuming the
-current phase. Update it after every completed subtask with the result,
+provider claims in it about pricing, rate limits, model names, and free tiers
+as claims to verify with current sources before relying on them. Architecture,
+component choices, dependency selection, and phase ordering are decisions, not
+claims. If a specified component appears wrong, unavailable, or unnecessary,
+stop and report before writing code; never substitute it. `docs/context.md` is
+the source of truth for the current build state; read it rather than assuming
+the current phase. Update it after every completed subtask with the result,
 remaining blocker, and any changed operational detail.
+
+If a task cannot be completed as specified, report the blocker and stop. Do
+not build an alternative and document it afterward. A deviation that reaches a
+commit is a failure whether or not the code passes tests.
 
 ## Parallelism is the default
 
@@ -33,8 +40,14 @@ remaining blocker, and any changed operational detail.
   lane can make progress.
 - Do not ask permission for ordinary shell commands. Ask once and wait only
   before genuinely destructive work, including `rm -rf`, `DROP TABLE`, deleting
-  cloud resources, or writing to any original `.flp`; use copies for FLP work.
-- Keep reports terse: what landed, what broke, what is needed.
+  cloud resources, writing to any original `.flp`, or global Git configuration
+  such as `git config --global --add safe.directory`; use copies for FLP work.
+- Keep reports terse: what landed, what broke, what is needed, and what was
+  specified but not done.
+- Every claim that something works must name the command or test that produced
+  it and its output. A dispatched subagent returning no completion is failed
+  verification, not a result. Do not delete test data or artifacts before the
+  outcome has been reported.
 
 ## Secrets
 
