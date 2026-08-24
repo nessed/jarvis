@@ -1,6 +1,6 @@
 # JARVIS project context
 
-Last updated: 25 August 2026 — Phase 0 inbound acceptance passed; Phase 1 Ollama installation is blocked before model download; Meta outbound-token follow-up remains.
+Last updated: 25 August 2026 — Phase 0 inbound acceptance passed; Phase 1 local-memory runtime is live, but the specified Mem0 wrapper and end-to-end memory acceptance remain incomplete; Meta outbound-token follow-up remains.
 
 ## Current state
 
@@ -11,13 +11,16 @@ verification before use.
 
 Phase 1 is underway, local-first. The SQLite fact store, sqlite-vec semantic
 index, loopback-only Ollama adapter, injected `remember()` / `recall()` service,
-and opt-in resumable ingestion foundation are integrated (`32 focused tests`).
-`memory.db` and corpus inputs are ignored by Git. No personal notes, chats, or
-external corpus have been read or ingested. Ollama installation is in progress;
-memory remains dormant until a locally configured embedding model is available.
+and opt-in resumable ingestion foundation are integrated. Ollama 0.32.15 and
+the local `nomic-embed-text` model are active on loopback; an isolated generic
+fact was successfully remembered and recalled, then its temporary database was
+removed. `memory.db` and corpus inputs are ignored by Git. No personal notes,
+chats, or external corpus have been read or ingested.
 
-Ollama’s non-secret local settings now specify `nomic-embed-text`, the loopback
-endpoint, and `memory.db`, but no local Ollama runtime or model is present yet.
+Phase 1 is not complete: the blueprint-specified Mem0 self-host wrapper is not
+implemented, no inbound/outbound conversation path calls recall-before or
+remember-after, and no opted-in corpus has completed the fact-extraction and
+backfill/review acceptance loop.
 
 Source checkpoints:
 
@@ -92,20 +95,9 @@ token is also now configured locally.
   and recalled the expected fact through Ollama; the temporary database and
   SQLite sidecars were removed afterward. No user corpus was read or ingested.
 
-- On 25 August 2026, checks found no `ollama` command, Windows service, local
-  process, loopback listener on port 11434, or reachable `/api/tags` endpoint.
-- Windows Package Manager attempts to install the official `Ollama.Ollama`
-  package (including silent mode) reported the official installer download but
-  did not leave an installed package. An explicit `winget download` attempt
-  likewise left no installer file. Treat the local installation/download path
-  as blocked, not as a successful partial installation.
-- Required recovery action: complete a trusted official Ollama Windows install
-  and pull exactly `nomic-embed-text`; then verify `ollama list` and a local
-  `POST /api/embed` response before opening the memory runtime. This needs a
-  working network/download path but no credentials, login, or personal data.
-- Focused memory tests passed independently in the project virtual environment:
-  **27 passed** on 25 August 2026. System Python lacks pytest; use
-  `.venv\\Scripts\\python.exe` for these checks.
+- Earlier installation/download diagnostics are obsolete: activation is now
+  verified locally. System Python lacks pytest; use
+  `.venv\\Scripts\\python.exe` for project checks.
 
 ## Phase 1 offline foundations
 
@@ -121,9 +113,9 @@ token is also now configured locally.
   non-personal dimension probe before constructing stores, handles explicit
   environment configuration, and closes resources on partial initialization
   failure. Offline focused memory tests: **31 passed**.
-- These offline foundations do not make memory active. Ollama itself and the
-  `nomic-embed-text` model are still the external local-install blocker before
-  a real local embedding/API smoke test or corpus backfill can begin.
+- These foundations make the local embedding runtime active, but they do not
+  satisfy the remaining specified Mem0, conversation-wiring, or opted-in
+  backfill/extraction-review requirements.
 - Offline integration validation passed on 25 August 2026:
   `.venv\\Scripts\\python.exe -m pytest -q --ignore=tests/db/test_jobs_integration.py`
   completed **82 passed in 3.46s**. The excluded file is credential/live-
