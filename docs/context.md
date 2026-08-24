@@ -14,6 +14,9 @@ Source checkpoints:
 - `699c92d` — complete Phase 0 bus foundation.
 - `c991f5e` — secure queue, live-provider verification, tests, context, and
   recoverable lane briefs.
+- `f77d7af` — complete Phase 0 executor lifecycle and live queue status.
+- The complete repository history is published to
+  `https://github.com/nessed/jarvis` on `main`.
 
 No credential, token, password, or database secret is committed or recorded in
 this file. `.env` is ignored and `.env.example` has empty placeholders.
