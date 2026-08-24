@@ -50,7 +50,7 @@ this file. `.env` is ignored and `.env.example` has empty placeholders.
 
 The FastAPI bus and Cloudflare Quick Tunnel are running.
 
-- Callback URL: `https://iii-loose-ventures-flow.trycloudflare.com/webhook`
+- Callback URL: `https://gas-clubs-pennsylvania-farming.trycloudflare.com/webhook`
 - The external protected health route returned 401 after the fresh tunnel was
   registered, confirming reachability and bearer protection.
 - This is a Quick Tunnel. Its URL dies when cloudflared or the laptop stops;
@@ -101,11 +101,10 @@ deprecations and pytest-cache filesystem warning.
 - Existing system user **whatsapp-bot** is Admin and already has full access to
   the WA 1st app and test WABA. Do not create another system user or reassign
   assets.
-- The prior Meta callback configuration pointed at the earlier Quick Tunnel,
-  which failed at Cloudflare. A fresh, externally verified tunnel now exists;
-  Meta must be updated to its `/webhook` endpoint and saved once more. The
-  existing local verify token remains the correct value; `messages` remains
-  subscribed.
+- The previous Meta callback targets a retired Quick Tunnel. A single fresh,
+  externally verified tunnel now exists; Meta must be updated to its `/webhook`
+  endpoint and saved once more. The existing local verify token remains the
+  correct value; `messages` remains subscribed.
 - Meta’s App Secret and durable system-user token are now present locally.
   The Meta configuration form still fails to load in browser automation. A
   browser-control extension emitted an internal ad-blocker-module error, but
@@ -131,9 +130,10 @@ deprecations and pytest-cache filesystem warning.
 
 ## Immediate user handoff
 
-The remaining user acceptance check is to send a WhatsApp message while the
-laptop is asleep, then wake it and observe the job lifecycle. The bus, tunnel,
-and local executor are already running for that test.
+First update Meta's callback to the current URL above, leave the existing verify
+token in place, and click **Verify and save**. Then send a WhatsApp message
+while the laptop is asleep, wake it, and observe the job lifecycle. The bus,
+tunnel, and local executor are already running for that test.
 
 ## Acceptance still required
 
