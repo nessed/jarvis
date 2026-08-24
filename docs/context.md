@@ -1,6 +1,6 @@
 # JARVIS project context
 
-Last updated: 24 August 2026 — Phase 0 active, pending replacement Meta callback Save and final phone acceptance.
+Last updated: 24 August 2026 — Phase 0 inbound acceptance passed; Meta outbound-token follow-up remains.
 
 ## Current state
 
@@ -130,16 +130,13 @@ deprecations and pytest-cache filesystem warning.
 
 ## Immediate user handoff
 
-First update Meta's callback to the current URL above, leave the existing verify
-token in place, and click **Verify and save**. Then send a WhatsApp message
-while the laptop is asleep, wake it, and observe the job lifecycle. The bus,
-tunnel, and local executor are already running for that test.
+No inbound acceptance action remains. Before implementing outbound Graph API
+calls, regenerate and smoke-test the invalid Meta system-user token noted above.
 
-## Acceptance still required
+## Acceptance evidence
 
-- With the laptop asleep: WhatsApp the test number, wake the laptop, and watch
-  the job move queued → running → done.
+- With the laptop closed, a phone-originated WhatsApp message arrived after
+  wake and created durable `whatsapp_webhook` jobs that reached `done` with
+  executor checkpoints on 24 August 2026.
 - Unsigned local POST to `/webhook` returned 403 on 24 August 2026.
-- The executor's independent live lifecycle probe passed. No inbound
-  `whatsapp_webhook` job has yet appeared, so phone-originated delivery remains
-  the final acceptance proof.
+- The executor's independent live lifecycle probe also passed.
