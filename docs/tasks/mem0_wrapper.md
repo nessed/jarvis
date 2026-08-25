@@ -111,6 +111,63 @@ before any cleanup; the prior run had neither artifact (`Exists=False` for
 both), so it is not verification evidence. Preserve no personal data, make no
 code changes in this measurement task, and do not commit.
 
+## Root cause fixed — compact extraction prompt (25 August 2026)
+
+Traced (installed mem0ai 2.0.19 source, not docs): `Memory.add`/`AsyncMemory.add`
+(`mem0/memory/main.py:942` and `:2604`) hardcode
+`system_prompt = ADDITIVE_EXTRACTION_PROMPT` as a bare module-global read
+inside the only LLM-extraction path present in this version (the "V3 phased
+batch pipeline", used whenever `infer=True`, the default). No supported
+config or argument selects a different prompt: `mem0.memory.utils`'s
+`get_fact_retrieval_messages` / `get_fact_retrieval_messages_legacy` and their
+`USER_MEMORY_EXTRACTION_PROMPT` / `FACT_RETRIEVAL_PROMPT` constants are
+unreferenced dead code in `main.py` (`grep -rn "get_fact_retrieval_messages\b"
+.venv/Lib/site-packages/mem0/` matches only their own definitions), and
+`MemoryConfig.version` / `self.api_version` feeds telemetry only, not
+pipeline selection. Separately, `mem0/llms/ollama.py`'s `OllamaLLM.generate_response`
+builds its Ollama `options` dict from only `temperature`/`max_tokens`
+(-> `num_predict`)/`top_p`; it accepts `**kwargs` but never reads them, so
+`num_ctx` and `keep_alive` are not reachable through Mem0's shipped Ollama
+adapter at all, through any config.
+
+Literal "subclass Memory and override the system prompt" is not mechanically
+available: the prompt is a local variable inside one ~250-line method, not a
+class attribute or a separately-overridable method, so a subclass override
+would mean reimplementing that entire method. Reported this instead of
+silently reimplementing it. The narrower fix landed: `memory/mem0_wrapper.py`
+now defines `COMPACT_ADDITIVE_EXTRACTION_PROMPT` (2,419 characters, down from
+the shipped 33,653) and `_install_compact_extraction_prompt()`, called from
+`_mem0_api()` before `Memory` is constructed, reassigns the module global
+`mem0.memory.main.ADDITIVE_EXTRACTION_PROMPT` at runtime. This edits no file
+under site-packages, does not touch or replace Mem0's LLM adapter, and does
+not duplicate Mem0's batch pipeline. It preserves the exact output contract
+(`{"memory": [{"id","text","attributed_to","linked_memory_ids"}]}`) that both
+Mem0's own downstream parsing and the wrapper's `ExtractionResponse` model
+require — the shipped lighter prompts produce an incompatible
+`{"facts": [...]}` shape and were deliberately not used verbatim. A drift
+guard (`_SHIPPED_PROMPT_MINIMUM_LENGTH = 20_000`) raises `Mem0WrapperError`
+if a future mem0ai upgrade already shrank/removed the shipped prompt before
+this patches it. The wrapper's `LlmConfig` now also sets `max_tokens=128`
+(-> `num_predict`), previously unset and defaulting to 2000.
+
+Re-measured per the current authorized instructions (raw `ollama` client
+calls against the real compact system prompt + the real
+`generate_additive_extraction_prompt` user prompt, since Mem0's adapter
+cannot accept `num_ctx`/`keep_alive`): warm, `keep_alive=-1`, `num_predict=128`,
+`num_ctx=2048` (sized from the actual compact prompt: 2,419 + 258 = 2,677
+characters ≈ 669 estimated tokens at ~4 chars/token, rounded up for headroom
+— 8x smaller than the previous 16384) completed in **5.998 seconds**
+(`prompt_eval_duration` 159ms for 636 prompt tokens, `eval_duration` 5.82s for
+38 generated tokens on this CPU-only Ollama install). Full commands and exact
+output are recorded in `docs/context.md`. This clears the ~15s gate, so the
+ten-run fair comparison ran: llama3.1:8b **10/10** schema-valid, median
+**6.313s**; qwen3:4b **0/10** schema-valid — every run hit
+`"done_reason":"length"` with the full 128-token budget consumed by Qwen3's
+hidden `thinking` output before any JSON content. `DEFAULT_FACT_EXTRACTION_MODEL`
+stays `llama3.1:8b`, now confirmed by this fair comparison rather than by the
+earlier invalidated one. Focused memory tests: `.venv\Scripts\python.exe -m
+pytest -q tests\memory` -> **44 passed**.
+
 ## Ownership
 
 Implementation lane may edit exactly: `memory/`, `tests/memory/`,

@@ -34,6 +34,58 @@ from memory.vector_index import SQLiteVecIndex
 
 DEFAULT_FACT_EXTRACTION_MODEL = "llama3.1:8b"
 
+# ``mem0.memory.main.Memory.add`` hardcodes its extraction system prompt as a
+# bare module-global reference (``ADDITIVE_EXTRACTION_PROMPT``), read fresh on
+# every call rather than bound at class-definition time. The shipped prompt is
+# 33,661 characters (~8k tokens) of prompt-eval cost per extraction, which is
+# the entire cause of local Ollama extraction timing out at 300s regardless of
+# model. Neither ``MemoryConfig`` nor ``Memory.add()`` exposes a supported way
+# to select a shorter prompt for this pipeline: ``mem0.memory.utils`` still
+# ships ``get_fact_retrieval_messages``/``get_fact_retrieval_messages_legacy``
+# and their matching ``USER_MEMORY_EXTRACTION_PROMPT``/``FACT_RETRIEVAL_PROMPT``
+# constants, but as of mem0ai 2.0.19 no code path in ``mem0/memory/main.py``
+# calls them; they are dead code left over from an earlier extraction design.
+# Subclassing ``Memory`` cannot narrowly override just the prompt either: the
+# assignment lives as a local variable inside one ~250-line method
+# (the "V3 phased batch pipeline"), so overriding it would mean duplicating
+# that entire method rather than the existing store/index/embedding layers.
+# Reassigning the module global below is the narrowest fix that changes only
+# the prompt text, touches no file under site-packages, and needs no
+# subclassing of ``Memory`` or its LLM adapter. It must keep the exact same
+# output contract Mem0's own additive pipeline and ``ExtractionResponse``
+# below expect: a top-level "memory" key holding a list of
+# ``{"id", "text", "attributed_to", "linked_memory_ids"}`` objects — not the
+# unrelated ``{"facts": [...]}`` shape the dead-code prompts above produce.
+COMPACT_ADDITIVE_EXTRACTION_PROMPT = """You are a Memory Extractor. Read the conversation input below and extract every distinct, memorable fact, preference, plan, or event as a separate self-contained statement.
+
+The input has these sections: Summary (prior profile, may be empty), Last k Messages (recent context for resolving pronouns), Recently Extracted Memories and Existing Memories (already captured — do NOT re-extract these; use them only to avoid duplicates and to fill in "linked_memory_ids" when a new fact is about the same person/topic/event), New Messages (the ONLY source of new extractions), Observation Date (the only anchor for resolving "yesterday", "next week", etc.), Current Date (do not use this to resolve relative time), and an optional Custom Instructions section (apply these first, above all other rules).
+
+Extract from both "user" and "assistant" messages: personal facts, preferences, plans, relationships, professional/health details, and opinions. For assistant messages, extract only genuinely new recommendations, plans, or researched information — skip anything that just echoes what the user already said.
+
+Rules:
+- Each memory must be self-contained (replace pronouns with names), 15-80 words, one topic per memory.
+- Preserve exact names, titles, numbers, and dates; never generalize a specific detail into a vague one.
+- Ground relative time expressions against Observation Date, not Current Date.
+- Skip greetings, filler, and anything already present in Recently Extracted Memories or Existing Memories with no new context.
+- If a new memory relates to an existing one (same entity, updated preference, follow-up event, or contradiction), add that existing memory's id to "linked_memory_ids".
+- If nothing is worth extracting, return {"memory": []}.
+
+Example:
+New Messages: [{"role": "user", "content": "I adopted a beagle named Max last weekend."}]
+Observation Date: 2025-03-10
+Output: {"memory": [{"id": "0", "text": "User adopted a beagle named Max around March 8-9, 2025", "attributed_to": "user"}]}
+
+Return ONLY valid JSON parsable by json.loads(), no other text, reasoning, or wrappers, in exactly this structure:
+{"memory": [{"id": "0", "text": "...", "attributed_to": "user", "linked_memory_ids": ["existing-id"]}]}
+"id" is a sequential string starting at "0". "text" and "attributed_to" ("user" or "assistant") are required. "linked_memory_ids" is optional; omit it or pass [] when nothing relevant exists.
+"""
+
+# Sanity floor for the shipped prompt this module patches. If a future mem0ai
+# upgrade shrinks or removes ``ADDITIVE_EXTRACTION_PROMPT`` (e.g. because the
+# upstream fix landed), this guards against silently patching a prompt that
+# was already changed out from under this pin.
+_SHIPPED_PROMPT_MINIMUM_LENGTH = 20_000
+
 
 class Mem0WrapperError(RuntimeError):
     """Raised when local-only Mem0 initialization or output validation fails."""
@@ -262,7 +314,13 @@ def open_mem0_memory(database_path: str | Path, *, environ: Mapping[str, str] | 
         embedder=EmbedderConfig.model_construct(
             provider="jarvis_local", config={"model": embedding_config.model, "ollama_base_url": base_url}
         ),
-        llm=LlmConfig(provider="ollama", config={"model": fact_model, "ollama_base_url": base_url, "temperature": 0}),
+        llm=LlmConfig(
+            provider="ollama",
+            # ``max_tokens`` maps to Ollama's ``num_predict``. The extraction
+            # output is one small JSON object; 128 tokens is ample and bounds
+            # generation instead of leaving it at the config default of 2000.
+            config={"model": fact_model, "ollama_base_url": base_url, "temperature": 0, "max_tokens": 128},
+        ),
         history_db_path=str(Path(database_path).with_suffix(".mem0-history.db")),
     )
     memory = Memory(config=config)
@@ -342,7 +400,28 @@ def _mem0_api() -> tuple[Any, ...]:
         from mem0.vector_stores.configs import VectorStoreConfig
     except ImportError as exc:
         raise Mem0WrapperError("mem0ai 2.0.19 is required for local memory; install pinned project dependencies.") from exc
+    _install_compact_extraction_prompt()
     return Memory, MemoryConfig, VectorStoreConfig, EmbedderConfig, LlmConfig, VectorStoreFactory, EmbedderFactory
+
+
+def _install_compact_extraction_prompt() -> None:
+    """Replace Mem0's ~33.6k-character extraction system prompt at runtime.
+
+    ``mem0.memory.main.Memory.add`` (and ``AsyncMemory.add``) read the module
+    global ``ADDITIVE_EXTRACTION_PROMPT`` fresh on every call, so reassigning
+    it here — before any extraction call happens — changes what every later
+    ``add()`` call sends, without editing any file under site-packages and
+    without subclassing or reimplementing Mem0's ~250-line batch pipeline.
+    """
+    import mem0.memory.main as mem0_main
+
+    shipped_prompt = getattr(mem0_main, "ADDITIVE_EXTRACTION_PROMPT", None)
+    if not isinstance(shipped_prompt, str) or len(shipped_prompt) < _SHIPPED_PROMPT_MINIMUM_LENGTH:
+        raise Mem0WrapperError(
+            "mem0.memory.main.ADDITIVE_EXTRACTION_PROMPT is missing or unexpectedly short; "
+            "the pinned mem0ai version's extraction prompt may have changed. Re-verify before patching it."
+        )
+    mem0_main.ADDITIVE_EXTRACTION_PROMPT = COMPACT_ADDITIVE_EXTRACTION_PROMPT
 
 
 def _register_mem0_factories(vector_factory: Any, embedder_factory: Any) -> None:

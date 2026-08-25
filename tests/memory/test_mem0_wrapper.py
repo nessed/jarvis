@@ -5,12 +5,15 @@ from datetime import UTC, datetime
 import pytest
 
 from memory.mem0_wrapper import (
+    COMPACT_ADDITIVE_EXTRACTION_PROMPT,
     DEFAULT_FACT_EXTRACTION_MODEL,
+    ExtractionResponse,
     Mem0WrapperError,
     SQLiteVecMem0Store,
     _attach_validating_retry,
     _fact_extraction_model,
     _fact_extraction_timeout,
+    _install_compact_extraction_prompt,
 )
 
 
@@ -98,3 +101,41 @@ def test_mem0_fact_extraction_model_defaults_to_llama_and_allows_override():
     assert _fact_extraction_model({}) == "llama3.1:8b"
     assert _fact_extraction_model({"OLLAMA_FACT_EXTRACTION_MODEL": "qwen3:4b"}) == "qwen3:4b"
     assert _fact_extraction_model({"OLLAMA_FACT_EXTRACTION_MODEL": " "}) == "llama3.1:8b"
+
+
+def test_compact_prompt_is_far_smaller_than_shipped_additive_prompt():
+    import mem0.memory.main as mem0_main
+
+    shipped_length = len(mem0_main.ADDITIVE_EXTRACTION_PROMPT)
+    # The shipped prompt is the ~33.6k-character root cause of the 300s
+    # extraction timeout; the replacement must be a real fix, not a token trim.
+    assert shipped_length > 20_000
+    assert len(COMPACT_ADDITIVE_EXTRACTION_PROMPT) < shipped_length / 5
+
+
+def test_compact_prompt_documented_example_matches_the_wrapper_schema():
+    # The prompt's own worked example must validate against the same
+    # Pydantic model the wrapper uses to accept real Ollama responses,
+    # otherwise the prompt would be teaching the model the wrong shape.
+    example = '{"memory": [{"id": "0", "text": "User adopted a beagle named Max around March 8-9, 2025", "attributed_to": "user"}]}'
+    assert example in COMPACT_ADDITIVE_EXTRACTION_PROMPT
+    ExtractionResponse.model_validate_json(example)
+
+
+def test_install_compact_extraction_prompt_patches_the_mem0_module_global():
+    import mem0.memory.main as mem0_main
+
+    original = mem0_main.ADDITIVE_EXTRACTION_PROMPT
+    try:
+        _install_compact_extraction_prompt()
+        assert mem0_main.ADDITIVE_EXTRACTION_PROMPT == COMPACT_ADDITIVE_EXTRACTION_PROMPT
+    finally:
+        mem0_main.ADDITIVE_EXTRACTION_PROMPT = original
+
+
+def test_install_compact_extraction_prompt_refuses_to_patch_a_drifted_shipped_prompt(monkeypatch):
+    import mem0.memory.main as mem0_main
+
+    monkeypatch.setattr(mem0_main, "ADDITIVE_EXTRACTION_PROMPT", "short prompt from a future mem0ai upgrade")
+    with pytest.raises(Mem0WrapperError, match="unexpectedly short"):
+        _install_compact_extraction_prompt()
