@@ -6,3 +6,5 @@ supabase==2.18.1
 openai==1.99.9
 python-dotenv==1.1.1
 sqlite-vec==0.1.9
+mem0ai==2.0.19
+ollama==0.6.2

@@ -24,6 +24,7 @@ class Fact:
     source: str
     created_at: datetime
     metadata: Metadata
+    embedding_model: str | None = None
 
 
 class VectorSearch(Protocol):

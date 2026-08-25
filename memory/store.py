@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS facts (
     text TEXT NOT NULL CHECK (length(trim(text)) > 0),
     source TEXT NOT NULL CHECK (length(trim(source)) > 0),
     metadata TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    embedding_model TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS facts_source_created_at_idx
     ON facts (source, created_at DESC);
@@ -47,6 +48,7 @@ class SQLiteFactStore:
         connection.row_factory = sqlite3.Row
         try:
             connection.executescript(_SCHEMA)
+            _migrate_embedding_model(connection)
             connection.commit()
         except Exception:
             connection.close()
@@ -74,6 +76,7 @@ class SQLiteFactStore:
         fact_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
         created_at: datetime | None = None,
+        embedding_model: str | None = None,
     ) -> Fact:
         """Insert one fact, preserving a caller-provided stable identifier."""
         normalized_text = _required_text("text", text)
@@ -81,15 +84,16 @@ class SQLiteFactStore:
         identifier = _required_text("fact_id", fact_id) if fact_id is not None else str(uuid4())
         encoded_metadata = _encode_metadata(metadata)
         timestamp = _as_utc(created_at or datetime.now(UTC))
-        fact = Fact(identifier, normalized_text, normalized_source, timestamp, json.loads(encoded_metadata))
+        model = _optional_model(embedding_model)
+        fact = Fact(identifier, normalized_text, normalized_source, timestamp, json.loads(encoded_metadata), model)
         connection = self._require_connection()
         try:
             connection.execute(
                 """
-                INSERT INTO facts (id, text, source, metadata, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO facts (id, text, source, metadata, created_at, embedding_model)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (fact.id, fact.text, fact.source, encoded_metadata, fact.created_at.isoformat()),
+                (fact.id, fact.text, fact.source, encoded_metadata, fact.created_at.isoformat(), model or ""),
             )
             connection.commit()
         except sqlite3.IntegrityError as exc:
@@ -100,7 +104,7 @@ class SQLiteFactStore:
         """Return a fact by its stable ID, or ``None`` when it is absent."""
         identifier = _required_text("fact_id", fact_id)
         row = self._require_connection().execute(
-            "SELECT id, text, source, metadata, created_at FROM facts WHERE id = ?", (identifier,)
+            "SELECT id, text, source, metadata, created_at, embedding_model FROM facts WHERE id = ?", (identifier,)
         ).fetchone()
         return _fact_from_row(row) if row is not None else None
 
@@ -109,7 +113,7 @@ class SQLiteFactStore:
         if limit is not None and (isinstance(limit, bool) or limit < 0):
             raise ValueError("limit must be a non-negative integer")
         connection = self._require_connection()
-        query = "SELECT id, text, source, metadata, created_at FROM facts"
+        query = "SELECT id, text, source, metadata, created_at, embedding_model FROM facts"
         params: list[object] = []
         if source is not None:
             query += " WHERE source = ?"
@@ -126,6 +130,36 @@ class SQLiteFactStore:
         cursor = self._require_connection().execute("DELETE FROM facts WHERE id = ?", (identifier,))
         self._require_connection().commit()
         return cursor.rowcount == 1
+
+    def update(
+        self,
+        fact_id: str,
+        *,
+        text: str | None = None,
+        source: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        embedding_model: str | None = None,
+    ) -> Fact:
+        """Update an existing fact without changing its stable identifier."""
+        current = self.get(fact_id)
+        if current is None:
+            raise KeyError(f"fact does not exist: {fact_id}")
+        next_text = current.text if text is None else _required_text("text", text)
+        next_source = current.source if source is None else _required_text("source", source)
+        next_metadata = current.metadata if metadata is None else dict(metadata)
+        encoded_metadata = _encode_metadata(next_metadata)
+        model = current.embedding_model if embedding_model is None else _optional_model(embedding_model)
+        self._require_connection().execute(
+            "UPDATE facts SET text = ?, source = ?, metadata = ?, embedding_model = ? WHERE id = ?",
+            (next_text, next_source, encoded_metadata, model or "", current.id),
+        )
+        self._require_connection().commit()
+        return Fact(current.id, next_text, next_source, current.created_at, json.loads(encoded_metadata), model)
+
+    def clear(self) -> None:
+        """Remove all facts; used only by an explicit Mem0 collection reset."""
+        self._require_connection().execute("DELETE FROM facts")
+        self._require_connection().commit()
 
     def _require_connection(self) -> sqlite3.Connection:
         if self._connection is None:
@@ -154,6 +188,18 @@ def _as_utc(timestamp: datetime) -> datetime:
     return timestamp.astimezone(UTC)
 
 
+def _optional_model(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return _required_text("embedding_model", value)
+
+
+def _migrate_embedding_model(connection: sqlite3.Connection) -> None:
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(facts)")}
+    if "embedding_model" not in columns:
+        connection.execute("ALTER TABLE facts ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''")
+
+
 def _fact_from_row(row: sqlite3.Row) -> Fact:
     timestamp = datetime.fromisoformat(row["created_at"])
     return Fact(
@@ -162,4 +208,5 @@ def _fact_from_row(row: sqlite3.Row) -> Fact:
         source=row["source"],
         created_at=_as_utc(timestamp),
         metadata=json.loads(row["metadata"]),
+        embedding_model=(row["embedding_model"] or None),
     )

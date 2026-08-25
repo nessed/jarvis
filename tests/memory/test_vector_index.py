@@ -64,3 +64,26 @@ def test_index_requires_initialization_and_validates_vectors_and_ids(tmp_path):
         index.search([1, 0], limit=-1)
     assert index.search([1, 0], limit=0) == []
     index.close()
+
+
+def test_index_refuses_embedding_model_or_dimension_drift(tmp_path):
+    path = tmp_path / "memory.db"
+    index = SQLiteVecIndex(path, dimensions=2, embedding_model="nomic-embed-text")
+    index.initialize()
+    index.close()
+
+    with pytest.raises(RuntimeError, match="model drift"):
+        SQLiteVecIndex(path, dimensions=2, embedding_model="different-local-model").initialize()
+    with pytest.raises(RuntimeError, match="dimension drift"):
+        SQLiteVecIndex(path, dimensions=3, embedding_model="nomic-embed-text").initialize()
+
+
+def test_index_refuses_pre_identity_vectors_when_a_model_is_configured(tmp_path):
+    path = tmp_path / "memory.db"
+    old = SQLiteVecIndex(path, dimensions=2)
+    old.initialize()
+    old.upsert("unidentified", [1, 0])
+    old.close()
+
+    with pytest.raises(RuntimeError, match="identity is missing"):
+        SQLiteVecIndex(path, dimensions=2, embedding_model="nomic-embed-text").initialize()

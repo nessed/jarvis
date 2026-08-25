@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+
+from memory.mem0_wrapper import (
+    DEFAULT_FACT_EXTRACTION_MODEL,
+    Mem0WrapperError,
+    SQLiteVecMem0Store,
+    _attach_validating_retry,
+    _fact_extraction_model,
+    _fact_extraction_timeout,
+)
+
+
+def test_mem0_provider_delegates_insert_search_update_and_delete_to_local_sqlite(tmp_path):
+    provider = SQLiteVecMem0Store(
+        collection_name="jarvis_memories",
+        embedding_model_dims=2,
+        database_path=str(tmp_path / "memory.db"),
+        embedding_model="nomic-embed-text",
+    )
+    payload = {
+        "data": "The test project uses a generic memory.",
+        "user_id": "test-user",
+        "created_at": datetime(2026, 8, 25, tzinfo=UTC).isoformat(),
+    }
+    provider.insert([[1.0, 0.0]], payloads=[payload], ids=["memory-1"])
+
+    found = provider.search("generic memory", [1.0, 0.0], top_k=5, filters={"user_id": "test-user"})
+    assert [(row.id, row.payload["data"]) for row in found] == [("memory-1", payload["data"])]
+    assert provider.get("memory-1") is not None
+
+    provider.update("memory-1", vector=[0.0, 1.0], payload={**payload, "data": "Updated generic memory."})
+    assert provider.search("updated", [0.0, 1.0], top_k=1)[0].payload["data"] == "Updated generic memory."
+    provider.delete("memory-1")
+    assert provider.get("memory-1") is None
+    provider.close()
+
+
+def test_mem0_provider_keeps_logical_collections_separate(tmp_path):
+    database_path = str(tmp_path / "memory.db")
+    primary = SQLiteVecMem0Store("jarvis_memories", 2, database_path, "nomic-embed-text")
+    entities = SQLiteVecMem0Store("jarvis_memories_entities", 2, database_path, "nomic-embed-text")
+    primary.insert([[1, 0]], payloads=[{"data": "generic fact"}], ids=["fact"])
+    entities.insert([[1, 0]], payloads=[{"data": "generic entity"}], ids=["entity"])
+
+    assert [row.id for row in primary.search("fact", [1, 0])] == ["fact"]
+    assert [row.id for row in entities.search("entity", [1, 0])] == ["entity"]
+    primary.close()
+    entities.close()
+
+
+def test_mem0_validation_retries_once_then_raises():
+    class FakeLlm:
+        def __init__(self):
+            self.calls = 0
+
+        def generate_response(self, *args, **kwargs):
+            self.calls += 1
+            return '{"memory":[{"wrong":"shape"}]}'
+
+    class FakeMemory:
+        llm = FakeLlm()
+
+    memory = FakeMemory()
+    _attach_validating_retry(memory)
+    with pytest.raises(Mem0WrapperError, match="after one retry"):
+        memory.llm.generate_response(response_format={"type": "json_object"})
+    assert memory.llm.calls == 2
+
+
+def test_mem0_validation_accepts_shipped_adapter_json_shape():
+    class FakeLlm:
+        def generate_response(self, *args, **kwargs):
+            return '{"memory":[{"text":"A generic fact.","attributed_to":null}]}'
+
+    class FakeMemory:
+        llm = FakeLlm()
+
+    memory = FakeMemory()
+    _attach_validating_retry(memory)
+    assert memory.llm.generate_response(response_format={"type": "json_object"}).startswith("{")
+
+
+def test_mem0_fact_extraction_timeout_is_bounded_and_validated():
+    assert _fact_extraction_timeout({}) == 30.0
+    assert _fact_extraction_timeout({"OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS": "12.5"}) == 12.5
+    with pytest.raises(Mem0WrapperError, match="positive number"):
+        _fact_extraction_timeout({"OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS": "not-a-number"})
+    with pytest.raises(Mem0WrapperError, match="positive finite"):
+        _fact_extraction_timeout({"OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS": "0"})
+
+
+def test_mem0_fact_extraction_model_defaults_to_llama_and_allows_override():
+    assert DEFAULT_FACT_EXTRACTION_MODEL == "llama3.1:8b"
+    assert _fact_extraction_model({}) == "llama3.1:8b"
+    assert _fact_extraction_model({"OLLAMA_FACT_EXTRACTION_MODEL": "qwen3:4b"}) == "qwen3:4b"
+    assert _fact_extraction_model({"OLLAMA_FACT_EXTRACTION_MODEL": " "}) == "llama3.1:8b"

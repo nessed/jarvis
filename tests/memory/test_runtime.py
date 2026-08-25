@@ -9,6 +9,7 @@ class FakeEmbeddings:
 
     def __init__(self, config):
         self.config = config
+        self.model = config.model
 
     def embed_one(self, text):
         type(self).calls.append(text)
@@ -37,9 +38,10 @@ class FakeStore:
 class FakeIndex:
     instances: list["FakeIndex"] = []
 
-    def __init__(self, path, *, dimensions):
+    def __init__(self, path, *, dimensions, embedding_model=None):
         self.path = path
         self.dimensions = dimensions
+        self.embedding_model = embedding_model
         self.initialized = False
         self.closed = False
         type(self).instances.append(self)
@@ -76,6 +78,7 @@ def test_open_local_memory_probes_fixed_text_before_creating_local_stores(monkey
     assert FakeEmbeddings.calls == [runtime.DIMENSION_PROBE]
     assert FakeStore.instances[0].initialized is True
     assert FakeIndex.instances[0].dimensions == 3
+    assert FakeIndex.instances[0].embedding_model == "user-selected-local-model"
     assert opened.store is FakeStore.instances[0]
     assert opened.index is FakeIndex.instances[0]
     opened.close()

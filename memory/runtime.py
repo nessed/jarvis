@@ -12,6 +12,7 @@ from memory.embeddings import OllamaEmbeddingConfig, OllamaEmbeddingProvider
 from memory.service import MemoryService
 from memory.store import SQLiteFactStore
 from memory.vector_index import SQLiteVecIndex
+from memory.mem0_wrapper import Mem0Memory, open_mem0_memory
 
 
 DIMENSION_PROBE = "jarvis local memory vector dimension probe"
@@ -29,6 +30,28 @@ class LocalMemoryRuntime:
         _close_resources(self.index, self.store)
 
     def __enter__(self) -> "LocalMemoryRuntime":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
+@dataclass
+class LocalMem0Runtime:
+    """Bus-facing Mem0 runtime, backed exclusively by the local SQLite stack."""
+
+    memory: Mem0Memory
+
+    def remember(self, text: str, **kwargs: object) -> list[dict[str, object]]:
+        return self.memory.remember(text, **kwargs)  # type: ignore[arg-type]
+
+    def recall(self, query: str, **kwargs: object) -> list[dict[str, object]]:
+        return self.memory.recall(query, **kwargs)  # type: ignore[arg-type]
+
+    def close(self) -> None:
+        self.memory.close()
+
+    def __enter__(self) -> "LocalMem0Runtime":
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -55,7 +78,7 @@ def open_local_memory(
     # Do not create either database handle until the fixed, non-personal probe
     # proves that the explicitly configured local model is usable.
     store = SQLiteFactStore(path)
-    index = SQLiteVecIndex(path, dimensions=dimensions)
+    index = SQLiteVecIndex(path, dimensions=dimensions, embedding_model=embeddings.model)
     try:
         store.initialize()
         index.initialize()
@@ -68,6 +91,19 @@ def open_local_memory(
         store=store,
         index=index,
     )
+
+
+def open_local_mem0_memory(
+    database_path: str | Path | None = None,
+    *,
+    environ: dict[str, str] | None = None,
+) -> LocalMem0Runtime:
+    """Open the specified Mem0 memory surface for bus ``remember``/``recall`` calls."""
+    if environ is None:
+        load_dotenv()
+    settings = os.environ if environ is None else environ
+    path = Path(database_path or settings.get("MEMORY_DB_PATH", "memory.db"))
+    return LocalMem0Runtime(memory=open_mem0_memory(path, environ=settings))
 
 
 def _close_resources(*resources: object) -> None:

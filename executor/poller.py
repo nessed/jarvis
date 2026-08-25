@@ -10,24 +10,62 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from dotenv import load_dotenv
 
-from db.jobs import Job, JobRepository, checkpoint, claim_next, complete, fail
+from db.jobs import (
+    Job,
+    JobRepository,
+    checkpoint,
+    claim_next,
+    complete,
+    retry_or_dead_letter,
+    set_timeout,
+)
 from router import RoutedResult, route
 
 
 JobHandler = Callable[[Job], None]
-JobHandlers = Mapping[str, JobHandler]
 DEFAULT_POLL_INTERVAL_SECONDS = 5.0
+DEFAULT_HANDLER_TIMEOUT_SECONDS = 300.0
+BACKOFF_BASE_SECONDS = 5.0
+BACKOFF_CAP_SECONDS = 300.0
 logger = logging.getLogger(__name__)
 
 
 class UnknownJobKindError(Exception):
     """Raised when a claimed job has no explicitly registered handler."""
+
+
+class _HandlerTimeoutError(Exception):
+    """Raised in-process when a handler exceeds its registered timeout."""
+
+
+@dataclass(frozen=True)
+class HandlerRegistration:
+    """A job handler paired with the timeout that applies to it."""
+
+    handler: JobHandler
+    timeout_seconds: float = DEFAULT_HANDLER_TIMEOUT_SECONDS
+
+
+JobHandlers = Mapping[str, "HandlerRegistration | JobHandler"]
+
+# The handler registry the executor consults at startup, by job kind. Empty
+# by design: this lane builds the retry/timeout/dead-letter mechanism only
+# and registers no specific handler (not memory_extract, not anything else).
+# A later phase adds entries here, e.g. {"flp_sort": HandlerRegistration(...)}.
+DEFAULT_HANDLERS: dict[str, HandlerRegistration] = {}
+
+
+def backoff_seconds(attempts: int) -> float:
+    """Exponential backoff with a cap: base 5s, cap 300s (5 min)."""
+    return min(BACKOFF_CAP_SECONDS, BACKOFF_BASE_SECONDS * (2 ** max(0, attempts - 1)))
 
 
 def poll_once(
@@ -40,13 +78,33 @@ def poll_once(
 
     ``handler`` remains an explicit per-call override for diagnostics and
     compatibility. Otherwise ``handlers`` supplies the registered handler for
-    the claimed job's kind. Missing kinds fail deterministically. Every stored
-    diagnostic uses only an exception type, so payloads or provider details
-    cannot leak into the durable queue.
+    the claimed job's kind, either as a raw callable (wrapped with the
+    default timeout) or an explicit ``HandlerRegistration`` for a per-kind
+    timeout. An unregistered kind is a clear, logged, non-fatal rejection —
+    it neither crashes the poller nor is a silent failure — and is routed
+    through the same retry/backoff/dead-letter path as any other failure, so
+    a kind registered in a later deploy can still succeed on retry. A
+    handler that exceeds its timeout is likewise retried, not lost. Every
+    stored diagnostic uses only an exception type, so payloads or provider
+    details cannot leak into the durable queue.
     """
     job = claim_next(repository=repository)
     if job is None:
         return None
+
+    try:
+        registration = _resolve_registration(job, handler=handler, handlers=handlers)
+    except UnknownJobKindError:
+        logger.warning("rejected job with unregistered kind (job=%s)", job.id)
+        return retry_or_dead_letter(
+            job.id,
+            "no handler registered for job kind",
+            backoff_seconds(job.attempts),
+            repository=repository,
+        )
+
+    if round(registration.timeout_seconds) != job.timeout_seconds:
+        set_timeout(job.id, round(registration.timeout_seconds), repository=repository)
 
     checkpoint(
         job.id,
@@ -54,25 +112,70 @@ def poll_once(
         repository=repository,
     )
     try:
-        _resolve_handler(job, handler=handler, handlers=handlers)(job)
+        _run_with_timeout(registration, job)
+    except _HandlerTimeoutError:
+        logger.warning("job handler exceeded its timeout (job=%s)", job.id)
+        return retry_or_dead_letter(
+            job.id,
+            "executor handler timed out (HandlerTimeoutError)",
+            backoff_seconds(job.attempts),
+            repository=repository,
+        )
     except Exception as exc:
-        return fail(
+        return retry_or_dead_letter(
             job.id,
             f"executor handler failed ({type(exc).__name__})",
+            backoff_seconds(job.attempts),
             repository=repository,
         )
     return complete(job.id, repository=repository)
 
 
-def _resolve_handler(
+def _resolve_registration(
     job: Job, *, handler: JobHandler | None, handlers: JobHandlers | None
-) -> JobHandler:
+) -> HandlerRegistration:
     """Return the explicit override or registered handler for a job kind."""
     if handler is not None:
-        return handler
-    if handlers is not None and (registered_handler := handlers.get(job.kind)) is not None:
-        return registered_handler
+        return HandlerRegistration(handler, DEFAULT_HANDLER_TIMEOUT_SECONDS)
+    if handlers is not None:
+        entry = handlers.get(job.kind)
+        if entry is not None:
+            if isinstance(entry, HandlerRegistration):
+                return entry
+            return HandlerRegistration(entry, DEFAULT_HANDLER_TIMEOUT_SECONDS)
     raise UnknownJobKindError
+
+
+def _run_with_timeout(registration: HandlerRegistration, job: Job) -> None:
+    """Run the handler on a daemon thread bounded by its registered timeout.
+
+    A plain ``threading.Thread`` is used rather than
+    ``concurrent.futures.ThreadPoolExecutor`` because pool workers are
+    non-daemon by default and register an atexit hook that blocks process
+    exit until a hung handler returns — exactly what a timeout must not do.
+    On timeout the poller moves on immediately; the abandoned thread is not
+    killed (Python cannot preempt a running thread) and is a documented
+    limitation of in-process timeout enforcement. Durable recovery from a
+    handler — or whole executor — that never returns is the database-side
+    stale-lease reclaim in ``claim_next_job``, not this function.
+    """
+    outcome: dict[str, BaseException] = {}
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            registration.handler(job)
+        except BaseException as exc:  # re-raised on the poller thread below
+            outcome["error"] = exc
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    if not done.wait(timeout=registration.timeout_seconds):
+        raise _HandlerTimeoutError(f"handler exceeded {registration.timeout_seconds}s")
+    if "error" in outcome:
+        raise outcome["error"]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -93,7 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         while True:
             try:
-                poll_once()
+                poll_once(handlers=DEFAULT_HANDLERS)
             except Exception as exc:
                 if args.once:
                     raise

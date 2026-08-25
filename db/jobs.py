@@ -19,6 +19,10 @@ from uuid import UUID
 JsonObject = dict[str, Any]
 
 
+DEFAULT_MAX_ATTEMPTS = 5
+DEFAULT_TIMEOUT_SECONDS = 300
+
+
 @dataclass(frozen=True)
 class Job:
     """A job as returned by the queue."""
@@ -31,6 +35,9 @@ class Job:
     run_after: datetime | str
     created_at: datetime | str
     updated_at: datetime | str
+    attempts: int = 0
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "Job":
@@ -43,13 +50,22 @@ class Job:
             run_after=row["run_after"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            attempts=int(row.get("attempts", 0) or 0),
+            max_attempts=int(row.get("max_attempts", DEFAULT_MAX_ATTEMPTS) or DEFAULT_MAX_ATTEMPTS),
+            timeout_seconds=int(row.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS) or DEFAULT_TIMEOUT_SECONDS),
         )
 
 
 class JobRepository(Protocol):
     """Repository contract, kept small so callers can test without Supabase."""
 
-    def enqueue(self, kind: str, payload: JsonObject, run_after: datetime | None = None) -> Job: ...
+    def enqueue(
+        self,
+        kind: str,
+        payload: JsonObject,
+        run_after: datetime | None = None,
+        max_attempts: int | None = None,
+    ) -> Job: ...
 
     def claim_next(self, kind_filter: str | None = None) -> Job | None: ...
 
@@ -58,6 +74,10 @@ class JobRepository(Protocol):
     def complete(self, job_id: str | UUID) -> Job: ...
 
     def fail(self, job_id: str | UUID, err: str) -> Job: ...
+
+    def retry_or_dead_letter(self, job_id: str | UUID, err: str, delay_seconds: float = 0) -> Job: ...
+
+    def set_timeout(self, job_id: str | UUID, timeout_seconds: int) -> Job: ...
 
 
 class SupabaseJobsRepository:
@@ -81,10 +101,18 @@ class SupabaseJobsRepository:
             raise RuntimeError("Install the pinned Supabase dependency first") from exc
         return cls(create_client(url, key))
 
-    def enqueue(self, kind: str, payload: JsonObject, run_after: datetime | None = None) -> Job:
+    def enqueue(
+        self,
+        kind: str,
+        payload: JsonObject,
+        run_after: datetime | None = None,
+        max_attempts: int | None = None,
+    ) -> Job:
         record: JsonObject = {"kind": kind, "payload": payload}
         if run_after is not None:
             record["run_after"] = run_after.isoformat()
+        if max_attempts is not None:
+            record["max_attempts"] = max_attempts
         response = self._client.table("jobs").insert(record).execute()
         return _one_job(response)
 
@@ -109,6 +137,24 @@ class SupabaseJobsRepository:
     def fail(self, job_id: str | UUID, err: str) -> Job:
         response = self._client.rpc(
             "fail_job", {"p_job_id": str(job_id), "p_error": err}
+        ).execute()
+        return _one_job(response)
+
+    def retry_or_dead_letter(self, job_id: str | UUID, err: str, delay_seconds: float = 0) -> Job:
+        response = self._client.rpc(
+            "retry_or_dead_letter_job",
+            {
+                "p_job_id": str(job_id),
+                "p_error": err,
+                "p_delay_seconds": int(round(max(0.0, delay_seconds))),
+            },
+        ).execute()
+        return _one_job(response)
+
+    def set_timeout(self, job_id: str | UUID, timeout_seconds: int) -> Job:
+        response = self._client.rpc(
+            "set_job_timeout",
+            {"p_job_id": str(job_id), "p_timeout_seconds": int(timeout_seconds)},
         ).execute()
         return _one_job(response)
 
@@ -162,9 +208,10 @@ def enqueue(
     payload: JsonObject,
     run_after: datetime | None = None,
     *,
+    max_attempts: int | None = None,
     repository: JobRepository | None = None,
 ) -> Job:
-    return _repository_or_default(repository).enqueue(kind, payload, run_after)
+    return _repository_or_default(repository).enqueue(kind, payload, run_after, max_attempts)
 
 
 def claim_next(
@@ -187,3 +234,19 @@ def fail(
     job_id: str | UUID, err: str, *, repository: JobRepository | None = None
 ) -> Job:
     return _repository_or_default(repository).fail(job_id, err)
+
+
+def retry_or_dead_letter(
+    job_id: str | UUID,
+    err: str,
+    delay_seconds: float = 0,
+    *,
+    repository: JobRepository | None = None,
+) -> Job:
+    return _repository_or_default(repository).retry_or_dead_letter(job_id, err, delay_seconds)
+
+
+def set_timeout(
+    job_id: str | UUID, timeout_seconds: int, *, repository: JobRepository | None = None
+) -> Job:
+    return _repository_or_default(repository).set_timeout(job_id, timeout_seconds)

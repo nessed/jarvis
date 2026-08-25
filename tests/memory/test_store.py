@@ -75,3 +75,20 @@ def test_store_requires_explicit_initialization_and_validates_inputs(tmp_path):
     with pytest.raises(ValueError, match="limit"):
         store.list_facts(limit=-1)
     store.close()
+
+
+def test_initialize_migrates_existing_facts_with_embedding_model_column(tmp_path):
+    path = tmp_path / "memory.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE facts (id TEXT PRIMARY KEY, text TEXT NOT NULL, source TEXT NOT NULL, metadata TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO facts VALUES ('old', 'old generic fact', 'test', '{}', '2026-08-25T00:00:00+00:00')"
+        )
+
+    store = SQLiteFactStore(path)
+    store.initialize()
+    assert store.get("old").embedding_model is None
+    assert "embedding_model" in {row[1] for row in sqlite3.connect(path).execute("PRAGMA table_info(facts)")}
+    store.close()

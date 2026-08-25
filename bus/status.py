@@ -52,6 +52,25 @@ class QueueStatusReader:
             return None
         return {field: data[0][field] for field in _LAST_JOB_FIELDS if field in data[0]}
 
+    def retry_health(self) -> dict[str, int]:
+        """Read-only count of dead-lettered jobs and jobs that have been retried.
+
+        Additive to the existing status surface: never selects payloads or
+        checkpoints, mirroring ``queue_depths``' safe-field discipline.
+        """
+        response = self._client.table("jobs").select("status,attempts").execute()
+        dead_letter_count = 0
+        retried_job_count = 0
+        for row in response.data or []:
+            if not isinstance(row, Mapping):
+                continue
+            if row.get("status") == "dead_letter":
+                dead_letter_count += 1
+            attempts = row.get("attempts")
+            if isinstance(attempts, int) and attempts > 1:
+                retried_job_count += 1
+        return {"dead_letter_count": dead_letter_count, "retried_job_count": retried_job_count}
+
 
 async def _resolve(dependency: StatusDependency) -> Any:
     result = dependency()
@@ -63,19 +82,34 @@ async def status_payload(
     queue_depths: StatusDependency,
     last_job: StatusDependency,
     provider_health: StatusDependency,
+    retry_health: StatusDependency | None = None,
 ) -> dict[str, Any]:
-    """Build the status shape from supplied data providers, not global services."""
+    """Build the status shape from supplied data providers, not global services.
+
+    ``retry_health`` is optional and additive: omitting it (every existing
+    caller, today) reproduces the exact prior payload shape. Passing it adds
+    a ``retry_health`` key with attempts/dead-letter counts, without
+    restructuring the three original fields.
+    """
 
     depths, latest, providers = await _resolve(queue_depths), await _resolve(last_job), await _resolve(provider_health)
-    return {
+    payload: dict[str, Any] = {
         "queue_depth_by_status": dict(depths) if isinstance(depths, Mapping) else depths,
         "last_job": latest,
         "provider_health": dict(providers) if isinstance(providers, Mapping) else providers,
     }
+    if retry_health is not None:
+        retries = await _resolve(retry_health)
+        payload["retry_health"] = dict(retries) if isinstance(retries, Mapping) else retries
+    return payload
 
 
 def create_status_handler(
-    *, queue_depths: StatusDependency, last_job: StatusDependency, provider_health: StatusDependency
+    *,
+    queue_depths: StatusDependency,
+    last_job: StatusDependency,
+    provider_health: StatusDependency,
+    retry_health: StatusDependency | None = None,
 ) -> Callable[[Request], Awaitable[dict[str, Any]]]:
     """Create a FastAPI-compatible handler that integration can mount at `/status`."""
 
@@ -84,6 +118,7 @@ def create_status_handler(
             queue_depths=queue_depths,
             last_job=last_job,
             provider_health=provider_health,
+            retry_health=retry_health,
         )
 
     return handler

@@ -207,7 +207,7 @@ Hard rules that never bend:
 
 **1.2 Choosing the corpus — you, one sitting.** Decide the ingest list: which notes folders, which WhatsApp chats. Export chats from your phone (per-chat → Export, no media), drop the .txt files into `ingest/`. Nothing enters memory that you didn't put in this folder — that's the privacy boundary, and it's yours to hold.
 
-**1.3 Backfill pipeline — CLI agent.** Chunker (per-message for chats, ~500-token chunks for notes), local batch embedding (free), Mem0 fact-extraction with LLM calls routed through Gemini Flash / NIM rungs — batched under free-tier daily caps, spilling to DeepSeek Flash off-peak if the corpus is big. Resumable job (checkpoint = file + offset) so an interrupted backfill continues instead of restarting.
+**1.3 Backfill pipeline — CLI agent.** Chunker (per-message for chats, ~500-token chunks for notes), local batch embedding (free), Mem0 fact-extraction through the existing local Ollama runtime using constrained JSON-schema structured decoding. NVIDIA NIM is geo-blocked from Pakistan, and Gemini's free tier may train on prompts, so neither may receive private memory content. Resumable job (checkpoint = file + offset) so an interrupted backfill continues instead of restarting.
 
 **1.4 Wire in + review — agent, then you.** Agent makes every inbound message do recall() before the model call and remember() after. Then you interrogate it: ask ten things it should know from the backfill. Wrong or creepy facts → you delete them and tell the agent which pattern to exclude (e.g. stop extracting "facts" from forwarded memes). The agent cannot judge whether a remembered fact about your life is right; that check is permanently yours.
 

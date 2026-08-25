@@ -18,11 +18,14 @@ import sqlite_vec
 class SQLiteVecIndex:
     """A local persistent nearest-neighbour index keyed by stable fact IDs."""
 
-    def __init__(self, database_path: str | Path = "memory.db", *, dimensions: int) -> None:
+    def __init__(
+        self, database_path: str | Path = "memory.db", *, dimensions: int, embedding_model: str | None = None
+    ) -> None:
         if isinstance(dimensions, bool) or not isinstance(dimensions, int) or dimensions <= 0:
             raise ValueError("dimensions must be a positive integer")
         self.path = Path(database_path)
         self.dimensions = dimensions
+        self.embedding_model = _validate_model(embedding_model)
         self._connection: sqlite3.Connection | None = None
 
     def initialize(self) -> None:
@@ -41,6 +44,7 @@ class SQLiteVecIndex:
                 );
                 """
             )
+            _verify_index_identity(connection, dimensions=self.dimensions, embedding_model=self.embedding_model)
             connection.execute(
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS fact_vectors USING vec0(embedding float[{self.dimensions}])"
             )
@@ -98,6 +102,25 @@ class SQLiteVecIndex:
         ).fetchall()
         return [(str(row[0]), float(row[1])) for row in rows]
 
+    def delete(self, fact_id: str) -> bool:
+        """Remove one vector mapping and its sqlite-vec row."""
+        identifier = _required_fact_id(fact_id)
+        connection = self._require_connection()
+        row = connection.execute("SELECT vector_rowid FROM vector_fact_ids WHERE fact_id = ?", (identifier,)).fetchone()
+        if row is None:
+            return False
+        connection.execute("DELETE FROM fact_vectors WHERE rowid = ?", (row[0],))
+        connection.execute("DELETE FROM vector_fact_ids WHERE vector_rowid = ?", (row[0],))
+        connection.commit()
+        return True
+
+    def clear(self) -> None:
+        """Remove every vector as part of an explicit collection reset."""
+        connection = self._require_connection()
+        connection.execute("DELETE FROM fact_vectors")
+        connection.execute("DELETE FROM vector_fact_ids")
+        connection.commit()
+
     def _require_connection(self) -> sqlite3.Connection:
         if self._connection is None:
             raise RuntimeError("SQLiteVecIndex is not initialized; call initialize() first")
@@ -117,6 +140,44 @@ def _required_fact_id(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("fact_id must be a non-empty string")
     return value
+
+
+def _validate_model(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("embedding_model must be a non-empty string when configured")
+    return value.strip()
+
+
+def _verify_index_identity(connection: sqlite3.Connection, *, dimensions: int, embedding_model: str | None) -> None:
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS vector_index_identity (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), dimensions INTEGER NOT NULL, embedding_model TEXT NOT NULL)"
+    )
+    row = connection.execute("SELECT dimensions, embedding_model FROM vector_index_identity WHERE singleton = 1").fetchone()
+    if row is None:
+        if embedding_model is not None:
+            existing_vectors = connection.execute(
+                "SELECT COUNT(*) FROM vector_fact_ids"
+            ).fetchone()[0]
+            if existing_vectors:
+                raise RuntimeError(
+                    "sqlite-vec embedding model identity is missing for existing vectors; "
+                    "migrate or rebuild vectors explicitly before opening this index"
+                )
+            connection.execute(
+                "INSERT INTO vector_index_identity (singleton, dimensions, embedding_model) VALUES (1, ?, ?)",
+                (dimensions, embedding_model),
+            )
+        return
+    stored_dimensions, stored_model = int(row[0]), str(row[1])
+    if stored_dimensions != dimensions:
+        raise RuntimeError(f"sqlite-vec index dimension drift: stored {stored_dimensions}, configured {dimensions}")
+    if embedding_model is None or stored_model != embedding_model:
+        raise RuntimeError(
+            "sqlite-vec embedding model drift: stored "
+            f"{stored_model!r}, configured {embedding_model!r}; choose the original model or migrate vectors explicitly"
+        )
 
 
 def _encode_vector(vector: Sequence[float], *, dimensions: int) -> bytes:

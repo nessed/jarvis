@@ -56,11 +56,16 @@ class OllamaEmbeddingConfig:
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise EmbeddingError("Ollama embedding timeout must be a positive finite number.")
 
-        parsed = urlparse(self.base_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise EmbeddingError("OLLAMA_BASE_URL must be a valid local HTTP URL.")
-        if parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}:
-            raise EmbeddingError("Ollama embeddings must use a loopback URL so memory text stays local.")
+        validate_ollama_loopback_url(self.base_url)
+
+
+def validate_ollama_loopback_url(base_url: str) -> None:
+    """Reject every non-loopback Ollama endpoint before memory text can leave disk."""
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise EmbeddingError("OLLAMA_BASE_URL must be a valid local HTTP URL.")
+    if parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}:
+        raise EmbeddingError("Ollama embeddings must use a loopback URL so memory text stays local.")
 
 
 class OllamaEmbeddingProvider:
