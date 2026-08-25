@@ -8,6 +8,7 @@ from memory.mem0_wrapper import (
     COMPACT_ADDITIVE_EXTRACTION_PROMPT,
     DEFAULT_FACT_EXTRACTION_MODEL,
     ExtractionResponse,
+    Mem0Memory,
     Mem0WrapperError,
     SQLiteVecMem0Store,
     _attach_validating_retry,
@@ -131,6 +132,25 @@ def test_install_compact_extraction_prompt_patches_the_mem0_module_global():
         assert mem0_main.ADDITIVE_EXTRACTION_PROMPT == COMPACT_ADDITIVE_EXTRACTION_PROMPT
     finally:
         mem0_main.ADDITIVE_EXTRACTION_PROMPT = original
+
+
+def test_mem0_recall_passes_user_id_through_filters_not_as_a_top_level_kwarg():
+    # Installed mem0ai 2.0.19's Memory.search() raises ValueError if user_id is
+    # passed as a top-level kwarg instead of inside filters={...}; a live smoke
+    # test through open_local_mem0_memory().recall() hit exactly this.
+    class FakeMemory:
+        def __init__(self):
+            self.calls = []
+
+        def search(self, query, **kwargs):
+            self.calls.append((query, kwargs))
+            return {"results": []}
+
+    fake_memory = FakeMemory()
+    memory = Mem0Memory(fake_memory, vector_store=None)
+    memory.recall("when does it open?", user_id="jarvis", limit=4)
+
+    assert fake_memory.calls == [("when does it open?", {"filters": {"user_id": "jarvis"}, "top_k": 4})]
 
 
 def test_install_compact_extraction_prompt_refuses_to_patch_a_drifted_shipped_prompt(monkeypatch):

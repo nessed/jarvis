@@ -279,7 +279,10 @@ class Mem0Memory:
         return self._memory.add(text, user_id=user_id, metadata=dict(metadata or {}))
 
     def recall(self, query: str, *, user_id: str = "jarvis", limit: int = 10) -> list[dict[str, Any]]:
-        return self._memory.search(query, user_id=user_id, limit=limit)
+        # Installed mem0ai 2.0.19's Memory.search() rejects user_id/agent_id/run_id
+        # as top-level kwargs (ValueError: "Use filters={'user_id': ...} instead")
+        # and calls the result-count parameter ``top_k``, not ``limit``.
+        return self._memory.search(query, filters={"user_id": user_id}, top_k=limit)
 
     def close(self) -> None:
         self._vector_store.close()

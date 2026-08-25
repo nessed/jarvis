@@ -150,6 +150,26 @@ if a future mem0ai upgrade already shrank/removed the shipped prompt before
 this patches it. The wrapper's `LlmConfig` now also sets `max_tokens=128`
 (-> `num_predict`), previously unset and defaulting to 2000.
 
+**Live end-to-end smoke (26 August 2026, passed after one more fix):** ran
+`open_local_mem0_memory()` / `remember()` / `recall()` directly (not raw
+`ollama` calls). `remember()` succeeded on the first try, 35.146s cold,
+correctly extracting the fact via the compact prompt. `recall()` then failed:
+`ValueError: Top-level entity parameters frozenset({'user_id'}) are not
+supported in search(). Use filters={'user_id': '...'} instead.` — a second,
+independent bug: `Mem0Memory.recall()` called
+`self._memory.search(query, user_id=user_id, limit=limit)`, but installed
+mem0ai 2.0.19's `Memory.search(query, *, top_k=20, filters=None, ...)`
+rejects `user_id`/`agent_id`/`run_id` as top-level kwargs and has no `limit`
+parameter (it's `top_k`; the old `limit=limit` silently fell into unused
+`**kwargs`). Fixed to `search(query, filters={"user_id": user_id},
+top_k=limit)`, with a new regression test
+(`test_mem0_recall_passes_user_id_through_filters_not_as_a_top_level_kwarg`).
+Re-ran `recall()` after the fix: it correctly returned the previously
+remembered fact with a similarity score. Full exact commands/output in
+`docs/context.md`. Both fixes are live-smoke-verified but still uncommitted.
+Focused tests: `.venv\Scripts\python.exe -m pytest -q tests\memory` ->
+**45 passed**.
+
 Re-measured per the current authorized instructions (raw `ollama` client
 calls against the real compact system prompt + the real
 `generate_additive_extraction_prompt` user prompt, since Mem0's adapter

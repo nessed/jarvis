@@ -1,14 +1,18 @@
 # JARVIS project context
 
-Last updated: 26 August 2026 — reconciled. Two parallel lanes landed and
-committed in `8fb271f` (queue durability: attempts/backoff/timeout/dead-letter
-mechanism; and the Mem0 self-host wrapper baseline). A third change — the
-Mem0 300s-extraction-timeout root-cause fix — is complete but **uncommitted**
-on top of that. This pass collapses superseded diagnostic entries (failed
-Qwen/Llama timeout attempts, the invalid first model comparison, the blocked
-async-memory plan) into short historical notes; their full text is still in
-git history (see `3256779`, `8fb271f`) if needed. Current blockers below
-reflect actual git/tree state, not each intermediate attempt.
+Last updated: 26 August 2026 — reconciled, then a live end-to-end Mem0 smoke
+test was run. Two parallel lanes landed and committed in `8fb271f` (queue
+durability: attempts/backoff/timeout/dead-letter mechanism; and the Mem0
+self-host wrapper baseline). Two more fixes are complete and live-smoke-
+verified but **uncommitted** on top of that: the Mem0 300s-extraction-timeout
+root-cause fix (compact prompt), and a `Mem0Memory.recall()` bug the live
+smoke test surfaced (`search()` called with an unsupported top-level
+`user_id`/`limit` shape). This pass also collapses superseded diagnostic
+entries (failed Qwen/Llama timeout attempts, the invalid first model
+comparison, the blocked async-memory plan) into short historical notes; their
+full text is still in git history (see `3256779`, `8fb271f`) if needed.
+Current blockers below reflect actual git/tree state, not each intermediate
+attempt.
 
 ## Current state
 
@@ -47,10 +51,11 @@ Phase 1's concrete remaining gaps:
    an optional `retry_health()` reader, but it is not yet wired into the real
    `/status` route in `bus/main.py`.
 4. **Mem0's extraction-timeout fix is uncommitted.** The compact-prompt fix
-   (below) changes `memory/mem0_wrapper.py` and
-   `tests/memory/test_mem0_wrapper.py` and is only verified via raw `ollama`
-   client calls replicating the real extraction call — it has not yet been
-   smoke-tested end-to-end through `open_local_mem0_memory()` / `remember()`.
+   and a second bug it surfaced in `Mem0Memory.recall()` (below) are both
+   fixed and live-smoke-verified end-to-end through
+   `open_local_mem0_memory()` / `remember()` / `recall()`, but the changes to
+   `memory/mem0_wrapper.py` and `tests/memory/test_mem0_wrapper.py` are still
+   local and uncommitted.
 5. **Meta's stored access token is invalid.** A read-only Graph API check
    returned OAuth error 190 as of 25 August 2026; outbound Graph API sends
    are blocked until it is regenerated and smoke-tested.
@@ -234,9 +239,42 @@ prompt/caps for both models: **llama3.1:8b — 10/10 schema-valid, median
 stays `llama3.1:8b`, now confirmed by this fair comparison. Focused tests:
 `.venv\Scripts\python.exe -m pytest -q tests\memory` → **44 passed**.
 
-**Still needed:** commit this fix once a live end-to-end smoke through
-`open_local_mem0_memory()` / `Mem0Memory.remember()` (not just raw `ollama`
-calls) has been run and recorded here.
+**Live end-to-end smoke, 26 August 2026 (passed, after one more fix):** ran
+the actual wrapper entry point, not raw `ollama` calls. Command:
+`PYTHONPATH=. .venv/Scripts/python.exe -c "from memory.runtime import open_local_mem0_memory; runtime = open_local_mem0_memory('memory/mem0-smoke-compact-prompt.db', environ={'OLLAMA_EMBEDDING_MODEL': 'nomic-embed-text', 'OLLAMA_BASE_URL': 'http://127.0.0.1:11434', 'OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS': '60'}); runtime.remember('The generic workshop opens at nine.'); runtime.recall('When does the generic workshop open?'); runtime.close()"`.
+`remember()` succeeded first try: `35.146s` (cold — Ollama had just been
+(re)started for this test, consistent with the earlier ~36s cold measurement),
+returning `{'results': [{'id': '...', 'memory': 'The generic workshop opens at
+nine', 'event': 'ADD'}]}` — the compact prompt correctly drove real
+extraction end-to-end.
+
+`recall()` then failed with `ValueError: Top-level entity parameters
+frozenset({'user_id'}) are not supported in search(). Use
+filters={'user_id': '...'} instead.` — a second, independent bug in
+`memory/mem0_wrapper.py`'s `Mem0Memory.recall()`, unrelated to the extraction
+prompt: it called `self._memory.search(query, user_id=user_id, limit=limit)`,
+but installed mem0ai 2.0.19's `Memory.search(query, *, top_k=20,
+filters=None, ...)` rejects `user_id`/`agent_id`/`run_id` as top-level kwargs
+and has no `limit` parameter at all (the count parameter is `top_k`; the old
+call's `limit=limit` was silently absorbed into unused `**kwargs`). Fixed,
+uncommitted, in the same file: `search(query, filters={"user_id": user_id},
+top_k=limit)`. Added regression test
+`test_mem0_recall_passes_user_id_through_filters_not_as_a_top_level_kwarg`
+(fake-memory call-shape assertion, no live Ollama needed). Re-ran the same
+smoke command's `recall()` call after the fix: `RECALLED {'results':
+[{'id': 'dde54620-76f3-4bea-9955-9d4d217bf689', 'memory': 'The generic
+workshop opens at nine', 'hash': '4fedaf9ba4b65ce58fd365981f3214ff',
+'metadata': {'_mem0_collection': 'jarvis_memories'}, 'score':
+0.7087123951006583, 'created_at': '2026-08-25T20:53:24.009514+00:00',
+'updated_at': '2026-08-25T20:53:24.009514+00:00', 'user_id': 'jarvis',
+'attributed_to': 'user'}]}` — round trip confirmed. The temporary
+`memory/mem0-smoke-compact-prompt.db` and
+`memory/mem0-smoke-compact-prompt.mem0-history.db` were deleted after this
+result was recorded. No personal data was read or ingested. Focused tests:
+`.venv\Scripts\python.exe -m pytest -q tests\memory` → **45 passed**.
+
+**Still needed:** commit this fix (extraction prompt patch + the `recall()`
+filters fix) now that both are live-smoke-verified.
 
 ## Phase 1 offline foundations
 
