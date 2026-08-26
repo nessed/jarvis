@@ -8,20 +8,26 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `fb2eead Wire retry_health into /status and redact the Meta verify token from access logs` on `main`, 3 ahead, 0 behind origin.
+**HEAD** `5b9c7d6 Close the retry_health and verify-token-logging blockers in state.md` on `main`, 4 ahead, 0 behind origin.
 
-**Working tree:** 1 changed
+**Working tree:** 6 changed
 
 ```
-  M  docs/state.md
+  A  ingest/mem0_sink.py
+   M memory/mem0_wrapper.py
+  A  tests/ingest/test_mem0_sink.py
+   M tests/memory/test_mem0_wrapper.py
+  A  tests/tools/test_run_backfill.py
+  A  tools/run_backfill.py
 ```
 
-**Offline suite:** 137 passed, 1 deselected in 4.58s _(recorded 2026-08-26)_
+**Offline suite:** 147 passed, 1 deselected in 4.79s _(recorded 2026-08-26)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `5b9c7d6` Close the retry_health and verify-token-logging blockers in state.md  _(2026-08-26)_
 - `fb2eead` Wire retry_health into /status and redact the Meta verify token from access logs  _(2026-08-26)_
 - `aea3109` Dedup whatsapp_webhook by Meta's message id  _(2026-08-26)_
 - `e889732` Record the first live WhatsApp round trip through whatsapp_webhook  _(2026-08-26)_
@@ -29,7 +35,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `eb510d7` Split the context system by rate of change  _(2026-08-26)_
 - `6e4420b` Document the whatsapp_webhook handler and fix the pytest command  _(2026-08-26)_
 - `27663d9` Wire the whatsapp_webhook handler into the executor  _(2026-08-26)_
-- `24cf31c` Rewrite README in plain language  _(2026-08-26)_
 
 <!-- END GENERATED -->
 
