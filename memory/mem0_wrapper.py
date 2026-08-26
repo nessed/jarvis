@@ -319,10 +319,15 @@ def open_mem0_memory(database_path: str | Path, *, environ: Mapping[str, str] | 
         ),
         llm=LlmConfig(
             provider="ollama",
-            # ``max_tokens`` maps to Ollama's ``num_predict``. The extraction
-            # output is one small JSON object; 128 tokens is ample and bounds
-            # generation instead of leaving it at the config default of 2000.
-            config={"model": fact_model, "ollama_base_url": base_url, "temperature": 0, "max_tokens": 128},
+            # ``max_tokens`` maps to Ollama's ``num_predict``. 128 was tuned
+            # against a single-fact synthetic test message and silently
+            # truncated real extraction JSON mid-string for longer
+            # conversations (multiple facts, longer text fields) — the
+            # validating retry then failed both attempts with invalid JSON,
+            # confirmed live 26 August 2026. 512 gives real content room
+            # while still bounding generation well under the config default
+            # of 2000.
+            config={"model": fact_model, "ollama_base_url": base_url, "temperature": 0, "max_tokens": 512},
         ),
         history_db_path=str(Path(database_path).with_suffix(".mem0-history.db")),
     )
@@ -369,7 +374,7 @@ def _attach_validating_retry(memory: Any) -> None:
 
 
 def _fact_extraction_timeout(settings: Mapping[str, str]) -> float:
-    raw = settings.get("OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS", "30").strip()
+    raw = settings.get("OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS", "90").strip()
     try:
         timeout = float(raw)
     except ValueError as exc:
@@ -415,10 +420,20 @@ def _install_compact_extraction_prompt() -> None:
     it here — before any extraction call happens — changes what every later
     ``add()`` call sends, without editing any file under site-packages and
     without subclassing or reimplementing Mem0's ~250-line batch pipeline.
+
+    Idempotent within a process: a long-running caller (the executor) opens a
+    fresh ``Memory`` per job, so this runs many times against the same
+    imported ``mem0.memory.main`` module. Once already patched to
+    ``COMPACT_ADDITIVE_EXTRACTION_PROMPT``, a later call is a no-op rather
+    than re-checking the length guard — otherwise the guard mistakes its own
+    earlier patch for an unexpectedly short shipped prompt and refuses every
+    call after the first in that process.
     """
     import mem0.memory.main as mem0_main
 
     shipped_prompt = getattr(mem0_main, "ADDITIVE_EXTRACTION_PROMPT", None)
+    if shipped_prompt == COMPACT_ADDITIVE_EXTRACTION_PROMPT:
+        return
     if not isinstance(shipped_prompt, str) or len(shipped_prompt) < _SHIPPED_PROMPT_MINIMUM_LENGTH:
         raise Mem0WrapperError(
             "mem0.memory.main.ADDITIVE_EXTRACTION_PROMPT is missing or unexpectedly short; "

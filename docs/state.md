@@ -19,11 +19,11 @@ Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 | Component | State |
 |---|---|
 | FastAPI bus | HMAC-verified webhooks, bearer auth elsewhere, request-ID JSON logging, protected `/status` |
-| Supabase queue | Migration `0001` applied live. RLS on, no public policies, RPCs service-role only |
+| Supabase queue | Migrations `0001` and `0002` applied live. RLS on, no public policies, RPCs service-role only |
 | Queue client | Rejects publishable/anon credentials, requires `SUPABASE_SECRET_KEY` |
 | Executor | Atomic claim, checkpoint, complete. Retry, backoff, per-job timeout, dead-letter |
 | Memory | SQLite facts, sqlite-vec index, loopback Ollama, self-hosted Mem0 wrapper. `remember()` and `recall()` both verified end to end |
-| Conversation wiring | `whatsapp_webhook` handler registered: recall, route, remember, send. Live-verified end to end 26 August 2026, see `docs/history/whatsapp-live-roundtrip.md`. Dedups by Meta's message id (`SeenMessageStore`) so a redelivered webhook doesn't send a duplicate reply |
+| Conversation wiring | `whatsapp_webhook` handler registered: recall, route, **send**, then remember — reply-first, an authorized amendment to the blueprint's step order because local extraction costs 60-130s and was blocking every reply. A memory failure after the send is logged, not retried. Dedups by Meta's message id (`SeenMessageStore`). See `docs/history/whatsapp-reply-failures.md` |
 | Outbound WhatsApp | `WhatsAppClient.send_text_message()`. A real send through the live Graph API succeeded 26 August 2026 |
 | Process tooling | `tools/consult.py`, `tools/repoint_webhook.py`, `tests/live/`, pre-commit hook |
 | `/status` | Reports `retry_health` (dead-letter and retried-job counts) from the live queue, additive to the existing payload |
@@ -49,10 +49,11 @@ DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
 
 ## Open blockers
 
-1. **Migration `0002` is not applied live.** Retry, backoff and dead-letter
-   columns and RPCs are written and tested but the live Supabase project does
-   not have them. Needs a Postgres driver or the Supabase CLI, which means a
-   `requirements.txt` change, plus explicit approval for a live schema write.
+1. **Local fact extraction is slow enough to be a design constraint.** One
+   `remember()` costs 60-130s on CPU Ollama, and the handler makes two per
+   message. It no longer blocks replies (they send first), but memory writes
+   can still time out and be dropped. A faster path — GPU, a smaller
+   extraction model, or batching turns — is unsolved.
 2. **No opted-in backfill.** No corpus has completed the fact-extraction and
    review acceptance loop.
 3. **`memory_extract` has no registered handler.** Nothing enqueues that kind

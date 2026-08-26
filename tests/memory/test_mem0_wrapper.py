@@ -89,7 +89,7 @@ def test_mem0_validation_accepts_shipped_adapter_json_shape():
 
 
 def test_mem0_fact_extraction_timeout_is_bounded_and_validated():
-    assert _fact_extraction_timeout({}) == 30.0
+    assert _fact_extraction_timeout({}) == 90.0
     assert _fact_extraction_timeout({"OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS": "12.5"}) == 12.5
     with pytest.raises(Mem0WrapperError, match="positive number"):
         _fact_extraction_timeout({"OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS": "not-a-number"})
@@ -159,3 +159,21 @@ def test_install_compact_extraction_prompt_refuses_to_patch_a_drifted_shipped_pr
     monkeypatch.setattr(mem0_main, "ADDITIVE_EXTRACTION_PROMPT", "short prompt from a future mem0ai upgrade")
     with pytest.raises(Mem0WrapperError, match="unexpectedly short"):
         _install_compact_extraction_prompt()
+
+
+def test_install_compact_extraction_prompt_is_idempotent_within_one_process():
+    # A long-running caller (the executor) opens a fresh Memory per job, so
+    # this runs many times against the same imported mem0.memory.main module.
+    # Before the idempotency fix, the second call saw its own earlier patch
+    # (short) and mistook it for shipped-prompt drift, raising on every job
+    # after the first one in that process — exactly what a live executor run
+    # hit: only the first message after each restart ever got a reply.
+    import mem0.memory.main as mem0_main
+
+    original = mem0_main.ADDITIVE_EXTRACTION_PROMPT
+    try:
+        _install_compact_extraction_prompt()
+        _install_compact_extraction_prompt()
+        assert mem0_main.ADDITIVE_EXTRACTION_PROMPT == COMPACT_ADDITIVE_EXTRACTION_PROMPT
+    finally:
+        mem0_main.ADDITIVE_EXTRACTION_PROMPT = original

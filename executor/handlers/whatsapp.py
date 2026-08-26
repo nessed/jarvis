@@ -169,13 +169,29 @@ def build_whatsapp_webhook_handler(
             result = completion("latency", messages)
             reply = _extract_reply_text(result.response)
 
-            memory.remember(f"User: {inbound.text}", user_id=inbound.sender)
-            memory.remember(f"Assistant: {reply}", user_id=inbound.sender)
+            # Reply first, then persist. Local CPU fact extraction costs
+            # 60-130s per call and is the slowest thing here by two orders of
+            # magnitude; running it before the send made every reply wait on
+            # it, and any extraction failure discarded an already-generated
+            # reply and re-ran the whole job. Storing after the send is a
+            # deliberate amendment to the blueprint's recall -> route ->
+            # remember -> send order, authorized 26 August 2026 after live
+            # runs kept dead-lettering on extraction alone.
+            sender(to=inbound.sender, text=reply)
+            with open_seen_messages() as seen:
+                seen.mark_sent(inbound.message_id)
 
-        sender(to=inbound.sender, text=reply)
-
-        with open_seen_messages() as seen:
-            seen.mark_sent(inbound.message_id)
+            # The reply is already delivered and recorded, so a failure past
+            # this point must not fail the job: a retry would resend nothing
+            # (dedup) but would re-run extraction forever. Losing one
+            # conversation turn from memory is the smaller loss.
+            try:
+                memory.remember(f"User: {inbound.text}", user_id=inbound.sender)
+                memory.remember(f"Assistant: {reply}", user_id=inbound.sender)
+            except Exception as exc:
+                logger.warning(
+                    "reply sent but memory write failed (job=%s, %s)", job.id, type(exc).__name__
+                )
 
     return handle
 

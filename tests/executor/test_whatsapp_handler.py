@@ -256,6 +256,50 @@ class TestWhatsAppWebhookHandler:
         assert seen.has_sent_calls == ["wamid.dup"]
         assert seen.mark_sent_calls == []
 
+    def test_the_reply_is_sent_before_memory_is_written(self) -> None:
+        # Local CPU fact extraction is the slowest step by far; sending first
+        # is what keeps a reply from waiting on it.
+        order: list[str] = []
+
+        class OrderRecordingMemory(FakeMemory):
+            def remember(self, text, **kwargs):
+                order.append("remember")
+                return super().remember(text, **kwargs)
+
+        memory = OrderRecordingMemory({"results": []})
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: memory,
+            open_seen_messages=FakeSeenStore,
+            complete=lambda *_: _fake_completion_response("On it."),
+            send_text_message=lambda **kwargs: order.append("send") or "wamid.reply",
+        )
+
+        handler(_job(_text_message_payload()))
+
+        assert order == ["send", "remember", "remember"]
+
+    def test_a_memory_write_failure_after_sending_does_not_fail_the_job(self) -> None:
+        # The reply is already delivered by then, and dedup means a retry
+        # would resend nothing while re-running extraction forever.
+        seen = FakeSeenStore()
+
+        class FailingMemory(FakeMemory):
+            def remember(self, text, **kwargs):
+                raise RuntimeError("ollama fact extraction timed out")
+
+        sent: list[dict[str, object]] = []
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: FailingMemory({"results": []}),
+            open_seen_messages=lambda: seen,
+            complete=lambda *_: _fake_completion_response("Still delivered."),
+            send_text_message=lambda **kwargs: sent.append(kwargs) or "wamid.reply",
+        )
+
+        handler(_job(_text_message_payload(message_id="wamid.memory-fails")))
+
+        assert sent == [{"to": "15550001111", "text": "Still delivered."}]
+        assert seen.mark_sent_calls == ["wamid.memory-fails"]
+
     def test_a_failed_attempt_does_not_mark_the_message_sent_so_a_retry_still_goes_through(self) -> None:
         memory = FakeMemory({"results": []})
         seen = FakeSeenStore()
