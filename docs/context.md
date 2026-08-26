@@ -8,27 +8,23 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `123b724 Pin the queue client timeout so a hung connection can't stall every message` on `main`, 11 ahead, 0 behind origin.
+**HEAD** `607bde1 Add PyFLP proof-of-concept scaffolding for Phase 2` on `main`, 12 ahead, 0 behind origin.
 
-**Working tree:** 8 changed
+**Working tree:** 3 changed
 
 ```
-  M  docs/state.md
-  A  docs/tasks/deps-flp.txt
-  A  docs/tasks/flp-poc.md
-  A  executor/flp/__init__.py
-  A  executor/flp/sort.py
-  M  executor/poller.py
-  M  requirements.txt
-  A  tests/executor/test_flp_sort.py
+  M  README.md
+  A  start-jarvis.bat
+  A  tools/start_jarvis.py
 ```
 
-**Offline suite:** 196 passed, 1 deselected in 5.29s _(recorded 2026-08-27)_
+**Offline suite:** 196 passed, 1 deselected in 5.50s _(recorded 2026-08-27)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `607bde1` Add PyFLP proof-of-concept scaffolding for Phase 2  _(2026-08-27)_
 - `123b724` Pin the queue client timeout so a hung connection can't stall every message  _(2026-08-27)_
 - `603cec6` Make conversation memory work by taking extraction off the reply path  _(2026-08-27)_
 - `a35b654` Add Phase 1 scalability and blueprint review  _(2026-08-27)_
@@ -36,7 +32,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `129de3a` Disable conversation memory writes by default  _(2026-08-27)_
 - `f11cbb8` Fix three bugs that stopped live WhatsApp replies, and reply before remembering  _(2026-08-27)_
 - `afa6b58` Add a resumable backfill runner over the opted-in intake folder  _(2026-08-26)_
-- `5b9c7d6` Close the retry_health and verify-token-logging blockers in state.md  _(2026-08-26)_
 
 <!-- END GENERATED -->
 

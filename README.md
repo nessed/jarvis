@@ -53,6 +53,19 @@ copy .env.example .env
 
 Fill in `.env` by hand. It's gitignored and stays that way.
 
+Then start it:
+
+```
+start-jarvis.bat
+```
+
+Double-click that, or run it from a terminal. It brings up the webhook
+receiver, the public tunnel, and the worker in order, re-points WhatsApp at the
+new tunnel URL, and stops the whole set on Ctrl+C. Nothing else needs starting
+by hand.
+
+To run just the bus on its own:
+
 ```
 .venv\Scripts\python.exe -m uvicorn bus.main:app --reload
 ```
