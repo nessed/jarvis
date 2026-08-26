@@ -8,20 +8,22 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `a7a2030 Reconcile the context docs with what actually landed tonight` on `main`, 14 ahead, 0 behind origin.
+**HEAD** `09363de Record the duplicate start_jarvis.py incident in context.md` on `main`, in sync with origin.
 
-**Working tree:** 1 changed
+**Working tree:** 2 changed
 
 ```
+  M  .gitignore
   M  docs/context.md
 ```
 
-**Offline suite:** 196 passed, 1 deselected in 5.73s _(recorded 2026-08-27)_
+**Offline suite:** 196 passed, 1 deselected in 6.12s _(recorded 2026-08-27)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `09363de` Record the duplicate start_jarvis.py incident in context.md  _(2026-08-27)_
 - `a7a2030` Reconcile the context docs with what actually landed tonight  _(2026-08-27)_
 - `0de7c89` Add one-command startup so the whole stack comes up together  _(2026-08-27)_
 - `607bde1` Add PyFLP proof-of-concept scaffolding for Phase 2  _(2026-08-27)_
@@ -29,7 +31,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `603cec6` Make conversation memory work by taking extraction off the reply path  _(2026-08-27)_
 - `a35b654` Add Phase 1 scalability and blueprint review  _(2026-08-27)_
 - `c91279c` Fix run_backfill's usage docstring and record a near-miss with live traffic  _(2026-08-27)_
-- `129de3a` Disable conversation memory writes by default  _(2026-08-27)_
 
 <!-- END GENERATED -->
 
