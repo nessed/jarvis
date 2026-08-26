@@ -23,7 +23,7 @@ Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 | Queue client | Rejects publishable/anon credentials, requires `SUPABASE_SECRET_KEY` |
 | Executor | Atomic claim, checkpoint, complete. Retry, backoff, per-job timeout, dead-letter |
 | Memory | SQLite facts, sqlite-vec index, loopback Ollama, self-hosted Mem0 wrapper. `remember()` and `recall()` both verified end to end |
-| Conversation wiring | `whatsapp_webhook` handler registered: recall, route, **send**, then remember — reply-first, an authorized amendment to the blueprint's step order because local extraction costs 60-130s and was blocking every reply. A memory failure after the send is logged, not retried. Dedups by Meta's message id (`SeenMessageStore`). See `docs/history/whatsapp-reply-failures.md` |
+| Conversation wiring | `whatsapp_webhook` handler registered: recall, route, **send**, then optionally remember. Reply-first is an authorized amendment to the blueprint's step order. **Memory writes are off by default** (`JARVIS_MEMORY_WRITES`) — they failed on 100% of live messages and cost ~20s each; `recall()` still runs. Dedups by Meta's message id. See `docs/history/whatsapp-reply-failures.md` |
 | Outbound WhatsApp | `WhatsAppClient.send_text_message()`. A real send through the live Graph API succeeded 26 August 2026 |
 | Process tooling | `tools/consult.py`, `tools/repoint_webhook.py`, `tests/live/`, pre-commit hook |
 | `/status` | Reports `retry_health` (dead-letter and retried-job counts) from the live queue, additive to the existing payload |
@@ -49,11 +49,13 @@ DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
 
 ## Open blockers
 
-1. **Local fact extraction is slow enough to be a design constraint.** One
-   `remember()` costs 60-130s on CPU Ollama, and the handler makes two per
-   message. It no longer blocks replies (they send first), but memory writes
-   can still time out and be dropped. A faster path — GPU, a smaller
-   extraction model, or batching turns — is unsolved.
+1. **Local fact extraction does not work on this hardware.** It failed on
+   100% of live WhatsApp turns, timing out after ~20s each. Conversation
+   memory writes are therefore disabled by default; JARVIS replies but does
+   not learn from conversations. `recall()` (embedding lookup) is fast and
+   still runs, so anything already in `memory.db` is used. Re-enabling is one
+   env var (`JARVIS_MEMORY_WRITES=1`) once extraction is viable — a smaller
+   model, a GPU, or off-box extraction. Unsolved.
 2. **No opted-in backfill.** No corpus has completed the fact-extraction and
    review acceptance loop.
 3. **`memory_extract` has no registered handler.** Nothing enqueues that kind

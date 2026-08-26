@@ -91,3 +91,35 @@ faked. That technique belongs in the toolkit for anything that works in a
 test and fails in the field.
 
 Full offline suite after the fixes: **150 passed, 1 deselected**.
+
+## Postscript — two more causes found the same evening
+
+**A backfill run was starving replies.** A parallel session started
+`tools/run_backfill.py --user-id 923000413777` over the opted-in intake
+folder. It drives the same single local Ollama that every reply depends on,
+so inbound messages sat `queued` with `attempts=0` — never claimed — while
+the batch job held the model. Eight messages piled up. Killing the backfill
+(it is resumable, so nothing was lost) drained the backlog immediately.
+
+Worth stating plainly because nothing in the design prevents a recurrence:
+**Ollama is a single shared serial resource, and any batch job that uses it
+will block live replies for as long as it runs.** Backfill and conversation
+cannot both run on this machine.
+
+**Memory writes were failing 100% of the time.** Once the backfill was out of
+the way, every drained job still logged `reply sent but memory write failed`.
+Not one succeeded. Each failure cost ~20s of timeout before giving up, on
+every message, for zero benefit. `remember()` is now gated behind
+`JARVIS_MEMORY_WRITES` (default off) — the writes were pure latency with a 0%
+success rate. `recall()` is unaffected: it is an embedding lookup, not
+extraction, and stays on, so anything already in `memory.db` is still used.
+
+Result after both changes: the 11-message backlog drained clean with no
+errors in the log.
+
+The honest position is that Phase 1's memory goal is **not met on this
+hardware**. Local fact extraction with `llama3.1:8b` on CPU cannot keep up
+with conversation. The wrapper, store, index, and dedup are all correct and
+tested; the model is too slow. That is a hardware/model-choice problem, not a
+code problem, and it is recorded in `docs/state.md` as the open blocker it
+is rather than being papered over with a longer timeout.

@@ -10,6 +10,7 @@ from executor.handlers.whatsapp import (
     InboundMessage,
     SeenMessageStore,
     build_whatsapp_webhook_handler,
+    memory_writes_enabled,
     open_default_seen_message_store,
     parse_inbound_text_message,
 )
@@ -186,6 +187,7 @@ class TestWhatsAppWebhookHandler:
             open_seen_messages=lambda: seen,
             complete=fake_complete,
             send_text_message=lambda **kwargs: sent.append(kwargs) or "wamid.reply",
+            write_memory=True,
         )
 
         handler(_job(_text_message_payload(sender="15550001111", text="How's my dog?", message_id="wamid.1")))
@@ -256,6 +258,31 @@ class TestWhatsAppWebhookHandler:
         assert seen.has_sent_calls == ["wamid.dup"]
         assert seen.mark_sent_calls == []
 
+    def test_memory_writes_are_off_by_default_but_recall_still_runs(self) -> None:
+        # Local extraction failed on every live message and cost ~20s of
+        # timeout per turn, so the writes are disabled unless explicitly
+        # enabled. Reading memory is a fast embedding lookup and stays on.
+        memory = FakeMemory({"results": [{"id": "f1", "memory": "remembered thing"}]})
+        sent: list[dict[str, object]] = []
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: memory,
+            open_seen_messages=FakeSeenStore,
+            complete=lambda *_: _fake_completion_response("Replied anyway."),
+            send_text_message=lambda **kwargs: sent.append(kwargs) or "wamid.reply",
+        )
+
+        handler(_job(_text_message_payload()))
+
+        assert memory.recall_calls != []
+        assert memory.remember_calls == []
+        assert sent == [{"to": "15550001111", "text": "Replied anyway."}]
+
+    def test_memory_writes_enabled_reads_the_environment_flag(self) -> None:
+        assert memory_writes_enabled({}) is False
+        assert memory_writes_enabled({"JARVIS_MEMORY_WRITES": "1"}) is True
+        assert memory_writes_enabled({"JARVIS_MEMORY_WRITES": "true"}) is True
+        assert memory_writes_enabled({"JARVIS_MEMORY_WRITES": "0"}) is False
+
     def test_the_reply_is_sent_before_memory_is_written(self) -> None:
         # Local CPU fact extraction is the slowest step by far; sending first
         # is what keeps a reply from waiting on it.
@@ -272,6 +299,7 @@ class TestWhatsAppWebhookHandler:
             open_seen_messages=FakeSeenStore,
             complete=lambda *_: _fake_completion_response("On it."),
             send_text_message=lambda **kwargs: order.append("send") or "wamid.reply",
+            write_memory=True,
         )
 
         handler(_job(_text_message_payload()))
@@ -293,6 +321,7 @@ class TestWhatsAppWebhookHandler:
             open_seen_messages=lambda: seen,
             complete=lambda *_: _fake_completion_response("Still delivered."),
             send_text_message=lambda **kwargs: sent.append(kwargs) or "wamid.reply",
+            write_memory=True,
         )
 
         handler(_job(_text_message_payload(message_id="wamid.memory-fails")))

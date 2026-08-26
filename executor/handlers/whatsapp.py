@@ -117,20 +117,39 @@ Completion = Callable[[str, Sequence[Mapping[str, Any]]], RoutedResult]
 Sender = Callable[..., str]
 
 
+def memory_writes_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether to persist conversation turns after replying.
+
+    Default off. Local CPU fact extraction failed on **every** live message
+    (26-27 August 2026): each turn logged ``reply sent but memory write
+    failed`` and cost ~20s of timeout before giving up, so the writes were
+    pure latency with a 0% success rate. ``recall()`` still runs — reading
+    existing memory is a fast embedding lookup, not extraction — so turning
+    this back on is the only change needed once extraction is viable
+    (a smaller model, a GPU, or off-box extraction).
+    """
+    settings = os.environ if environ is None else environ
+    return settings.get("JARVIS_MEMORY_WRITES", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def build_whatsapp_webhook_handler(
     *,
     open_memory: MemoryOpener = open_local_mem0_memory,
     open_seen_messages: SeenStoreOpener = open_default_seen_message_store,
     complete: Completion | None = None,
     send_text_message: Sender | None = None,
+    write_memory: bool | None = None,
 ) -> Callable[[Job], None]:
-    """Return a plain ``JobHandler`` closure wiring recall -> route -> remember -> send.
+    """Return a plain ``JobHandler`` closure wiring recall -> route -> send -> remember.
 
     Any raised exception (recall, routing, or send failure) propagates
     unchanged to the poller, which already retries/backs off/dead-letters it
     with a type-only diagnostic — this handler adds no error handling of its
     own on top of that. A message id already marked sent is a silent no-op,
     same as an unparseable payload; it is not an error either.
+
+    ``write_memory`` defaults to ``memory_writes_enabled()`` (off unless
+    ``JARVIS_MEMORY_WRITES`` is set); ``recall()`` runs either way.
     """
 
     def _default_complete(task_profile: str, messages: Sequence[Mapping[str, Any]]) -> RoutedResult:
@@ -142,6 +161,7 @@ def build_whatsapp_webhook_handler(
 
     completion = complete or _default_complete
     sender = send_text_message or _default_send
+    write_memory = memory_writes_enabled() if write_memory is None else write_memory
 
     def handle(job: Job) -> None:
         inbound = parse_inbound_text_message(job.payload)
@@ -181,10 +201,13 @@ def build_whatsapp_webhook_handler(
             with open_seen_messages() as seen:
                 seen.mark_sent(inbound.message_id)
 
-            # The reply is already delivered and recorded, so a failure past
-            # this point must not fail the job: a retry would resend nothing
-            # (dedup) but would re-run extraction forever. Losing one
-            # conversation turn from memory is the smaller loss.
+            # Off by default — see memory_writes_enabled(). The reply is
+            # already delivered and recorded, so a failure past this point
+            # must not fail the job: a retry would resend nothing (dedup) but
+            # would re-run extraction forever. Losing one conversation turn
+            # from memory is the smaller loss.
+            if not write_memory:
+                return
             try:
                 memory.remember(f"User: {inbound.text}", user_id=inbound.sender)
                 memory.remember(f"Assistant: {reply}", user_id=inbound.sender)
