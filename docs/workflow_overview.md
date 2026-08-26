@@ -514,11 +514,8 @@ one lane's carelessness. Two changes:
 
 ### 12.5 Not addressed
 
-- **§7.2 context-reload cost / §7.3 brief distribution / §7.4 recovery share.**
-  `docs/context.md` is still the amortization mechanism and still dense. The
-  proposed split into a short `## Now` block plus dated evidence files was not
-  done; a partial hand reconciliation on 26 August collapsed superseded
-  diagnostic entries instead.
+- **§7.3 brief distribution / §7.4 recovery share.** Untouched. Lane briefs are
+  still 43 files and ~16% of them are recovery-named.
 - **§7.5 Cloudflare Quick Tunnel.** `repoint_webhook.py` fixes the Meta side.
   Restarting `cloudflared` itself is still manual. The named tunnel remains
   deferred to Phase 4.
@@ -526,3 +523,45 @@ one lane's carelessness. Two changes:
 - **§10 items 1–9.** Untouched by design — these are the load-bearing
   constraints, and the review's premise was that they must be satisfied without
   a human in the loop for every instance, not relaxed.
+
+### 12.6 The context split, done properly
+
+Added later on 26 August, after the file rotted again within hours of being
+reconciled by hand.
+
+The diagnosis in §12.5 was wrong about the mechanism. `docs/context.md` was
+touched in **11 of the last 12 commits**, so agents were not forgetting to
+update it. They updated it constantly and it was still wrong: it claimed the
+mem0 fixes were uncommitted days after they landed, and its hand-maintained
+"Source checkpoints" list ran five commits behind `HEAD`. One reconciliation
+pass spent fifteen lines of its own header narrating that drift, then went
+stale again the same day.
+
+The cause is that one 469-line file held four different rates of change at
+once. An agent recording one temporary fact had to scan permanent facts,
+per-phase facts and frozen evidence to find where it went, so it appended at
+the bottom and never re-audited the top.
+
+Split by rate of change, not by topic:
+
+| Tier | File | Changes |
+|---|---|---|
+| Fixed | `docs/blueprint.md`, `agents.md` | Only by explicit decision |
+| Semi-fixed | `docs/state.md` | When a component's status actually changes |
+| Temporary | `docs/context.md` | Every session. Under 60 lines |
+| Frozen | `docs/history/` | Never. Append-only |
+
+Everything derivable is now generated. `tools/context_status.py` writes `HEAD`,
+the last eight commits, working tree state and both suite results into a marked
+block, and `.githooks/pre-commit` regenerates and stages it on every commit. No
+agent hand-maintains a commit list again. The specific failure above is now
+mechanically impossible.
+
+`agents.md` gained a four-question routing rule, and a `## Writing to the user`
+section carrying a real before-and-after, because "keep reports terse" was
+being read as "compress" and producing single paragraphs with four facts and
+three commit hashes in them.
+
+Still not addressed from §12.5: the tunnel restart itself, and the missing
+`deps-mem0_wrapper.txt`.
+

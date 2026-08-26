@@ -11,3 +11,4 @@ memory.db-*
 
 .pytest-basetemp/
 .pytest_cache/
+.context-status.json

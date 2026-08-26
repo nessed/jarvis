@@ -30,5 +30,14 @@ if [ $STATUS -ne 0 ]; then
     exit 1
 fi
 
-echo "$OUTPUT" | tail -1 >&2
+SUMMARY=$(echo "$OUTPUT" | tail -1)
+echo "$SUMMARY" >&2
+
+# Refresh the generated status block in docs/context.md and stage it. Nothing
+# in that block is hand-written: it is HEAD, recent commits, working tree state
+# and the suite result that just ran. Hand-maintaining those is what made the
+# old context.md wrong for days at a time.
+"$PY" tools/context_status.py --record-suite "$SUMMARY" --write 2>&1 >&2
+git add docs/context.md
+
 exit 0

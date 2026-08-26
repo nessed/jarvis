@@ -110,6 +110,9 @@ it, specified components can't be swapped out without asking, secrets never get
 printed or committed, and anything touching my personal data needs me to say yes
 first.
 
-`docs/blueprint.md` is the spec. `docs/context.md` is where the current build
-state lives. `docs/workflow_overview.md` describes the process itself, including
-what's still wrong with it.
+Docs are split by how fast they go stale. `docs/context.md` is whatever is in
+flight right now and stays short, with its status block generated from git.
+`docs/state.md` is component status: what works, what's blocked, which provider
+rungs are usable. `docs/history/` is the frozen archive, append-only.
+`docs/blueprint.md` is the spec. `docs/workflow_overview.md` describes the
+process itself, including what's still wrong with it.

@@ -7,10 +7,16 @@ opening them as an optional first step.
 
 ## Start of every session
 
-1. `docs/context.md` is the build state. Read it rather than inferring the
-   current phase from the code or from this conversation. Update it after every
-   completed subtask.
-2. `docs/blueprint.md` is the technical spec. Provider pricing, rate limits,
+1. `docs/context.md` is what is in flight right now. Read it first. Its status
+   block is generated, never hand-edited.
+2. `docs/state.md` is component status: what works, what is blocked, provider
+   rungs, account state. Read it when you need detail beyond the current task.
+3. `docs/history/` is the frozen archive. Append-only, never edited.
+
+   Where a new fact goes is decided by how fast it goes stale. See "Where a
+   fact goes" in `agents.md`. Never hand-maintain a commit list, an
+   "uncommitted" claim, or a test count: those are generated.
+4. `docs/blueprint.md` is the technical spec. Provider pricing, rate limits,
    model names and free tiers in it are claims to re-verify. Architecture,
    component choices, dependency selection and phase ordering are decisions —
    never substitute one.
@@ -36,6 +42,7 @@ opening them as an optional first step.
 .venv\Scripts\python.exe -m pytest -q -m live tests/live                           # phase acceptance probes
 .venv\Scripts\python.exe tools/consult.py "question" [--file P] [--cmd "..."]      # second opinion; every Class B stop
 .venv\Scripts\python.exe tools/repoint_webhook.py                                  # re-point Meta at the current tunnel
+.venv\Scripts\python.exe tools/context_status.py --check                          # is context.md's status block current
 ```
 
 The full-suite command needs `-p no:cacheprovider --basetemp=.pytest-basetemp`
