@@ -50,6 +50,7 @@ def test_status_is_bearer_protected_and_reports_integrated_shape() -> None:
             bearer_token="bus-test-token",
             queue_depths=lambda: {"queued": 1, "running": 0},
             last_job=lambda: {"id": "job-1", "status": "queued"},
+            retry_health=lambda: {"dead_letter_count": 0, "retried_job_count": 0},
         )
     )
 

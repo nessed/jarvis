@@ -46,6 +46,15 @@ class FakeSupabaseClient:
                 ]
             )
         )
+        self.retry_query = FakeQuery(
+            SimpleNamespace(
+                data=[
+                    {"status": "dead_letter", "attempts": 3},
+                    {"status": "done", "attempts": 2},
+                    {"status": "done", "attempts": 1},
+                ]
+            )
+        )
 
     def table(self, name: str) -> "FakeSupabaseClient":
         assert name == "jobs"
@@ -53,7 +62,11 @@ class FakeSupabaseClient:
 
     def select(self, fields: str) -> FakeQuery:
         self.selects.append(fields)
-        return self.depth_query if fields == "status" else self.latest_query
+        if fields == "status":
+            return self.depth_query
+        if fields == "status,attempts":
+            return self.retry_query
+        return self.latest_query
 
 
 class FakeSupabaseRepository:
@@ -79,6 +92,14 @@ def test_reader_reports_lifecycle_counts_and_safe_latest_job_metadata() -> None:
     assert client.latest_query.limit_calls == [1]
 
 
+def test_reader_reports_retry_health_from_status_and_attempts() -> None:
+    client = FakeSupabaseClient()
+    reader = QueueStatusReader.from_repository(FakeSupabaseRepository(client))
+
+    assert reader.retry_health() == {"dead_letter_count": 1, "retried_job_count": 2}
+    assert "status,attempts" in client.selects
+
+
 def test_status_uses_a_supabase_backed_injected_repository_and_stays_protected() -> None:
     client = FakeSupabaseClient()
     app = create_app(jobs=FakeSupabaseRepository(client), bearer_token="bus-test-token")
@@ -93,3 +114,19 @@ def test_status_uses_a_supabase_backed_injected_repository_and_stays_protected()
     assert body["last_job"]["id"] == "job-3"
     assert "payload" not in body["last_job"]
     assert "checkpoint" not in body["last_job"]
+    assert body["retry_health"] == {"dead_letter_count": 1, "retried_job_count": 2}
+
+
+def test_status_omits_retry_health_without_a_supabase_backed_repository() -> None:
+    app = create_app(
+        jobs=object(),
+        bearer_token="bus-test-token",
+        queue_depths=lambda: {"queued": 1},
+        last_job=lambda: None,
+    )
+    test_client = TestClient(app)
+
+    response = test_client.get("/status", headers={"Authorization": "Bearer bus-test-token"})
+
+    assert response.status_code == 200
+    assert "retry_health" not in response.json()

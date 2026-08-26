@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import uuid
 from typing import Any
@@ -13,6 +14,32 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 REQUEST_ID_HEADER = "X-Request-ID"
+_VERIFY_TOKEN_QUERY_PARAM = re.compile(r"(hub\.verify_token=)[^&\s\"]+")
+
+
+class RedactVerifyTokenFilter(logging.Filter):
+    """Strip Meta's verify-token value from uvicorn's access log line.
+
+    Meta's webhook handshake sends the token as a `GET /webhook` query
+    parameter, and uvicorn's access logger prints the full request line
+    (path and query string included) by default.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args:
+            record.args = tuple(
+                _VERIFY_TOKEN_QUERY_PARAM.sub(r"\1REDACTED", arg) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+        return True
+
+
+def redact_verify_token_from_access_log(logger_name: str = "uvicorn.access") -> None:
+    """Attach the redaction filter once, however uvicorn was launched."""
+
+    access_logger = logging.getLogger(logger_name)
+    if not any(isinstance(existing, RedactVerifyTokenFilter) for existing in access_logger.filters):
+        access_logger.addFilter(RedactVerifyTokenFilter())
 
 
 class JsonLineFormatter(logging.Formatter):

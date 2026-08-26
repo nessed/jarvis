@@ -8,27 +8,25 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `e889732 Record the first live WhatsApp round trip through whatsapp_webhook` on `main`, 1 ahead, 0 behind origin.
+**HEAD** `aea3109 Dedup whatsapp_webhook by Meta's message id` on `main`, 2 ahead, 0 behind origin.
 
-**Working tree:** 8 changed
+**Working tree:** 5 changed
 
 ```
-  M  .gitignore
-   M bus/main.py
-  M  docs/context.md
-  M  docs/state.md
-  M  executor/handlers/whatsapp.py
-  M  tests/executor/test_whatsapp_handler.py
-   M tests/status/test_live_queue_status.py
-   M tests/test_integration.py
+  M  bus/logging.py
+  M  bus/main.py
+  M  tests/status/test_live_queue_status.py
+  M  tests/test_integration.py
+  A  tests/test_logging.py
 ```
 
-**Offline suite:** 134 passed, 1 deselected in 5.57s _(recorded 2026-08-26)_
+**Offline suite:** 137 passed, 1 deselected in 5.49s _(recorded 2026-08-26)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `aea3109` Dedup whatsapp_webhook by Meta's message id  _(2026-08-26)_
 - `e889732` Record the first live WhatsApp round trip through whatsapp_webhook  _(2026-08-26)_
 - `98383ef` Make context_status --check detect rot, not normal lag  _(2026-08-26)_
 - `eb510d7` Split the context system by rate of change  _(2026-08-26)_
@@ -36,7 +34,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `27663d9` Wire the whatsapp_webhook handler into the executor  _(2026-08-26)_
 - `24cf31c` Rewrite README in plain language  _(2026-08-26)_
 - `b741359` Update docs for the process changes  _(2026-08-26)_
-- `b89e203` Replace three human relay steps with mechanism  _(2026-08-26)_
 
 <!-- END GENERATED -->
 

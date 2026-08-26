@@ -8,7 +8,7 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 
-from bus.logging import RequestIDMiddleware, get_logger
+from bus.logging import RequestIDMiddleware, get_logger, redact_verify_token_from_access_log
 from bus.security import BearerAuthMiddleware, enforce_meta_signature, meta_webhook_handshake
 from bus.status import QueueStatusReader, create_status_handler
 from db.jobs import JobRepository, SupabaseJobsRepository, enqueue
@@ -65,8 +65,10 @@ def create_app(
     bearer_token: str | None = None,
     queue_depths: Callable[[], Any] | None = None,
     last_job: Callable[[], Any] | None = None,
+    retry_health: Callable[[], Any] | None = None,
 ) -> FastAPI:
     """Build an injectable app; a webhook performs no work beyond enqueueing."""
+    redact_verify_token_from_access_log()
     app = FastAPI(title="JARVIS bus")
     logger = get_logger()
     active_jobs = jobs if jobs is not None else _default_jobs()
@@ -105,6 +107,9 @@ def create_app(
                 status_reader.last_job if status_reader is not None else _no_last_job
             ),
             provider_health=lambda: _provider_health(app.state.provider_router),
+            retry_health=retry_health or (
+                status_reader.retry_health if status_reader is not None else None
+            ),
         ),
         methods=["GET"],
     )
