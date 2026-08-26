@@ -28,6 +28,7 @@ from db.jobs import (
     set_timeout,
 )
 from executor.handlers.whatsapp import build_whatsapp_webhook_handler
+from executor.heartbeat import touch as touch_heartbeat
 from router import RoutedResult, route
 
 
@@ -198,6 +199,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         while True:
+            # Marks the executor live so batch tools (distill, backfill) can
+            # refuse to compete for the single local Ollama. See
+            # executor/heartbeat.py.
+            touch_heartbeat()
             try:
                 poll_once(handlers=DEFAULT_HANDLERS)
             except Exception as exc:

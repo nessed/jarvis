@@ -107,20 +107,27 @@ class TestParseInboundTextMessage:
         assert parse_inbound_text_message(payload) is None
 
 
+class FakeFact:
+    """Stands in for memory.types.Fact, which recall() now returns."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
 class FakeMemory:
-    def __init__(self, recalled: dict[str, object]) -> None:
+    def __init__(self, recalled: list[FakeFact] | dict[str, object]) -> None:
         self.recalled = recalled
         self.recall_calls: list[tuple[str, dict[str, object]]] = []
         self.remember_calls: list[tuple[str, dict[str, object]]] = []
         self.closed = False
 
-    def recall(self, query: str, **kwargs: object) -> dict[str, object]:
+    def recall(self, query: str, **kwargs: object):
         self.recall_calls.append((query, kwargs))
         return self.recalled
 
-    def remember(self, text: str, **kwargs: object) -> list[dict[str, object]]:
+    def remember_turn(self, text: str, **kwargs: object):
         self.remember_calls.append((text, kwargs))
-        return []
+        return FakeFact(text)
 
     def __enter__(self) -> "FakeMemory":
         return self
@@ -158,7 +165,7 @@ def _fake_completion_response(text: str) -> RoutedResult:
 
 class TestWhatsAppWebhookHandler:
     def test_no_inbound_message_is_a_silent_no_op(self) -> None:
-        memory = FakeMemory({"results": []})
+        memory = FakeMemory([])
         sent: list[dict[str, object]] = []
         handler = build_whatsapp_webhook_handler(
             open_memory=lambda: memory,
@@ -173,7 +180,7 @@ class TestWhatsAppWebhookHandler:
         assert sent == []
 
     def test_recalls_routes_remembers_and_sends_for_an_inbound_text_message(self) -> None:
-        memory = FakeMemory({"results": [{"id": "f1", "memory": "The user's dog is named Max"}]})
+        memory = FakeMemory([FakeFact("The user's dog is named Max")])
         seen = FakeSeenStore()
         completion_calls: list[tuple[str, list[dict[str, str]]]] = []
 
@@ -202,15 +209,15 @@ class TestWhatsAppWebhookHandler:
         assert any("The user's dog is named Max" in m["content"] for m in messages)
 
         assert memory.remember_calls == [
-            ("User: How's my dog?", {"user_id": "15550001111"}),
-            ("Assistant: Max is a good boy!", {"user_id": "15550001111"}),
+            ("How's my dog?", {"user_id": "15550001111", "role": "user"}),
+            ("Max is a good boy!", {"user_id": "15550001111", "role": "assistant"}),
         ]
 
         assert sent == [{"to": "15550001111", "text": "Max is a good boy!"}]
         assert seen.mark_sent_calls == ["wamid.1"]
 
     def test_empty_recall_omits_the_context_message(self) -> None:
-        memory = FakeMemory({"results": []})
+        memory = FakeMemory([])
         completion_calls: list[list[dict[str, str]]] = []
 
         def fake_complete(task_profile, messages):
@@ -230,7 +237,7 @@ class TestWhatsAppWebhookHandler:
         assert [m["role"] for m in messages] == ["system", "user"]
 
     def test_unexpected_completion_shape_raises_instead_of_sending_garbage(self) -> None:
-        memory = FakeMemory({"results": []})
+        memory = FakeMemory([])
         sent: list[dict[str, object]] = []
         handler = build_whatsapp_webhook_handler(
             open_memory=lambda: memory,
@@ -258,11 +265,11 @@ class TestWhatsAppWebhookHandler:
         assert seen.has_sent_calls == ["wamid.dup"]
         assert seen.mark_sent_calls == []
 
-    def test_memory_writes_are_off_by_default_but_recall_still_runs(self) -> None:
-        # Local extraction failed on every live message and cost ~20s of
-        # timeout per turn, so the writes are disabled unless explicitly
-        # enabled. Reading memory is a fast embedding lookup and stays on.
-        memory = FakeMemory({"results": [{"id": "f1", "memory": "remembered thing"}]})
+    def test_memory_writes_are_on_by_default(self) -> None:
+        # Writes were disabled while they ran Mem0's 8B extraction inline
+        # (20-130s, 0% success). They now only embed and store, so the default
+        # is back on and both turns are persisted.
+        memory = FakeMemory([FakeFact("remembered thing")])
         sent: list[dict[str, object]] = []
         handler = build_whatsapp_webhook_handler(
             open_memory=lambda: memory,
@@ -274,11 +281,26 @@ class TestWhatsAppWebhookHandler:
         handler(_job(_text_message_payload()))
 
         assert memory.recall_calls != []
-        assert memory.remember_calls == []
+        assert [t for t, _ in memory.remember_calls] == ["hello", "Replied anyway."]
         assert sent == [{"to": "15550001111", "text": "Replied anyway."}]
 
+    def test_memory_writes_can_be_turned_off(self) -> None:
+        memory = FakeMemory([])
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: memory,
+            open_seen_messages=FakeSeenStore,
+            complete=lambda *_: _fake_completion_response("No memory please."),
+            send_text_message=lambda **kwargs: "wamid.reply",
+            write_memory=False,
+        )
+
+        handler(_job(_text_message_payload()))
+
+        assert memory.recall_calls != []
+        assert memory.remember_calls == []
+
     def test_memory_writes_enabled_reads_the_environment_flag(self) -> None:
-        assert memory_writes_enabled({}) is False
+        assert memory_writes_enabled({}) is True
         assert memory_writes_enabled({"JARVIS_MEMORY_WRITES": "1"}) is True
         assert memory_writes_enabled({"JARVIS_MEMORY_WRITES": "true"}) is True
         assert memory_writes_enabled({"JARVIS_MEMORY_WRITES": "0"}) is False
@@ -289,9 +311,9 @@ class TestWhatsAppWebhookHandler:
         order: list[str] = []
 
         class OrderRecordingMemory(FakeMemory):
-            def remember(self, text, **kwargs):
+            def remember_turn(self, text, **kwargs):
                 order.append("remember")
-                return super().remember(text, **kwargs)
+                return super().remember_turn(text, **kwargs)
 
         memory = OrderRecordingMemory({"results": []})
         handler = build_whatsapp_webhook_handler(
@@ -312,7 +334,7 @@ class TestWhatsAppWebhookHandler:
         seen = FakeSeenStore()
 
         class FailingMemory(FakeMemory):
-            def remember(self, text, **kwargs):
+            def remember_turn(self, text, **kwargs):
                 raise RuntimeError("ollama fact extraction timed out")
 
         sent: list[dict[str, object]] = []
@@ -330,7 +352,7 @@ class TestWhatsAppWebhookHandler:
         assert seen.mark_sent_calls == ["wamid.memory-fails"]
 
     def test_a_failed_attempt_does_not_mark_the_message_sent_so_a_retry_still_goes_through(self) -> None:
-        memory = FakeMemory({"results": []})
+        memory = FakeMemory([])
         seen = FakeSeenStore()
         handler = build_whatsapp_webhook_handler(
             open_memory=lambda: memory,

@@ -1,4 +1,4 @@
-"""Blueprint step 1.4: recall -> route -> remember -> send for one inbound message.
+"""Blueprint step 1.4: recall -> route -> send -> remember for one inbound message.
 
 Turns a claimed ``whatsapp_webhook`` job's raw Meta payload into a routed LLM
 reply, sent back over the same client used everywhere else outbound
@@ -20,7 +20,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from bus.whatsapp_client import WhatsAppClient, WhatsAppClientConfig
 from db.jobs import Job
-from memory.runtime import LocalMem0Runtime, open_local_mem0_memory
+from memory.conversation import ConversationMemory, open_conversation_memory
 from router import RoutedResult, route
 
 logger = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ def open_default_seen_message_store(*, environ: Mapping[str, str] | None = None)
     return SeenMessageStore(path)
 
 
-MemoryOpener = Callable[[], LocalMem0Runtime]
+MemoryOpener = Callable[[], ConversationMemory]
 SeenStoreOpener = Callable[[], SeenMessageStore]
 Completion = Callable[[str, Sequence[Mapping[str, Any]]], RoutedResult]
 Sender = Callable[..., str]
@@ -120,21 +120,22 @@ Sender = Callable[..., str]
 def memory_writes_enabled(environ: Mapping[str, str] | None = None) -> bool:
     """Whether to persist conversation turns after replying.
 
-    Default off. Local CPU fact extraction failed on **every** live message
-    (26-27 August 2026): each turn logged ``reply sent but memory write
-    failed`` and cost ~20s of timeout before giving up, so the writes were
-    pure latency with a 0% success rate. ``recall()`` still runs — reading
-    existing memory is a fast embedding lookup, not extraction — so turning
-    this back on is the only change needed once extraction is viable
-    (a smaller model, a GPU, or off-box extraction).
+    Default **on**. Writes were briefly disabled when they went through Mem0's
+    8B fact extraction, which cost 20-130s and failed on 100% of live turns.
+    They now go through :mod:`memory.conversation`, which only embeds and
+    stores (~0.5s), so the reason for disabling them is gone. Extraction still
+    happens, as a batch pass over the stored turns — see
+    ``tools/distill_memory.py``.
+
+    Set ``JARVIS_MEMORY_WRITES=0`` to turn them off again.
     """
     settings = os.environ if environ is None else environ
-    return settings.get("JARVIS_MEMORY_WRITES", "").strip().lower() in {"1", "true", "yes", "on"}
+    return settings.get("JARVIS_MEMORY_WRITES", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def build_whatsapp_webhook_handler(
     *,
-    open_memory: MemoryOpener = open_local_mem0_memory,
+    open_memory: MemoryOpener = open_conversation_memory,
     open_seen_messages: SeenStoreOpener = open_default_seen_message_store,
     complete: Completion | None = None,
     send_text_message: Sender | None = None,
@@ -189,28 +190,23 @@ def build_whatsapp_webhook_handler(
             result = completion("latency", messages)
             reply = _extract_reply_text(result.response)
 
-            # Reply first, then persist. Local CPU fact extraction costs
-            # 60-130s per call and is the slowest thing here by two orders of
-            # magnitude; running it before the send made every reply wait on
-            # it, and any extraction failure discarded an already-generated
-            # reply and re-ran the whole job. Storing after the send is a
-            # deliberate amendment to the blueprint's recall -> route ->
-            # remember -> send order, authorized 26 August 2026 after live
-            # runs kept dead-lettering on extraction alone.
+            # Reply first, then persist — a deliberate amendment to the
+            # blueprint's recall -> route -> remember -> send order, authorized
+            # 26 August 2026. Writing is only ~0.5s now that it embeds instead
+            # of extracting, but the ordering still means no storage problem
+            # can ever delay or discard a reply the user is waiting on.
             sender(to=inbound.sender, text=reply)
             with open_seen_messages() as seen:
                 seen.mark_sent(inbound.message_id)
 
-            # Off by default — see memory_writes_enabled(). The reply is
-            # already delivered and recorded, so a failure past this point
-            # must not fail the job: a retry would resend nothing (dedup) but
-            # would re-run extraction forever. Losing one conversation turn
-            # from memory is the smaller loss.
+            # The reply is already delivered and deduped, so a failure past
+            # this point must not fail the job: a retry could not resend it,
+            # only repeat the write. Losing one turn is the smaller loss.
             if not write_memory:
                 return
             try:
-                memory.remember(f"User: {inbound.text}", user_id=inbound.sender)
-                memory.remember(f"Assistant: {reply}", user_id=inbound.sender)
+                memory.remember_turn(inbound.text, user_id=inbound.sender, role="user")
+                memory.remember_turn(reply, user_id=inbound.sender, role="assistant")
             except Exception as exc:
                 logger.warning(
                     "reply sent but memory write failed (job=%s, %s)", job.id, type(exc).__name__
@@ -220,8 +216,21 @@ def build_whatsapp_webhook_handler(
 
 
 def _format_recalled_context(recalled: Any) -> str:
+    """Render recalled memory as prompt lines.
+
+    Accepts ``Fact`` objects from :mod:`memory.conversation` and, for
+    resilience against a caller still holding the older surface, Mem0's
+    ``{"results": [{"memory": ...}]}`` dicts.
+    """
     results = recalled.get("results", []) if isinstance(recalled, Mapping) else recalled
-    lines = [entry["memory"] for entry in results if isinstance(entry, Mapping) and entry.get("memory")]
+    lines: list[str] = []
+    for entry in results or []:
+        if isinstance(entry, Mapping):
+            text = entry.get("memory")
+        else:
+            text = getattr(entry, "text", None)
+        if isinstance(text, str) and text.strip():
+            lines.append(text.strip())
     return "\n".join(lines)
 
 

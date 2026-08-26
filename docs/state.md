@@ -22,8 +22,8 @@ Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 | Supabase queue | Migrations `0001` and `0002` applied live. RLS on, no public policies, RPCs service-role only |
 | Queue client | Rejects publishable/anon credentials, requires `SUPABASE_SECRET_KEY` |
 | Executor | Atomic claim, checkpoint, complete. Retry, backoff, per-job timeout, dead-letter |
-| Memory | SQLite facts, sqlite-vec index, loopback Ollama, self-hosted Mem0 wrapper. `remember()` and `recall()` both verified end to end |
-| Conversation wiring | `whatsapp_webhook` handler registered: recall, route, **send**, then optionally remember. Reply-first is an authorized amendment to the blueprint's step order. **Memory writes are off by default** (`JARVIS_MEMORY_WRITES`) — they failed on 100% of live messages and cost ~20s each; `recall()` still runs. Dedups by Meta's message id. See `docs/history/whatsapp-reply-failures.md` |
+| Memory | SQLite facts, sqlite-vec index, loopback Ollama. Two paths: conversation turns embed-and-store inline (fast), and `tools/distill_memory.py` folds them into Mem0 facts as an offline batch |
+| Conversation wiring | `whatsapp_webhook` handler: recall, route, **send**, then store the turn. Reply-first is an authorized amendment to the blueprint's step order. Turns are stored verbatim via `memory/conversation.py` (~0.5s embed), **not** Mem0 extraction. Dedups by Meta's message id. See `docs/history/whatsapp-reply-failures.md` |
 | Outbound WhatsApp | `WhatsAppClient.send_text_message()`. A real send through the live Graph API succeeded 26 August 2026 |
 | Process tooling | `tools/consult.py`, `tools/repoint_webhook.py`, `tests/live/`, pre-commit hook |
 | `/status` | Reports `retry_health` (dead-letter and retried-job counts) from the live queue, additive to the existing payload |
@@ -49,18 +49,17 @@ DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
 
 ## Open blockers
 
-1. **Local fact extraction does not work on this hardware.** It failed on
-   100% of live WhatsApp turns, timing out after ~20s each. Conversation
-   memory writes are therefore disabled by default; JARVIS replies but does
-   not learn from conversations. `recall()` (embedding lookup) is fast and
-   still runs, so anything already in `memory.db` is used. Re-enabling is one
-   env var (`JARVIS_MEMORY_WRITES=1`) once extraction is viable — a smaller
-   model, a GPU, or off-box extraction. Unsolved.
+1. **Mem0 fact extraction is too slow to run inline** — ~55s per turn
+   measured. It is no longer on the reply path: turns are stored verbatim and
+   distilled by `tools/distill_memory.py` as a batch. Consequence: distilled
+   facts lag until that batch runs, and nothing schedules it yet, so it is
+   currently a manual command.
 2. **No opted-in backfill.** No corpus has completed the fact-extraction and
    review acceptance loop.
-3. **`memory_extract` has no registered handler.** Nothing enqueues that kind
-   on its own, because the WhatsApp handler does recall and remember inline.
-   This is a design consequence, not an omission.
+3. **Batch distillation is not scheduled.** `tools/distill_memory.py` must be
+   run by hand. It refuses to start while the executor is polling (see
+   `executor/heartbeat.py`), so scheduling it needs a window where the
+   executor is stopped, or `--force` and slower replies.
 4. **Meta app is unpublished.** Dashboard test events arrive, production data
    does not.
 5. **The tunnel is ephemeral.** A Cloudflare Quick Tunnel URL dies whenever

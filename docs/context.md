@@ -8,20 +8,31 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `c91279c Fix run_backfill's usage docstring and record a near-miss with live traffic` on `main`, 8 ahead, 0 behind origin.
+**HEAD** `a35b654 Add Phase 1 scalability and blueprint review` on `main`, 9 ahead, 0 behind origin.
 
-**Working tree:** 1 changed
+**Working tree:** 11 changed (plus 1 untracked)
 
 ```
-  A  docs/scalability-review.md
+  M  .gitignore
+  M  docs/context.md
+  M  docs/state.md
+  M  executor/handlers/whatsapp.py
+  A  executor/heartbeat.py
+  M  executor/poller.py
+  A  memory/conversation.py
+  A  tests/executor/test_heartbeat.py
+  M  tests/executor/test_whatsapp_handler.py
+  A  tests/memory/test_conversation.py
+  A  tools/distill_memory.py
 ```
 
-**Offline suite:** 152 passed, 1 deselected in 4.56s _(recorded 2026-08-27)_
+**Offline suite:** 176 passed, 1 deselected in 4.95s _(recorded 2026-08-27)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `a35b654` Add Phase 1 scalability and blueprint review  _(2026-08-27)_
 - `c91279c` Fix run_backfill's usage docstring and record a near-miss with live traffic  _(2026-08-27)_
 - `129de3a` Disable conversation memory writes by default  _(2026-08-27)_
 - `f11cbb8` Fix three bugs that stopped live WhatsApp replies, and reply before remembering  _(2026-08-27)_
@@ -29,28 +40,20 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `5b9c7d6` Close the retry_health and verify-token-logging blockers in state.md  _(2026-08-26)_
 - `fb2eead` Wire retry_health into /status and redact the Meta verify token from access logs  _(2026-08-26)_
 - `aea3109` Dedup whatsapp_webhook by Meta's message id  _(2026-08-26)_
-- `e889732` Record the first live WhatsApp round trip through whatsapp_webhook  _(2026-08-26)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-WhatsApp replies work end to end. Five separate causes had to be cleared —
-migration `0002` never applied live, a non-idempotent prompt patch, a too-small
-`max_tokens`, a backfill run starving Ollama, and memory writes failing 100% of
-the time. All recorded in `docs/history/whatsapp-reply-failures.md`.
+Memory works again, on a different path. Conversation turns are embedded and
+stored verbatim (~0.5s) instead of going through Mem0's 8B extraction inline
+(~55s, 0% success on live turns). Verified live: a turn stored and recalled in
+0.61s, alongside the 68 backfilled facts. `tools/distill_memory.py` runs the
+Mem0 extraction as an offline batch, and refuses to start while the executor is
+polling — the guard that was missing when a backfill starved eight messages.
 
-Two design consequences, both authorized: the handler replies *before* writing
-memory, and conversation memory writes are **off by default**
-(`JARVIS_MEMORY_WRITES=1` to re-enable). Local extraction on this CPU cannot
-keep up with conversation — that is now the honest Phase 1 blocker in
-`docs/state.md`, not a timeout to tune.
-
-Do not run `tools/run_backfill.py` while conversing. It monopolises the single
-local Ollama and replies stop — re-violated once already, no harm done only
-because no message arrived mid-run. Checkpoint sits at chunk 1/24 of
-`ingest/data/me.txt`; resume only after confirming `/status` shows
-`queued`/`running` both 0.
+Not done: nothing schedules the distiller yet, so distilled facts lag until it
+is run by hand.
 
 ## Waiting on you
 
