@@ -8,3 +8,4 @@ python-dotenv==1.1.1
 sqlite-vec==0.1.9
 mem0ai==2.0.19
 ollama==0.6.2
+pyflp==2.2.1

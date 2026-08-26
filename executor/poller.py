@@ -27,6 +27,7 @@ from db.jobs import (
     retry_or_dead_letter,
     set_timeout,
 )
+from executor.flp.sort import build_flp_sort_handler
 from executor.handlers.whatsapp import build_whatsapp_webhook_handler
 from executor.heartbeat import touch as touch_heartbeat
 from router import RoutedResult, route
@@ -64,6 +65,7 @@ JobHandlers = Mapping[str, "HandlerRegistration | JobHandler"]
 # recall/remember inline rather than as a separate job.
 DEFAULT_HANDLERS: dict[str, HandlerRegistration] = {
     "whatsapp_webhook": HandlerRegistration(build_whatsapp_webhook_handler()),
+    "flp_sort": HandlerRegistration(build_flp_sort_handler()),
 }
 
 

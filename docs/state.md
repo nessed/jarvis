@@ -9,10 +9,11 @@ find yourself writing a date and a story, you are in the wrong file.
 
 ## Phase position
 
-Phase 0 complete and verified. Phase 1 underway.
+Phase 0 complete and verified. Phase 1 underway. Phase 2 scaffolding started
+in parallel (blueprint-authorized), blocked — see open blocker 6.
 
 Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
-5 vision fallback. Phases 2 to 5 have not started.
+5 vision fallback. Phases 3 to 5 have not started.
 
 ## Built and working
 
@@ -27,6 +28,7 @@ Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 | Outbound WhatsApp | `WhatsAppClient.send_text_message()`. A real send through the live Graph API succeeded 26 August 2026 |
 | Process tooling | `tools/consult.py`, `tools/repoint_webhook.py`, `tests/live/`, pre-commit hook |
 | `/status` | Reports `retry_health` (dead-letter and retried-job counts) from the live queue, additive to the existing payload |
+| FL Studio sort (`executor/flp/sort.py`) | `flp_backup`, `load`/`save`, `apply_rules`, `diff_report`, `verify`, `build_flp_sort_handler` built and unit-tested against fakes (16 tests). Registered as job kind `flp_sort` in `executor/poller.py`'s `DEFAULT_HANDLERS`, but nothing enqueues it yet. Reordering mixer inserts raises `ReorderNotSupported` rather than silently no-op'ing: PyFLP has no insert-move API. Cannot be exercised against a real or synthetic `.flp` yet — see open blocker 6 |
 | Bus logging | uvicorn's access log redacts `hub.verify_token`'s value instead of printing it in plaintext |
 
 Ollama 0.32.15 and `nomic-embed-text` are active on loopback. `memory.db` and
@@ -66,6 +68,14 @@ DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
    cloudflared or the laptop stops. `tools/repoint_webhook.py` fixes the Meta
    side. Restarting cloudflared is still manual. A named tunnel is deferred to
    Phase 4.
+6. **PyFLP does not work on this machine's Python (3.12).** A stdlib
+   `enum.py` change breaks `pyflp.parse()` on any input, and `pyflp.save()`
+   cannot create a project from scratch either — reproduced on both an empty
+   project and a real PyFLP test fixture. PyFLP's own support matrix only
+   claims 3.8–3.11. Blocks all of Phase 2 until a Python 3.11 environment is
+   set up for this project; not worked around. Also still needs blueprint
+   2.1: real guinea-pig `.flp` files and the user's dictated mixer-sorting
+   convention, neither of which exist yet.
 
 ## Meta account
 
