@@ -1,14 +1,20 @@
 # JARVIS work setup — objective overview
 
-Last updated: 25 August 2026. Scope: this document describes **how work is
-currently performed on this repository** — the actors, artifacts, control flow,
-human touchpoints, and measured characteristics of the process. It does not
-describe the product architecture (see `docs/blueprint.md`) or the current build
-state (see `docs/context.md`).
+Baseline recorded 25 August 2026; outcomes appended 26 August 2026 (see §12).
+Scope: this document describes **how work is performed on this repository** —
+the actors, artifacts, control flow, human touchpoints, and measured
+characteristics of the process. It does not describe the product architecture
+(see `docs/blueprint.md`) or the current build state (see `docs/context.md`).
 
-This is a descriptive record, not a proposal. It is written to be the input to a
-follow-up review whose goal is to increase automation, increase decision
-quality, and reduce the number of points where the process halts on the user.
+Sections 1–11 are the descriptive record as it stood on 25 August, and are
+deliberately left unedited: they were the evidence input to a process review,
+and rewriting them in place would destroy the before-state that makes the
+after-state legible. **They are no longer an accurate description of the current
+process.** §12 records what the review changed and what it did not. Read §12
+first if you want the current picture; read §5, §6 and §7 as history.
+
+The review's goal was to increase automation, increase decision quality, and
+reduce the number of points where the process halts on the user.
 
 ---
 
@@ -429,3 +435,94 @@ blueprint already specifies as an automatable routing rung. Two structural
 choices — deferring the named tunnel to Phase 4, and running live probes
 manually outside any suite — generate recurring work that the process then
 spends ~16% of its lane volume recovering from.
+
+---
+
+## 12. What changed — 26 August 2026
+
+Committed in `b89e203`. This section is the only current part of the document.
+
+### 12.1 The finding that mattered most
+
+**`agents.md` was never loaded into agent context.** There was no `CLAUDE.md` in
+the repository, and nothing else imported the rules file. The "binding process
+contract" in §3 bound only when an agent happened to open it — §4 step 2
+("Orchestrator reads agents.md + blueprint.md + context.md") describes a habit,
+not a mechanism. Every rule in this document's §3 and §10 was advisory by
+accident for the whole build.
+
+This is precisely the class of thing a document written by an agent operating
+inside the system it describes will not notice: the agent *had* read the rules,
+in the session that produced this file, so the rules appeared to be in force.
+
+Fixed: `CLAUDE.md` now imports `agents.md` and is loaded automatically at every
+session start, including for subagents. Verified by a clean headless session
+instructed not to read files, which correctly named the three stop classes and
+both new scripts from context alone.
+
+### 12.2 Resolved — §10 mutable items
+
+| Item | Was | Now |
+|---|---|---|
+| 11 — escalation transport (§5) | Human copies terminal output into Claude web, copies the answer back | `tools/consult.py` — headless `claude -p`, structured `{verdict, reasoning, confidence, what_would_change_this}`, exchange saved under `docs/consults/`. The record gap named in §5 closes: consults are cited when acted on. |
+| 12 — which stops need the user | No rule; every stop waited on the user | Three named classes in `agents.md`. Class A: evidence obtainable — get it, do not ask. Class B: single defensible judgment — consult, act on the verdict. Class C: the user's alone. A Class B halt reaching the user without a consult first is a failed halt. |
+| 15 — live probes manual | Hand-typed commands with hand-chosen env vars, outside any suite | `tests/live/` behind a `live` pytest marker; new `pytest.ini` defaults to `-m "not live"`. The 26 August Mem0 round trip is now `test_remember_then_recall_round_trip`. |
+| 10 — poll cadence | ~13 consecutive no-information check-ins (§7.1) | Rule: never report with nothing new to say. Not mechanically enforced. |
+| 13 — report verbosity | Formal status-report style; §5.1 measured it as optimized for audit trail, not time-to-decision | Existing terseness rule kept; empty-report rule added. |
+
+### 12.3 Resolved — §6 unprincipled touchpoints
+
+- **6 (escalation relay)** — removed; see above.
+- **5 and 7 (stop arbitration, model/dependency selection)** — narrowed by the
+  Class A/B/C taxonomy. The Qwen-vs-Llama decision in §8 step 7 is the archetype:
+  it had one defensible answer given evidence already in hand, and would now
+  resolve by consult rather than by a full human round trip.
+- **11 (tunnel/webhook re-pointing)** — `tools/repoint_webhook.py` re-points
+  Meta via `POST /{app-id}/subscriptions`, discovering the live tunnel URL from
+  `tools/cloudflared*.log`, probing it before changing anything, and reading the
+  subscription back to confirm. Verified with `--check` against live Meta. The
+  POST path is unexercised — no tunnel was running when it was written.
+
+The §7.5 Meta dashboard browser failure is retired rather than fixed: the Graph
+API replaces the surface that was failing to render. `agents.md` now also
+requires a second reproduction to end retrying — `docs/blockers/<slug>.md`
+instead of another attempt.
+
+### 12.4 A gap this document did not identify
+
+§7.6 named the live-vs-focused verification lag. It did not name the sharper
+version of the same problem: **a focused test run satisfies the citation rule
+while the tree is red.**
+
+At `8fb271f` the full offline suite was failing. `tests/test_integration.py`'s
+`FakeJobs.enqueue` was still on the pre-`8fb271f` signature after the
+queue-durability lane widened the `JobRepository` Protocol. The lane owned the
+Protocol; the stranded test double lived in a file no lane owned. The citation
+recorded in `docs/context.md` — `pytest -q tests\memory` → 45 passed — was true
+and proved nothing about the tree.
+
+This is a direct product of the disjoint-lane model in §3, not an accident of
+one lane's carelessness. Two changes:
+
+- `agents.md`: the full offline suite runs before any commit, and a lane
+  changing a shared interface names every implementer including doubles in files
+  it cannot edit.
+- `.githooks/pre-commit` (with `core.hooksPath` set): refuses a commit while the
+  suite is red. Verified by deliberately breaking a test — the commit was
+  blocked and nothing landed. This is the only change in the set that is
+  mechanically enforced rather than instruction-followed.
+
+### 12.5 Not addressed
+
+- **§7.2 context-reload cost / §7.3 brief distribution / §7.4 recovery share.**
+  `docs/context.md` is still the amortization mechanism and still dense. The
+  proposed split into a short `## Now` block plus dated evidence files was not
+  done; a partial hand reconciliation on 26 August collapsed superseded
+  diagnostic entries instead.
+- **§7.5 Cloudflare Quick Tunnel.** `repoint_webhook.py` fixes the Meta side.
+  Restarting `cloudflared` itself is still manual. The named tunnel remains
+  deferred to Phase 4.
+- **§7.6 missing `deps-mem0_wrapper.txt`.** Still missing.
+- **§10 items 1–9.** Untouched by design — these are the load-bearing
+  constraints, and the review's premise was that they must be satisfied without
+  a human in the loop for every instance, not relaxed.

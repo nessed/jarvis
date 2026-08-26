@@ -87,7 +87,7 @@ Fallback chain on the VPS, simple priority list + 429 backoff (a LiteLLM proxy o
 4. **Gemini Flash (AI Studio)** — long context + vision, free
 5. **OpenRouter `openrouter/free`** — rotating spare capacity
 6. **DeepSeek V4-Flash (paid, prefer off-peak)** — overflow + long-context reasoning
-7. **Claude Max (subscription)** — the smart agentic executor, invoked as `claude -p` jobs, not as a router target
+7. **Claude Max (subscription)** — the smart agentic executor, invoked as `claude -p` jobs, not as a router target (implemented 26 August 2026 as `tools/consult.py`, the second-opinion path for judgment calls — see `agents.md`)
 8. **Claude API key** — capped, emergencies only
 
 Read rate-limit headers at runtime; never hardcode a provider's published numbers. Spread load across providers, not extra keys (org-level limits everywhere).
