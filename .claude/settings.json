@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -m pytest:*)",
+      "Bash(.venv\\\\Scripts\\\\python.exe -m pytest:*)",
+      "Bash(.venv/Scripts/python.exe tools/consult.py:*)",
+      "Bash(.venv\\\\Scripts\\\\python.exe tools/consult.py:*)",
+      "Bash(.venv/Scripts/python.exe tools/repoint_webhook.py:*)",
+      "Bash(.venv\\\\Scripts\\\\python.exe tools/repoint_webhook.py:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git show:*)",
+      "Bash(curl -s https://graph.facebook.com/*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./memory.db)",
+      "Bash(rm -rf:*)",
+      "Bash(git config --global:*)"
+    ]
+  }
+}

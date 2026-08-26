@@ -56,9 +56,43 @@ Phase 1's concrete remaining gaps:
    `open_local_mem0_memory()` / `remember()` / `recall()`, but the changes to
    `memory/mem0_wrapper.py` and `tests/memory/test_mem0_wrapper.py` are still
    local and uncommitted.
-5. **Meta's stored access token is invalid.** A read-only Graph API check
-   returned OAuth error 190 as of 25 August 2026; outbound Graph API sends
-   are blocked until it is regenerated and smoke-tested.
+5. ~~Meta's stored access token is invalid.~~ **Resolved 26 August 2026.**
+   The 25 August OAuth-190 finding is stale. Re-checked directly against the
+   Graph API (not the dashboard UI, which is a separate, unrelated rendering
+   bug): `GET https://graph.facebook.com/v21.0/debug_token?input_token=$META_ACCESS_TOKEN&access_token=$META_ACCESS_TOKEN`
+   returned `{"type":"SYSTEM_USER","application":"WA 1st","expires_at":0,
+   "is_valid":true,"scopes":["business_management",
+   "whatsapp_business_management","whatsapp_business_messaging",
+   "manage_app_solution","whatsapp_business_manage_events","public_profile"]}`
+   — a permanent (`expires_at: 0`) system-user token with the right scopes.
+   `GET https://graph.facebook.com/v21.0/$META_PHONE_NUMBER_ID?access_token=$META_ACCESS_TOKEN`
+   also succeeded, returning the test number's live metadata
+   (`"display_phone_number":"+1 555-201-0561","quality_rating":"GREEN"`).
+   The currently-stored token is valid and usable for outbound sends right
+   now; nothing further is needed on the token itself.
+6. **Outbound WhatsApp send client built (26 August 2026), not yet used for a
+   real send.** `bus/whatsapp_client.py` adds `WhatsAppClient.send_text_message()`
+   against `POST /{phone_number_id}/messages`, mirroring the existing
+   `memory/embeddings.py` `OllamaEmbeddingProvider` pattern (injectable
+   `httpx` transport for tests, typed `WhatsAppSendError`, error messages that
+   surface the Graph API's own code/message but never the request body or
+   token). Tests: `.venv\Scripts\python.exe -m pytest -q tests/bus` →
+   **6 passed**, all against a fake transport — no real message has been sent.
+   Nothing calls this client yet: no handler is registered for the
+   `whatsapp_webhook` job kind in `executor/poller.py`'s `DEFAULT_HANDLERS`,
+   so inbound messages are still enqueued and never processed. That handler
+   — recall() context, route to the LLM, remember() the exchange, then
+   `send_text_message()` the reply — is blueprint step 1.4 and is the actual
+   remaining gap, not the token or the send client in isolation.
+
+**Also observed while working (26 August 2026):** `pytest.ini` (adds a
+`live` pytest marker, default run excludes it) and
+`tests/live/test_memory_roundtrip.py` (a permanent re-runnable version of the
+Mem0 round-trip smoke test run manually above) are present, untracked, and
+`tests/test_integration.py` has an uncommitted one-line change
+(`FakeJobs.enqueue` accepts `max_attempts`) — none of this was made in this
+session. This looks like a concurrent lane/session also working in this
+checkout; noted for awareness, not touched.
 
 Source checkpoints:
 
@@ -273,8 +307,46 @@ workshop opens at nine', 'hash': '4fedaf9ba4b65ce58fd365981f3214ff',
 result was recorded. No personal data was read or ingested. Focused tests:
 `.venv\Scripts\python.exe -m pytest -q tests\memory` → **45 passed**.
 
-**Still needed:** commit this fix (extraction prompt patch + the `recall()`
-filters fix) now that both are live-smoke-verified.
+**Locked in as a runnable probe.** The manual smoke command above is now
+`tests/live/test_memory_roundtrip.py`, marked `live` and excluded from the
+default run. Run it with
+`.venv\Scripts\python.exe -m pytest -q -m live tests/live`. Until it existed,
+Phase 1's actual success criterion was a transcript in this file rather than
+something anyone could re-execute.
+
+## Process tooling (26 August 2026)
+
+Three human touchpoints were replaced with mechanism. Rules in `agents.md`
+changed to match; see its "Before you stop, classify the stop" and "Tools that
+replace a human step" sections.
+
+- **`tools/consult.py`** — headless `claude -p` second opinion, replacing the
+  manual copy-terminal-output-into-a-browser relay. Returns
+  `{verdict, reasoning, confidence, what_would_change_this}` and saves the
+  exchange under `docs/consults/`. Attachments are screened against live `.env`
+  values and known key shapes before sending; `.env` itself is refused.
+  Verified: a real `META_ACCESS_TOKEN` planted in an attached file was replaced
+  with `<redacted:META_ACCESS_TOKEN>` and reported by name only; a live call
+  returned a parsed high-confidence verdict.
+- **`tools/repoint_webhook.py`** — re-points Meta's callback at the current
+  tunnel via `POST /{app-id}/subscriptions`, replacing the per-restart
+  dashboard trip (the same dashboard with the known rendering bug). Probes the
+  tunnel before changing anything and reads the subscription back to confirm.
+  Verified: `--check` returned the live callback
+  `https://gas-clubs-pennsylvania-farming.trycloudflare.com/webhook`. The POST
+  path is unexercised — no tunnel was running at the time.
+- **`tests/live/`** — phase acceptance probes behind a `live` pytest marker,
+  configured in the new `pytest.ini` (default run is `-m "not live"`).
+
+**Regression fixed:** `tests/test_integration.py`'s `FakeJobs.enqueue` was
+still on the pre-`8fb271f` signature, so the full suite was red at `HEAD` while
+the focused `tests\memory` run cited in this file was green. A `JobRepository`
+Protocol widened in the queue-durability lane; its test double lived in a file
+no lane owned. `agents.md` now requires the full offline suite before any
+commit, and requires a lane changing a shared interface to name every
+implementer including doubles it cannot edit. Full offline suite:
+`.venv\Scripts\python.exe -m pytest -q --ignore=tests/db/test_jobs_integration.py`
+-> **117 passed, 1 deselected**.
 
 ## Phase 1 offline foundations
 
@@ -324,7 +396,8 @@ The FastAPI bus and Cloudflare Quick Tunnel were running as of 25 August 2026.
 Confirmed present without reading values: Groq, Cerebras, Gemini, Supabase URL,
 Supabase publishable key, Supabase Secret key, DeepSeek direct key, Meta verify
 token, Meta Phone Number ID, Meta App ID, Meta App Secret, Meta's durable
-system-user access token (currently invalid, see below), and bus bearer token.
+system-user access token (re-verified valid 26 August 2026, see below), and
+bus bearer token.
 DeepSeek proxy mode is false/unset. OpenRouter and Mistral keys are configured.
 NVIDIA NIM is explicitly deferred (and, per the blueprint 1.3 amendment, no
 longer part of the fact-extraction plan at all — it's geo-blocked from
@@ -340,11 +413,17 @@ Pakistan).
 - The active callback is the current Quick Tunnel `/webhook` endpoint; Meta
   save and the closed-lid inbound acceptance have passed. `messages` remains
   subscribed.
-- A read-only Graph API check using the stored Meta access token returned OAuth
-  error 190 as of 25 August 2026. Treat that token as invalid until it is
-  regenerated and smoke-tested; its value is not recorded here. This does not
-  prevent inbound webhook HMAC validation, but it blocks outbound Graph API
-  sends.
+- The Meta access token was found invalid (OAuth error 190) on 25 August 2026,
+  then re-verified valid on 26 August 2026 via a direct Graph API call (see
+  "Current state" above for the exact commands/output) — permanent
+  (`expires_at: 0`) system-user token, correct scopes, confirmed against the
+  live test phone number. Its value is not recorded here. The 25 August
+  failure is believed to have been a stale check (dashboard-UI rendering
+  issue conflated with the token itself, or checked before a regeneration had
+  propagated) rather than a recurring token problem — if it goes invalid
+  again, re-check with the direct `debug_token` curl call above before
+  regenerating, since that isolates the token from the separate dashboard
+  browser-rendering bug documented below.
 - In Meta's redesigned dashboard: **Use cases** → **Settings** →
   **Configurations** → the WhatsApp card's **Connect** → **Basic setup** →
   **Step 2. Production setup** → **Configure Webhooks**. Traditional layout:
@@ -354,9 +433,9 @@ Pakistan).
 
 ## Immediate user handoff
 
-Regenerate and smoke-test the invalid Meta system-user token before
-implementing any outbound Graph API calls. No inbound-acceptance action
-remains.
+None. The Meta system-user token is verified valid and usable (26 August
+2026); no regeneration needed. No inbound-acceptance action remains. Outbound
+Graph API calls can be implemented against the current token directly.
 
 ## Acceptance evidence
 

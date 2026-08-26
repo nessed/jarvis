@@ -8,3 +8,6 @@ tools/cloudflared.exe
 tools/*.log
 memory.db
 memory.db-*
+
+.pytest-basetemp/
+.pytest_cache/

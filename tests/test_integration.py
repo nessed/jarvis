@@ -12,7 +12,7 @@ class FakeJobs:
     def __init__(self) -> None:
         self.enqueued: list[tuple[str, dict]] = []
 
-    def enqueue(self, kind: str, payload: dict, run_after=None) -> Job:
+    def enqueue(self, kind: str, payload: dict, run_after=None, max_attempts=None) -> Job:
         self.enqueued.append((kind, payload))
         now = datetime.now(UTC)
         return Job("job-1", kind, payload, "queued", {}, now, now, now)

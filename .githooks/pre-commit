@@ -1,0 +1,34 @@
+#!/bin/sh
+# Refuse a commit while the offline suite is red.
+#
+# This exists because a lane once cited a green focused run (`pytest -q
+# tests\memory` -> 45 passed) while the tree was red: a JobRepository Protocol
+# widened in one lane, its test double stranded in a file no lane owned. The
+# citation satisfied the evidence rule and still shipped a broken tree. Rules
+# that depend on remembering to run the wider command do not hold; this does.
+#
+# --basetemp pins pytest's scratch dirs inside the repo: a locked-down or
+# unwritable system TMP makes tmp_path fixtures error out en masse, which looks
+# exactly like a red suite and would block commits for no reason.
+
+PY=".venv/Scripts/python.exe"
+[ -x "$PY" ] || PY=".venv/bin/python"
+if [ ! -x "$PY" ]; then
+    echo "pre-commit: no .venv interpreter found; skipping suite" >&2
+    exit 0
+fi
+
+echo "pre-commit: running full offline suite..." >&2
+OUTPUT=$("$PY" -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp --ignore=tests/db/test_jobs_integration.py 2>&1)
+STATUS=$?
+
+if [ $STATUS -ne 0 ]; then
+    echo "$OUTPUT" | tail -30 >&2
+    echo "" >&2
+    echo "pre-commit: offline suite is red. Fix it, or commit with --no-verify" >&2
+    echo "and say plainly in the message that the tree is red and why." >&2
+    exit 1
+fi
+
+echo "$OUTPUT" | tail -1 >&2
+exit 0
