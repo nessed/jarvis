@@ -8,24 +8,21 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `aea3109 Dedup whatsapp_webhook by Meta's message id` on `main`, 2 ahead, 0 behind origin.
+**HEAD** `fb2eead Wire retry_health into /status and redact the Meta verify token from access logs` on `main`, 3 ahead, 0 behind origin.
 
-**Working tree:** 5 changed
+**Working tree:** 1 changed
 
 ```
-  M  bus/logging.py
-  M  bus/main.py
-  M  tests/status/test_live_queue_status.py
-  M  tests/test_integration.py
-  A  tests/test_logging.py
+  M  docs/state.md
 ```
 
-**Offline suite:** 137 passed, 1 deselected in 5.49s _(recorded 2026-08-26)_
+**Offline suite:** 137 passed, 1 deselected in 4.58s _(recorded 2026-08-26)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `fb2eead` Wire retry_health into /status and redact the Meta verify token from access logs  _(2026-08-26)_
 - `aea3109` Dedup whatsapp_webhook by Meta's message id  _(2026-08-26)_
 - `e889732` Record the first live WhatsApp round trip through whatsapp_webhook  _(2026-08-26)_
 - `98383ef` Make context_status --check detect rot, not normal lag  _(2026-08-26)_
@@ -33,7 +30,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `6e4420b` Document the whatsapp_webhook handler and fix the pytest command  _(2026-08-26)_
 - `27663d9` Wire the whatsapp_webhook handler into the executor  _(2026-08-26)_
 - `24cf31c` Rewrite README in plain language  _(2026-08-26)_
-- `b741359` Update docs for the process changes  _(2026-08-26)_
 
 <!-- END GENERATED -->
 
