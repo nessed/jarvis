@@ -23,8 +23,8 @@ Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 | Queue client | Rejects publishable/anon credentials, requires `SUPABASE_SECRET_KEY` |
 | Executor | Atomic claim, checkpoint, complete. Retry, backoff, per-job timeout, dead-letter |
 | Memory | SQLite facts, sqlite-vec index, loopback Ollama, self-hosted Mem0 wrapper. `remember()` and `recall()` both verified end to end |
-| Conversation wiring | `whatsapp_webhook` handler registered: recall, route, remember, send |
-| Outbound WhatsApp | `WhatsAppClient.send_text_message()`, called from the handler |
+| Conversation wiring | `whatsapp_webhook` handler registered: recall, route, remember, send. Live-verified end to end 26 August 2026, see `docs/history/whatsapp-live-roundtrip.md` |
+| Outbound WhatsApp | `WhatsAppClient.send_text_message()`. A real send through the live Graph API succeeded 26 August 2026 |
 | Process tooling | `tools/consult.py`, `tools/repoint_webhook.py`, `tests/live/`, pre-commit hook |
 
 Ollama 0.32.15 and `nomic-embed-text` are active on loopback. `memory.db` and
@@ -58,14 +58,18 @@ DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
 4. **`memory_extract` has no registered handler.** Nothing enqueues that kind
    on its own, because the WhatsApp handler does recall and remember inline.
    This is a design consequence, not an omission.
-5. **No real outbound send yet.** The handler calls the client, but every send
-   so far has been through a fake transport in tests.
+5. **No dedup by Meta's message id.** The webhook enqueues unconditionally on
+   every delivery; Meta's own retries during a connectivity gap produced at
+   least one duplicate job. See `docs/history/whatsapp-live-roundtrip.md`.
 6. **Meta app is unpublished.** Dashboard test events arrive, production data
    does not.
 7. **The tunnel is ephemeral.** A Cloudflare Quick Tunnel URL dies whenever
    cloudflared or the laptop stops. `tools/repoint_webhook.py` fixes the Meta
    side. Restarting cloudflared is still manual. A named tunnel is deferred to
    Phase 4.
+8. **Uvicorn's access log can print `META_VERIFY_TOKEN` in plaintext** as part
+   of the `GET /webhook` query string during Meta's handshake. Surfaced
+   26 August 2026, not fixed. Needs `--no-access-log` or a logging filter.
 
 ## Meta account
 

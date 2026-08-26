@@ -8,20 +8,28 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `eb510d7 Split the context system by rate of change` on `main`, 2 ahead, 0 behind origin.
+**HEAD** `98383ef Make context_status --check detect rot, not normal lag` on `main`, in sync with origin.
 
-**Working tree:** 1 changed
+**Working tree:** 8 changed
 
 ```
-  M  tools/context_status.py
+  M  .gitignore
+   M bus/main.py
+  A  docs/blockers/supabase-unreachable-from-laptop.md
+  M  docs/context.md
+  A  docs/history/whatsapp-live-roundtrip.md
+  M  docs/state.md
+   M tests/status/test_live_queue_status.py
+   M tests/test_integration.py
 ```
 
-**Offline suite:** 125 passed, 1 deselected in 4.93s _(recorded 2026-08-26)_
+**Offline suite:** 127 passed, 1 deselected in 5.05s _(recorded 2026-08-26)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `98383ef` Make context_status --check detect rot, not normal lag  _(2026-08-26)_
 - `eb510d7` Split the context system by rate of change  _(2026-08-26)_
 - `6e4420b` Document the whatsapp_webhook handler and fix the pytest command  _(2026-08-26)_
 - `27663d9` Wire the whatsapp_webhook handler into the executor  _(2026-08-26)_
@@ -29,23 +37,26 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `b741359` Update docs for the process changes  _(2026-08-26)_
 - `b89e203` Replace three human relay steps with mechanism  _(2026-08-26)_
 - `8138dc6` pre-workflow change  _(2026-08-26)_
-- `a621829` yo  _(2026-08-26)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-The `whatsapp_webhook` handler is registered and unit-tested: an inbound
-message runs recall, routes through the provider ladder, remembers, and replies
-through `WhatsAppClient`. Every send so far has gone through a fake transport.
+The real end-to-end WhatsApp round trip landed 26 August 2026 — see
+`docs/history/whatsapp-live-roundtrip.md` for the full record. Fixed along
+the way: an oversized `META_VERIFY_TOKEN` that had silently blocked
+`repoint_webhook.py`'s POST path, and a transient (self-resolved) Supabase
+connectivity gap.
 
-Next: a real end-to-end send. Start the bus and the tunnel, run
-`tools/repoint_webhook.py`, send a message from the phone, and confirm a reply
-arrives. That also exercises the untested POST path in `repoint_webhook.py`.
+Next candidates, not yet started: dedup inbound jobs by Meta's message id
+(a real gap the live test surfaced), or wire `retry_health()` into
+`bus/main.py`'s `/status` route.
 
 ## Waiting on you
 
-Nothing.
+Nothing. The bus, tunnel, and executor were left running from the live test;
+the tunnel URL will die next time `cloudflared` restarts and needs
+re-pointing then, not now.
 
 ## Where facts go
 
