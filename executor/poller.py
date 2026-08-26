@@ -27,6 +27,7 @@ from db.jobs import (
     retry_or_dead_letter,
     set_timeout,
 )
+from executor.handlers.whatsapp import build_whatsapp_webhook_handler
 from router import RoutedResult, route
 
 
@@ -56,11 +57,13 @@ class HandlerRegistration:
 
 JobHandlers = Mapping[str, "HandlerRegistration | JobHandler"]
 
-# The handler registry the executor consults at startup, by job kind. Empty
-# by design: this lane builds the retry/timeout/dead-letter mechanism only
-# and registers no specific handler (not memory_extract, not anything else).
-# A later phase adds entries here, e.g. {"flp_sort": HandlerRegistration(...)}.
-DEFAULT_HANDLERS: dict[str, HandlerRegistration] = {}
+# The handler registry the executor consults at startup, by job kind.
+# ``memory_extract`` has no registered handler yet — nothing enqueues that
+# kind independently of the whatsapp_webhook flow below, which does its own
+# recall/remember inline rather than as a separate job.
+DEFAULT_HANDLERS: dict[str, HandlerRegistration] = {
+    "whatsapp_webhook": HandlerRegistration(build_whatsapp_webhook_handler()),
+}
 
 
 def backoff_seconds(attempts: int) -> float:

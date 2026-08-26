@@ -1,19 +1,18 @@
 # JARVIS project context
 
-Last updated: 26 August 2026 — reconciled, process tooling landed (`b89e203`,
-see "Process tooling" below), then a live end-to-end Mem0 smoke
-test was run. Two parallel lanes landed and committed in `8fb271f` (queue
-durability: attempts/backoff/timeout/dead-letter mechanism; and the Mem0
-self-host wrapper baseline). Two more fixes are complete and live-smoke-
-verified but **uncommitted** on top of that: the Mem0 300s-extraction-timeout
-root-cause fix (compact prompt), and a `Mem0Memory.recall()` bug the live
-smoke test surfaced (`search()` called with an unsupported top-level
-`user_id`/`limit` shape). This pass also collapses superseded diagnostic
-entries (failed Qwen/Llama timeout attempts, the invalid first model
-comparison, the blocked async-memory plan) into short historical notes; their
-full text is still in git history (see `3256779`, `8fb271f`) if needed.
-Current blockers below reflect actual git/tree state, not each intermediate
-attempt.
+Last updated: 26 August 2026 — this pass reconciled the doc itself against
+`git log`: the mem0 extraction-timeout fix and the `Mem0Memory.recall()` fix
+described lower in this file as "uncommitted" actually landed in `a621829`
+and `8138dc6`, the process tooling (`consult.py`, `repoint_webhook.py`,
+`tests/live/`, `CLAUDE.md`, the pre-commit hook) landed in `b89e203`, doc
+updates in `b741359`, and a README rewrite in `24cf31c` — five commits this
+file's "Source checkpoints" list had not caught up to. It still lagged behind
+`HEAD` by those five commits until this edit. Also landed this pass: the
+`whatsapp_webhook` job handler (see "Conversation wiring" below), the actual
+blueprint-1.4 gap the previous entry flagged as the real remaining work.
+Current `HEAD` is `24cf31c`; this file's own drift is exactly the failure
+mode `agents.md`'s "update after every completed subtask" rule exists to
+prevent — noting it here rather than silently re-dating the same mistake.
 
 ## Current state
 
@@ -36,11 +35,11 @@ ingested.
 
 Phase 1's concrete remaining gaps:
 
-1. **No conversation wiring.** No inbound/outbound path calls `recall()`
-   before or `remember()` after a model call. `executor/poller.py`'s
-   `DEFAULT_HANDLERS` is deliberately empty — `memory_extract` (or any kind)
-   is not registered to a handler. Building the mechanism and wiring
-   `memory_extract` into it are separate, not-yet-authorized steps.
+1. ~~No conversation wiring.~~ **Resolved 26 August 2026.** See "Conversation
+   wiring" below — `whatsapp_webhook` now has a registered handler.
+   `memory_extract` still has none; nothing enqueues that kind separately,
+   since the new handler calls `recall()`/`remember()` inline rather than via
+   a second job.
 2. **No opted-in backfill.** `ingest/` remains empty by design; no corpus has
    completed the fact-extraction + backfill/review acceptance loop.
 3. **Queue durability mechanism is built and tested, not live.**
@@ -51,12 +50,11 @@ Phase 1's concrete remaining gaps:
    `requirements.txt`, outside that lane's ownership. `bus/status.py` gained
    an optional `retry_health()` reader, but it is not yet wired into the real
    `/status` route in `bus/main.py`.
-4. **Mem0's extraction-timeout fix is uncommitted.** The compact-prompt fix
-   and a second bug it surfaced in `Mem0Memory.recall()` (below) are both
-   fixed and live-smoke-verified end-to-end through
-   `open_local_mem0_memory()` / `remember()` / `recall()`, but the changes to
-   `memory/mem0_wrapper.py` and `tests/memory/test_mem0_wrapper.py` are still
-   local and uncommitted.
+4. ~~Mem0's extraction-timeout fix is uncommitted.~~ **Resolved — was already
+   committed.** The compact-prompt fix and the `Mem0Memory.recall()` fix
+   (below) are both fixed, live-smoke-verified, and were in fact committed in
+   `a621829`/`8138dc6`; this entry's "uncommitted" claim was stale doc drift,
+   not real tree state (see the header note above).
 5. ~~Meta's stored access token is invalid.~~ **Resolved 26 August 2026.**
    The 25 August OAuth-190 finding is stale. Re-checked directly against the
    Graph API (not the dashboard UI, which is a separate, unrelated rendering
@@ -71,29 +69,18 @@ Phase 1's concrete remaining gaps:
    (`"display_phone_number":"+1 555-201-0561","quality_rating":"GREEN"`).
    The currently-stored token is valid and usable for outbound sends right
    now; nothing further is needed on the token itself.
-6. **Outbound WhatsApp send client built (26 August 2026), not yet used for a
-   real send.** `bus/whatsapp_client.py` adds `WhatsAppClient.send_text_message()`
-   against `POST /{phone_number_id}/messages`, mirroring the existing
-   `memory/embeddings.py` `OllamaEmbeddingProvider` pattern (injectable
-   `httpx` transport for tests, typed `WhatsAppSendError`, error messages that
-   surface the Graph API's own code/message but never the request body or
-   token). Tests: `.venv\Scripts\python.exe -m pytest -q tests/bus` →
-   **6 passed**, all against a fake transport — no real message has been sent.
-   Nothing calls this client yet: no handler is registered for the
-   `whatsapp_webhook` job kind in `executor/poller.py`'s `DEFAULT_HANDLERS`,
-   so inbound messages are still enqueued and never processed. That handler
-   — recall() context, route to the LLM, remember() the exchange, then
-   `send_text_message()` the reply — is blueprint step 1.4 and is the actual
-   remaining gap, not the token or the send client in isolation.
+6. ~~Outbound WhatsApp send client built, not yet used for a real send.~~
+   **Resolved 26 August 2026.** See "Conversation wiring" below —
+   `WhatsAppClient.send_text_message()` is now called from the registered
+   `whatsapp_webhook` handler. No *real* (non-fake-transport) send has
+   happened yet; that is a live acceptance step, not a build gap.
 
-**Also observed while working (26 August 2026):** `pytest.ini` (adds a
-`live` pytest marker, default run excludes it) and
-`tests/live/test_memory_roundtrip.py` (a permanent re-runnable version of the
-Mem0 round-trip smoke test run manually above) are present, untracked, and
-`tests/test_integration.py` has an uncommitted one-line change
-(`FakeJobs.enqueue` accepts `max_attempts`) — none of this was made in this
-session. This looks like a concurrent lane/session also working in this
-checkout; noted for awareness, not touched.
+**Note on the "also observed" entry this replaces:** an earlier version of
+this file reported `pytest.ini`, `tests/live/test_memory_roundtrip.py`, and a
+`tests/test_integration.py` one-line fix as untracked/uncommitted, speculating
+about a concurrent session. They were this session's own work, committed in
+`a621829`/`8138dc6`/`b89e203` shortly after — not a concurrent lane. Recorded
+here so the same false trail isn't re-investigated.
 
 Source checkpoints:
 
@@ -103,19 +90,30 @@ Source checkpoints:
 - `f77d7af` — complete Phase 0 executor lifecycle and live queue status.
 - `4700407` — add local-first persistent memory foundations.
 - `3256779` — reconcile Phase 1 context (superseded by this entry).
-- `8fb271f` (current `HEAD`) — lands, together and committed: the queue
-  durability mechanism (`db/migrations/0002_job_retries.sql`,
-  `executor/poller.py` handler registry + backoff + timeout,
-  `bus/status.py` `retry_health()`), the full Mem0 self-host wrapper baseline
-  (`memory/mem0_wrapper.py`, pinned `mem0ai==2.0.19` + `ollama==0.6.2` in
-  `requirements.txt`), and the blueprint 1.3 amendment (local Ollama +
-  structured decoding replaces the original NIM/Gemini fact-extraction
-  routing — NIM is geo-blocked from Pakistan, Gemini's free tier may train on
-  prompts).
+- `8fb271f` — lands, together and committed: the queue durability mechanism
+  (`db/migrations/0002_job_retries.sql`, `executor/poller.py` handler
+  registry + backoff + timeout, `bus/status.py` `retry_health()`), the full
+  Mem0 self-host wrapper baseline (`memory/mem0_wrapper.py`, pinned
+  `mem0ai==2.0.19` + `ollama==0.6.2` in `requirements.txt`), and the
+  blueprint 1.3 amendment (local Ollama + structured decoding replaces the
+  original NIM/Gemini fact-extraction routing — NIM is geo-blocked from
+  Pakistan, Gemini's free tier may train on prompts).
+- `a621829`, `8138dc6` — the Mem0 compact-extraction-prompt fix and the
+  `Mem0Memory.recall()` `user_id`/`limit` fix (both described under "Phase 1
+  — Mem0 wrapper" below), plus `pytest.ini`, `tests/live/`, and the
+  `FakeJobs.enqueue` regression fix.
+- `b89e203` — process tooling: `tools/consult.py`, `tools/repoint_webhook.py`,
+  `CLAUDE.md`, `.githooks/pre-commit`, the stop-classification and
+  parallelism rules in `agents.md`, and `bus/whatsapp_client.py`
+  (`WhatsAppClient.send_text_message()`, not yet wired to a handler at this
+  point).
+- `b741359`, `24cf31c` — doc updates for the process changes and a plain-
+  language README rewrite.
+- `HEAD` (this session) — the `whatsapp_webhook` job handler; see
+  "Conversation wiring" below. Not yet committed as of this doc edit — the
+  orchestrator commits after this file is reconciled.
 - The complete repository history is published to
-  `https://github.com/nessed/jarvis` on `main`. `HEAD` (`8fb271f`) is pushed;
-  the Mem0 timeout fix described below is a local, uncommitted change on top
-  of it.
+  `https://github.com/nessed/jarvis` on `main`, up to `24cf31c`.
 
 No credential, token, password, or database secret is committed or recorded in
 this file. `.env` is ignored and `.env.example` has empty placeholders.
