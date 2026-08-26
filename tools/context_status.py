@@ -12,7 +12,7 @@ it, every commit, silently.
 Usage
 -----
     python tools/context_status.py --write     rewrite the block in place
-    python tools/context_status.py --check     exit 1 if the block is stale
+    python tools/context_status.py --check     exit 1 if the block has rotted
     python tools/context_status.py --record-suite "117 passed" [--live "1 passed"]
 
 ``--record-suite`` caches a test summary line into .context-status.json so
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import date
@@ -37,6 +38,10 @@ BEGIN = "<!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 END = "<!-- END GENERATED -->"
 
 COMMIT_COUNT = 8
+
+# The block always names the commit the work was built on, so one commit of lag
+# is normal. More than this means it stopped being regenerated.
+MAX_LAG = 2
 
 
 def git(*args: str) -> str:
@@ -122,6 +127,44 @@ def splice(text: str, block: str) -> str:
     return text[:start] + block + text[end + len(END):]
 
 
+def check(current: str) -> int:
+    """Is the block genuinely rotten?
+
+    The block is written by the pre-commit hook, so it names the commit the
+    work was built on, not the commit that carries it. Being exactly one commit
+    behind is normal and always true right after a commit. Byte-comparing
+    against a fresh block would therefore fail constantly and teach everyone to
+    ignore it.
+
+    What actually matters is the failure this tool exists to prevent: a block
+    that has drifted several commits behind, or that was hand-edited into
+    something the tool never produced.
+    """
+    if BEGIN not in current or END not in current:
+        print("docs/context.md has no generated block", file=sys.stderr)
+        return 1
+
+    block = current.split(BEGIN, 1)[1].split(END, 1)[0]
+    recorded = re.search(r"\*\*HEAD\*\* `([0-9a-f]{7,40}) ", block)
+    if not recorded:
+        print("generated block has no HEAD line; it was hand-edited", file=sys.stderr)
+        return 1
+
+    sha = recorded.group(1)
+    if not git("cat-file", "-t", sha):
+        print(f"generated block names {sha}, which is not a commit in this repo", file=sys.stderr)
+        return 1
+
+    behind = git("rev-list", "--count", f"{sha}..HEAD")
+    if behind and int(behind) > MAX_LAG:
+        print(
+            f"generated block is {behind} commits behind HEAD; run --write",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Regenerate the context.md status block.")
     parser.add_argument("--write", action="store_true")
@@ -151,10 +194,7 @@ def main() -> int:
     updated = splice(current, build_block())
 
     if args.check:
-        if updated != current:
-            print("docs/context.md status block is stale; run --write", file=sys.stderr)
-            return 1
-        return 0
+        return check(current)
 
     if args.write:
         if updated != current:
