@@ -151,6 +151,52 @@ this file. `.env` is ignored and `.env.example` has empty placeholders.
     live chat request still returns 403 — account/workspace resolution is
     still needed before that rung is usable.
 
+## Conversation wiring — whatsapp_webhook handler (26 August 2026)
+
+Blueprint step 1.4, the gap the previous entry in this file flagged as the
+actual remaining work once the send client and token were both ready.
+
+- **`executor/handlers/whatsapp.py`** (new module):
+  `parse_inbound_text_message(payload)` reads a raw Meta webhook payload
+  (`entry[].changes[].value.messages[]`) and returns an `InboundMessage
+  (sender, text)` for the first inbound text message, or `None` for anything
+  else Meta sends to the same webhook — delivery/read status callbacks,
+  non-text message types (image/audio/reaction/...), and malformed/empty
+  payloads are all silent no-ops, not errors.
+  `build_whatsapp_webhook_handler(*, open_memory, complete, send_text_message)`
+  returns a plain `JobHandler` closure: `memory.recall(text, user_id=sender)`
+  → build a system+context+user message list → `router.route("latency",
+  messages, urgent=True)` → `memory.remember()` twice (user turn, then
+  assistant turn) → `WhatsAppClient.send_text_message()`. `user_id=sender`
+  (the WhatsApp phone number) gives each conversation its own recall/remember
+  scope in Mem0. All three dependencies default to the real
+  `open_local_mem0_memory` / `router.route` / `WhatsAppClient` but are
+  injectable, so the handler is unit-tested without Ollama, a live provider,
+  or the Graph API. No new error handling was added on top of what the
+  poller already does: recall/route/send failures propagate unchanged into
+  the existing retry/backoff/dead-letter path with a type-only diagnostic.
+- **Registered** in `executor/poller.py`'s `DEFAULT_HANDLERS["whatsapp_webhook"]`
+  — no longer the empty registry described below. `memory_extract` still has
+  no handler; nothing enqueues that kind separately, since this handler calls
+  `recall()`/`remember()` inline rather than dispatching a second job.
+- Tests: `executor/handlers/whatsapp.py` is new; `tests/executor/test_whatsapp_handler.py`
+  is new (payload parsing incl. status-only and non-text payloads; the
+  no-inbound-message no-op path; the full recall→route→remember→send flow
+  with fake dependencies; an unexpected-completion-shape guard so a malformed
+  provider response raises instead of sending garbage to the user). Full
+  offline suite: `.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
+  --basetemp=.pytest-basetemp --ignore=tests/db/test_jobs_integration.py` →
+  **125 passed, 1 deselected** (117 prior + 8 new).
+- **Not yet done:** no real message has been sent or received through this
+  handler — only fake-dependency unit tests. That is the next live
+  acceptance step (send a real WhatsApp message to the test number and
+  confirm a reply arrives), not a build gap.
+- The plain `pytest -m pytest -q --ignore=...` form in `CLAUDE.md` fails in
+  this environment with `PermissionError` against the system `TEMP` dir; the
+  working invocation adds `-p no:cacheprovider --basetemp=.pytest-basetemp`,
+  matching `.githooks/pre-commit`. Worth fixing the documented command if it
+  keeps tripping this up.
+
 ## Queue durability — attempts, backoff, dead-letter (landed & committed, 8fb271f)
 
 Built and tested; **not yet live**. Full design in
@@ -159,7 +205,8 @@ Built and tested; **not yet live**. Full design in
 
 - **Handler registry at startup.** `executor/poller.py` adds
   `HandlerRegistration(handler, timeout_seconds)` and `DEFAULT_HANDLERS`
-  (empty by design — no kind is registered yet), built once in `main()` and
+  (now carrying one entry, `whatsapp_webhook` — see "Conversation wiring"
+  above), built once in `main()` and
   passed to every `poll_once` call. An unregistered kind raises before any
   checkpoint/dispatch, logs at `WARNING` with only the job id, and is routed
   through the same retry/backoff/dead-letter path as any other failure — it

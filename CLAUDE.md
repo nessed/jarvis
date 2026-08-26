@@ -32,11 +32,16 @@ opening them as an optional first step.
 ## Commands
 
 ```
-.venv\Scripts\python.exe -m pytest -q --ignore=tests/db/test_jobs_integration.py   # full offline suite; required before any commit
+.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp --ignore=tests/db/test_jobs_integration.py   # full offline suite; required before any commit
 .venv\Scripts\python.exe -m pytest -q -m live tests/live                           # phase acceptance probes
 .venv\Scripts\python.exe tools/consult.py "question" [--file P] [--cmd "..."]      # second opinion; every Class B stop
 .venv\Scripts\python.exe tools/repoint_webhook.py                                  # re-point Meta at the current tunnel
 ```
+
+The full-suite command needs `-p no:cacheprovider --basetemp=.pytest-basetemp`
+on this machine: the system `TEMP` directory is locked down, and pytest's
+default scratch/cache dirs land there and fail with `PermissionError` without
+those flags. `.githooks/pre-commit` already uses this form.
 
 The pre-commit hook in `.githooks/pre-commit` runs the full offline suite and
 refuses a red commit. If it is not firing, run
