@@ -22,6 +22,15 @@ JsonObject = dict[str, Any]
 DEFAULT_MAX_ATTEMPTS = 5
 DEFAULT_TIMEOUT_SECONDS = 300
 
+# supabase-py defaults its PostgREST client to a 120s timeout. The executor
+# polls this queue in a single serial loop, so one hung connection stalls every
+# inbound message behind it for two full minutes — measured live on 27 August
+# 2026 as a 95s delay on a reply whose own work took 5s. Queue calls are small
+# RPCs against a nearby region (~0.12s observed), so anything past a few
+# seconds is a failing connection, not a slow one: fail fast and let the next
+# poll retry.
+DEFAULT_QUEUE_TIMEOUT_SECONDS = 10
+
 
 @dataclass(frozen=True)
 class Job:
@@ -97,9 +106,10 @@ class SupabaseJobsRepository:
             )
         try:
             from supabase import create_client
+            from supabase.lib.client_options import ClientOptions
         except ImportError as exc:  # pragma: no cover - dependency integration
             raise RuntimeError("Install the pinned Supabase dependency first") from exc
-        return cls(create_client(url, key))
+        return cls(create_client(url, key, options=ClientOptions(postgrest_client_timeout=_client_timeout())))
 
     def enqueue(
         self,
@@ -169,6 +179,18 @@ def _one_job(response: Any) -> Job:
     if not data:
         raise KeyError("job was not found")
     return Job.from_row(data)
+
+
+def _client_timeout() -> int:
+    """Queue-client HTTP timeout, overridable via ``SUPABASE_QUEUE_TIMEOUT_SECONDS``."""
+    raw = os.environ.get("SUPABASE_QUEUE_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_QUEUE_TIMEOUT_SECONDS
+    try:
+        value = int(float(raw))
+    except ValueError:
+        return DEFAULT_QUEUE_TIMEOUT_SECONDS
+    return value if value > 0 else DEFAULT_QUEUE_TIMEOUT_SECONDS
 
 
 def _server_key_from_env() -> str | None:

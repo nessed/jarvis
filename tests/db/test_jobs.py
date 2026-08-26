@@ -240,10 +240,21 @@ def test_repository_accepts_secret_key_without_exposing_it(monkeypatch):
     created = []
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test_only")
+    # from_env() now also passes ClientOptions(postgrest_client_timeout=...),
+    # so the double has to accept `options` and expose the submodule the
+    # import comes from. supabase-py's own default is 120s, which stalled the
+    # executor's serial poll loop; see TestQueueClientTimeout below.
     monkeypatch.setitem(
         sys.modules,
         "supabase",
-        SimpleNamespace(create_client=lambda url, key: created.append((url, key)) or object()),
+        SimpleNamespace(
+            create_client=lambda url, key, options=None: created.append((url, key)) or object()
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "supabase.lib.client_options",
+        SimpleNamespace(ClientOptions=lambda **kwargs: SimpleNamespace(**kwargs)),
     )
 
     repository = SupabaseJobsRepository.from_env()
@@ -284,3 +295,50 @@ def test_retry_migration_adds_attempts_columns_and_dead_letter_state_only_additi
     for function in ("retry_or_dead_letter_job", "set_job_timeout"):
         assert f"revoke execute on function public.{function}" in migration
         assert f"grant execute on function public.{function}" in migration
+
+
+class TestQueueClientTimeout:
+    """supabase-py defaults PostgREST to 120s. The executor polls in one serial
+    loop, so a hung connection stalled every queued message behind it for two
+    minutes — measured live as a 95s delay on a reply whose own work took 5s."""
+
+    def test_default_is_short_enough_to_fail_fast(self):
+        from db.jobs import DEFAULT_QUEUE_TIMEOUT_SECONDS
+
+        assert 0 < DEFAULT_QUEUE_TIMEOUT_SECONDS <= 30
+
+    def test_environment_can_override_the_timeout(self, monkeypatch):
+        from db.jobs import _client_timeout
+
+        monkeypatch.setenv("SUPABASE_QUEUE_TIMEOUT_SECONDS", "5")
+        assert _client_timeout() == 5
+
+    def test_unset_or_unusable_values_fall_back_to_the_default(self, monkeypatch):
+        from db.jobs import DEFAULT_QUEUE_TIMEOUT_SECONDS, _client_timeout
+
+        monkeypatch.delenv("SUPABASE_QUEUE_TIMEOUT_SECONDS", raising=False)
+        assert _client_timeout() == DEFAULT_QUEUE_TIMEOUT_SECONDS
+
+        for bad in ("", "   ", "not-a-number", "0", "-5"):
+            monkeypatch.setenv("SUPABASE_QUEUE_TIMEOUT_SECONDS", bad)
+            assert _client_timeout() == DEFAULT_QUEUE_TIMEOUT_SECONDS
+
+    def test_from_env_passes_the_timeout_into_the_client(self, monkeypatch):
+        import db.jobs as jobs
+
+        monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+        monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_testing")
+        monkeypatch.setenv("SUPABASE_QUEUE_TIMEOUT_SECONDS", "7")
+
+        seen = {}
+
+        def fake_create_client(url, key, options=None):
+            seen["timeout"] = getattr(options, "postgrest_client_timeout", None)
+            return object()
+
+        import supabase
+
+        monkeypatch.setattr(supabase, "create_client", fake_create_client)
+        jobs.SupabaseJobsRepository.from_env()
+
+        assert seen["timeout"] == 7

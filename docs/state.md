@@ -20,7 +20,7 @@ Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 |---|---|
 | FastAPI bus | HMAC-verified webhooks, bearer auth elsewhere, request-ID JSON logging, protected `/status` |
 | Supabase queue | Migrations `0001` and `0002` applied live. RLS on, no public policies, RPCs service-role only |
-| Queue client | Rejects publishable/anon credentials, requires `SUPABASE_SECRET_KEY` |
+| Queue client | Rejects publishable/anon credentials, requires `SUPABASE_SECRET_KEY`. PostgREST timeout pinned to 10s (`SUPABASE_QUEUE_TIMEOUT_SECONDS`) — supabase-py's 120s default let one hung connection stall the serial poll loop for two minutes |
 | Executor | Atomic claim, checkpoint, complete. Retry, backoff, per-job timeout, dead-letter |
 | Memory | SQLite facts, sqlite-vec index, loopback Ollama. Two paths: conversation turns embed-and-store inline (fast), and `tools/distill_memory.py` folds them into Mem0 facts as an offline batch |
 | Conversation wiring | `whatsapp_webhook` handler: recall, route, **send**, then store the turn. Reply-first is an authorized amendment to the blueprint's step order. Turns are stored verbatim via `memory/conversation.py` (~0.5s embed), **not** Mem0 extraction. Dedups by Meta's message id. See `docs/history/whatsapp-reply-failures.md` |

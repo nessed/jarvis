@@ -8,30 +8,23 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `a35b654 Add Phase 1 scalability and blueprint review` on `main`, 9 ahead, 0 behind origin.
+**HEAD** `603cec6 Make conversation memory work by taking extraction off the reply path` on `main`, 10 ahead, 0 behind origin.
 
-**Working tree:** 11 changed (plus 1 untracked)
+**Working tree:** 3 changed (plus 4 untracked)
 
 ```
-  M  .gitignore
-  M  docs/context.md
+  M  db/jobs.py
   M  docs/state.md
-  M  executor/handlers/whatsapp.py
-  A  executor/heartbeat.py
-  M  executor/poller.py
-  A  memory/conversation.py
-  A  tests/executor/test_heartbeat.py
-  M  tests/executor/test_whatsapp_handler.py
-  A  tests/memory/test_conversation.py
-  A  tools/distill_memory.py
+  M  tests/db/test_jobs.py
 ```
 
-**Offline suite:** 176 passed, 1 deselected in 4.95s _(recorded 2026-08-27)_
+**Offline suite:** 196 passed, 1 deselected in 5.49s _(recorded 2026-08-27)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `603cec6` Make conversation memory work by taking extraction off the reply path  _(2026-08-27)_
 - `a35b654` Add Phase 1 scalability and blueprint review  _(2026-08-27)_
 - `c91279c` Fix run_backfill's usage docstring and record a near-miss with live traffic  _(2026-08-27)_
 - `129de3a` Disable conversation memory writes by default  _(2026-08-27)_
@@ -39,7 +32,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `afa6b58` Add a resumable backfill runner over the opted-in intake folder  _(2026-08-26)_
 - `5b9c7d6` Close the retry_health and verify-token-logging blockers in state.md  _(2026-08-26)_
 - `fb2eead` Wire retry_health into /status and redact the Meta verify token from access logs  _(2026-08-26)_
-- `aea3109` Dedup whatsapp_webhook by Meta's message id  _(2026-08-26)_
 
 <!-- END GENERATED -->
 
