@@ -9,6 +9,7 @@ tools/*.log
 memory.db
 memory.db-*
 *.mem0-history.db
+*.seen-messages.db
 
 .pytest-basetemp/
 .pytest_cache/

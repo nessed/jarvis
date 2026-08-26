@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sqlite3
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from bus.whatsapp_client import WhatsAppClient, WhatsAppClientConfig
@@ -34,6 +38,7 @@ class InboundMessage:
 
     sender: str
     text: str
+    message_id: str
 
 
 def parse_inbound_text_message(payload: Mapping[str, Any]) -> InboundMessage | None:
@@ -52,12 +57,62 @@ def parse_inbound_text_message(payload: Mapping[str, Any]) -> InboundMessage | N
                     continue
                 sender = message.get("from")
                 text = (message.get("text") or {}).get("body")
-                if sender and text:
-                    return InboundMessage(sender=str(sender), text=str(text))
+                message_id = message.get("id")
+                if sender and text and message_id:
+                    return InboundMessage(sender=str(sender), text=str(text), message_id=str(message_id))
     return None
 
 
+class SeenMessageStore:
+    """Tracks which inbound WhatsApp message ids have already been replied to.
+
+    Meta redelivers a webhook it didn't get a fast 200 for — a connectivity
+    gap on the bus side, for instance — which enqueues the same message
+    several times. This is checked before doing any work and updated only
+    after a reply actually sends, so a *failed* attempt (routing error,
+    timeout, ...) is never mistaken for "already handled" and still gets
+    retried normally by the poller's own backoff.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self._conn = sqlite3.connect(str(path))
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS sent_replies (message_id TEXT PRIMARY KEY, sent_at TEXT NOT NULL)"
+        )
+        self._conn.commit()
+
+    def has_sent(self, message_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM sent_replies WHERE message_id = ?", (message_id,)
+        ).fetchone()
+        return row is not None
+
+    def mark_sent(self, message_id: str) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO sent_replies (message_id, sent_at) VALUES (?, ?)",
+            (message_id, datetime.now(UTC).isoformat()),
+        )
+        self._conn.commit()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> "SeenMessageStore":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
+def open_default_seen_message_store(*, environ: Mapping[str, str] | None = None) -> SeenMessageStore:
+    """Open the seen-message store next to the configured memory database."""
+    settings = os.environ if environ is None else environ
+    path = Path(settings.get("MEMORY_DB_PATH", "memory.db")).with_suffix(".seen-messages.db")
+    return SeenMessageStore(path)
+
+
 MemoryOpener = Callable[[], LocalMem0Runtime]
+SeenStoreOpener = Callable[[], SeenMessageStore]
 Completion = Callable[[str, Sequence[Mapping[str, Any]]], RoutedResult]
 Sender = Callable[..., str]
 
@@ -65,6 +120,7 @@ Sender = Callable[..., str]
 def build_whatsapp_webhook_handler(
     *,
     open_memory: MemoryOpener = open_local_mem0_memory,
+    open_seen_messages: SeenStoreOpener = open_default_seen_message_store,
     complete: Completion | None = None,
     send_text_message: Sender | None = None,
 ) -> Callable[[Job], None]:
@@ -73,7 +129,8 @@ def build_whatsapp_webhook_handler(
     Any raised exception (recall, routing, or send failure) propagates
     unchanged to the poller, which already retries/backs off/dead-letters it
     with a type-only diagnostic — this handler adds no error handling of its
-    own on top of that.
+    own on top of that. A message id already marked sent is a silent no-op,
+    same as an unparseable payload; it is not an error either.
     """
 
     def _default_complete(task_profile: str, messages: Sequence[Mapping[str, Any]]) -> RoutedResult:
@@ -92,6 +149,15 @@ def build_whatsapp_webhook_handler(
             logger.info("whatsapp webhook job carried no inbound text message (job=%s)", job.id)
             return
 
+        with open_seen_messages() as seen:
+            if seen.has_sent(inbound.message_id):
+                logger.info(
+                    "duplicate whatsapp message, already replied (job=%s, message_id=%s)",
+                    job.id,
+                    inbound.message_id,
+                )
+                return
+
         with open_memory() as memory:
             recalled = memory.recall(inbound.text, user_id=inbound.sender)
             messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -107,6 +173,9 @@ def build_whatsapp_webhook_handler(
             memory.remember(f"Assistant: {reply}", user_id=inbound.sender)
 
         sender(to=inbound.sender, text=reply)
+
+        with open_seen_messages() as seen:
+            seen.mark_sent(inbound.message_id)
 
     return handle
 
