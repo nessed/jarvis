@@ -5,9 +5,10 @@ empty (``ingest/data``, gitignored) and stays that way until the user
 explicitly drops notes or WhatsApp exports into it per blueprint step 1.2 —
 running this before that happens processes nothing.
 
-Usage:
-    .venv/Scripts/python.exe tools/run_backfill.py --user-id +92XXXXXXXXXX
-    .venv/Scripts/python.exe tools/run_backfill.py --dry-run
+Usage (run as a module - this package imports ingest/memory as siblings, which
+only resolves when the repo root is on sys.path, as -m guarantees):
+    .venv/Scripts/python.exe -m tools.run_backfill --user-id +92XXXXXXXXXX
+    .venv/Scripts/python.exe -m tools.run_backfill --dry-run
 """
 
 from __future__ import annotations

@@ -8,25 +8,22 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `f11cbb8 Fix three bugs that stopped live WhatsApp replies, and reply before remembering` on `main`, 6 ahead, 0 behind origin.
+**HEAD** `129de3a Disable conversation memory writes by default` on `main`, 7 ahead, 0 behind origin.
 
-**Working tree:** 6 changed
+**Working tree:** 2 changed
 
 ```
   M  docs/context.md
-  M  docs/history/whatsapp-reply-failures.md
-  M  docs/state.md
-  M  executor/handlers/whatsapp.py
-  M  tests/executor/test_whatsapp_handler.py
-   M tools/run_backfill.py
+  M  tools/run_backfill.py
 ```
 
-**Offline suite:** 152 passed, 1 deselected in 5.87s _(recorded 2026-08-27)_
+**Offline suite:** 152 passed, 1 deselected in 5.52s _(recorded 2026-08-27)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `129de3a` Disable conversation memory writes by default  _(2026-08-27)_
 - `f11cbb8` Fix three bugs that stopped live WhatsApp replies, and reply before remembering  _(2026-08-27)_
 - `afa6b58` Add a resumable backfill runner over the opted-in intake folder  _(2026-08-26)_
 - `5b9c7d6` Close the retry_health and verify-token-logging blockers in state.md  _(2026-08-26)_
@@ -34,7 +31,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `aea3109` Dedup whatsapp_webhook by Meta's message id  _(2026-08-26)_
 - `e889732` Record the first live WhatsApp round trip through whatsapp_webhook  _(2026-08-26)_
 - `98383ef` Make context_status --check detect rot, not normal lag  _(2026-08-26)_
-- `eb510d7` Split the context system by rate of change  _(2026-08-26)_
 
 <!-- END GENERATED -->
 
@@ -52,7 +48,10 @@ keep up with conversation — that is now the honest Phase 1 blocker in
 `docs/state.md`, not a timeout to tune.
 
 Do not run `tools/run_backfill.py` while conversing. It monopolises the single
-local Ollama and replies stop.
+local Ollama and replies stop — re-violated once already, no harm done only
+because no message arrived mid-run. Checkpoint sits at chunk 1/24 of
+`ingest/data/me.txt`; resume only after confirming `/status` shows
+`queued`/`running` both 0.
 
 ## Waiting on you
 
