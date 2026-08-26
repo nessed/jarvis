@@ -8,22 +8,23 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `607bde1 Add PyFLP proof-of-concept scaffolding for Phase 2` on `main`, 12 ahead, 0 behind origin.
+**HEAD** `0de7c89 Add one-command startup so the whole stack comes up together` on `main`, 13 ahead, 0 behind origin.
 
 **Working tree:** 3 changed
 
 ```
-  M  README.md
-  A  start-jarvis.bat
-  A  tools/start_jarvis.py
+  M  docs/context.md
+  M  docs/scalability-review.md
+  M  docs/state.md
 ```
 
-**Offline suite:** 196 passed, 1 deselected in 5.50s _(recorded 2026-08-27)_
+**Offline suite:** 196 passed, 1 deselected in 4.98s _(recorded 2026-08-27)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `0de7c89` Add one-command startup so the whole stack comes up together  _(2026-08-27)_
 - `607bde1` Add PyFLP proof-of-concept scaffolding for Phase 2  _(2026-08-27)_
 - `123b724` Pin the queue client timeout so a hung connection can't stall every message  _(2026-08-27)_
 - `603cec6` Make conversation memory work by taking extraction off the reply path  _(2026-08-27)_
@@ -31,26 +32,24 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `c91279c` Fix run_backfill's usage docstring and record a near-miss with live traffic  _(2026-08-27)_
 - `129de3a` Disable conversation memory writes by default  _(2026-08-27)_
 - `f11cbb8` Fix three bugs that stopped live WhatsApp replies, and reply before remembering  _(2026-08-27)_
-- `afa6b58` Add a resumable backfill runner over the opted-in intake folder  _(2026-08-26)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-Memory works again, on a different path. Conversation turns are embedded and
-stored verbatim (~0.5s) instead of going through Mem0's 8B extraction inline
-(~55s, 0% success on live turns). Verified live: a turn stored and recalled in
-0.61s, alongside the 68 backfilled facts. `tools/distill_memory.py` runs the
-Mem0 extraction as an offline batch, and refuses to start while the executor is
-polling — the guard that was missing when a backfill starved eight messages.
+Replies work and land in seconds. Three things fixed tonight: memory writes
+moved off the reply path (store the turn in ~0.5s, distil later), the queue
+client's inherited 120s timeout pinned to 10s — one hung connection had been
+stalling every queued message behind it — and `start-jarvis.bat`, which brings
+the whole stack up in order and re-points WhatsApp itself.
 
-Not done: nothing schedules the distiller yet, so distilled facts lag until it
-is run by hand.
+Next, unstarted: schedule `tools/distill_memory.py`, or Phase 2 (FL Studio,
+currently blocked on Python 3.12 — see `docs/state.md` blocker 5).
 
 ## Waiting on you
 
-Nothing. Bus, tunnel and executor are running. The tunnel URL dies whenever
-`cloudflared` restarts and needs `tools/repoint_webhook.py` then, not now.
+Nothing. Run `start-jarvis.bat` to bring it up; Ctrl+C stops it. Messages sent
+while it is down wait in the queue rather than being lost.
 
 ## Where facts go
 

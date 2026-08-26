@@ -29,6 +29,7 @@ Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 | Process tooling | `tools/consult.py`, `tools/repoint_webhook.py`, `tests/live/`, pre-commit hook |
 | `/status` | Reports `retry_health` (dead-letter and retried-job counts) from the live queue, additive to the existing payload |
 | FL Studio sort (`executor/flp/sort.py`) | `flp_backup`, `load`/`save`, `apply_rules`, `diff_report`, `verify`, `build_flp_sort_handler` built and unit-tested against fakes (16 tests). Registered as job kind `flp_sort` in `executor/poller.py`'s `DEFAULT_HANDLERS`, but nothing enqueues it yet. Reordering mixer inserts raises `ReorderNotSupported` rather than silently no-op'ing: PyFLP has no insert-move API. Cannot be exercised against a real or synthetic `.flp` yet — see open blocker 6 |
+| Startup | `start-jarvis.bat` -> `tools/start_jarvis.py` brings up Ollama check, bus, tunnel, Meta re-point and executor in order, waiting for each to answer before the next. Ctrl+C stops the set together; a child dying reports which and shuts the rest down |
 | Bus logging | uvicorn's access log redacts `hub.verify_token`'s value instead of printing it in plaintext |
 
 Ollama 0.32.15 and `nomic-embed-text` are active on loopback. `memory.db` and
@@ -51,24 +52,22 @@ DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
 
 ## Open blockers
 
-1. **Mem0 fact extraction is too slow to run inline** — ~55s per turn
-   measured. It is no longer on the reply path: turns are stored verbatim and
-   distilled by `tools/distill_memory.py` as a batch. Consequence: distilled
-   facts lag until that batch runs, and nothing schedules it yet, so it is
-   currently a manual command.
+1. **Batch distillation is not scheduled.** Mem0 fact extraction costs ~55s
+   per turn, so it is off the reply path: turns are stored verbatim and
+   `tools/distill_memory.py` folds them into facts later. Nothing runs it, so
+   distilled facts lag until it is invoked by hand. It refuses to start while
+   the executor is polling (`executor/heartbeat.py`), so scheduling it needs a
+   window with the executor stopped, or `--force` and slower replies.
 2. **No opted-in backfill.** No corpus has completed the fact-extraction and
    review acceptance loop.
-3. **Batch distillation is not scheduled.** `tools/distill_memory.py` must be
-   run by hand. It refuses to start while the executor is polling (see
-   `executor/heartbeat.py`), so scheduling it needs a window where the
-   executor is stopped, or `--force` and slower replies.
-4. **Meta app is unpublished.** Dashboard test events arrive, production data
+3. **Meta app is unpublished.** Dashboard test events arrive, production data
    does not.
-5. **The tunnel is ephemeral.** A Cloudflare Quick Tunnel URL dies whenever
-   cloudflared or the laptop stops. `tools/repoint_webhook.py` fixes the Meta
-   side. Restarting cloudflared is still manual. A named tunnel is deferred to
-   Phase 4.
-6. **PyFLP does not work on this machine's Python (3.12).** A stdlib
+4. **The tunnel is ephemeral.** A Cloudflare Quick Tunnel URL dies whenever
+   cloudflared or the laptop stops. `start-jarvis.bat` now mints a new one and
+   re-points Meta automatically on each run, so this is no longer a manual
+   step — but nothing receives messages while the laptop is off. A named
+   tunnel, and moving the bus off the laptop, are both Phase 4.
+5. **PyFLP does not work on this machine's Python (3.12).** A stdlib
    `enum.py` change breaks `pyflp.parse()` on any input, and `pyflp.save()`
    cannot create a project from scratch either — reproduced on both an empty
    project and a real PyFLP test fixture. PyFLP's own support matrix only
@@ -93,6 +92,26 @@ DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
   **Configurations**, the WhatsApp card's **Connect**, **Basic setup**,
   **Step 2. Production setup**, **Configure Webhooks**. Traditional layout:
   **WhatsApp**, **Configuration**.
+
+## This machine and network
+
+- **The ISP DNS resolver lags on fresh records.** It returned NXDOMAIN for a
+  Quick Tunnel hostname that `1.1.1.1` and `8.8.8.8` both resolved correctly.
+  Meta resolves independently, so a tunnel this laptop cannot look up is still
+  reachable from the internet. `tools/start_jarvis.py` therefore gets a
+  second opinion from public DNS before believing a tunnel is dead, and passes
+  `--skip-probe` to `repoint_webhook.py` in that case. Do not "fix" a
+  local-probe failure by assuming the tunnel is broken.
+- **Supabase connectivity is intermittently flaky here**, occasionally failing
+  TLS with `WinError 10054` for minutes at a time before recovering on its
+  own. The queue client's 10s timeout keeps that from stalling the poll loop.
+- **Ollama is a single serial resource.** Any batch job using it blocks live
+  replies for its whole duration. That is what `executor/heartbeat.py` guards.
+- **Local fact extraction is CPU-only** and roughly 250x slower than
+  embedding (~55s vs ~0.5s), which is the reason for the two-path memory
+  design above.
+- The system `TEMP` directory is locked down; pytest needs
+  `-p no:cacheprovider --basetemp=.pytest-basetemp` to run.
 
 ## Local configuration
 
