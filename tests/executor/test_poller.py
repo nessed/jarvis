@@ -273,6 +273,9 @@ def test_cli_consults_the_startup_handler_registry_by_kind():
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(poller, "load_dotenv", lambda: None)
         mp.setattr(poller, "poll_once", fake_poll_once)
+        # A long-running start seeds the distill chain, which would otherwise
+        # reach the live queue from a unit test.
+        mp.setattr(poller, "seed_distill_chain", lambda: False)
         assert poller.main([]) == 0
 
     assert calls == [poller.DEFAULT_HANDLERS]
@@ -291,6 +294,7 @@ def test_cli_logs_transient_errors_by_type_then_keeps_polling(monkeypatch, caplo
 
     monkeypatch.setattr(poller, "load_dotenv", lambda: None)
     monkeypatch.setattr(poller, "poll_once", transient_then_interrupt)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: False)
     monkeypatch.setattr(poller.time, "sleep", sleeps.append)
 
     assert poller.main(["--interval", "0.25"]) == 0
@@ -311,3 +315,52 @@ def test_cli_once_surfaces_poll_errors_for_diagnostics(monkeypatch):
 
     with pytest.raises(RuntimeError, match="test-only failure"):
         poller.main(["--once"])
+
+
+def test_cli_seeds_the_distill_chain_on_a_long_running_start(monkeypatch):
+    seeded: list[bool] = []
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: seeded.append(True) or True)
+    monkeypatch.setattr(
+        poller, "poll_once", lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt)
+    )
+
+    assert poller.main([]) == 0
+    assert seeded == [True]
+
+
+def test_cli_once_does_not_touch_the_queue_by_seeding(monkeypatch):
+    """``--once`` is a diagnostic. It must not enqueue anything."""
+    seeded: list[bool] = []
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: seeded.append(True) or True)
+    monkeypatch.setattr(poller, "poll_once", lambda **kwargs: None)
+
+    assert poller.main(["--once"]) == 0
+    assert seeded == []
+
+
+def test_a_failed_seed_is_logged_by_type_and_never_stops_the_executor(monkeypatch, caplog):
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(
+        poller,
+        "seed_distill_chain",
+        lambda: (_ for _ in ()).throw(RuntimeError("supabase is flaky here")),
+    )
+    monkeypatch.setattr(
+        poller, "poll_once", lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt)
+    )
+
+    assert poller.main([]) == 0
+    assert "could not seed the distill_memory chain (RuntimeError)" in caplog.text
+    assert "supabase is flaky" not in caplog.text
+
+
+def test_the_distill_kind_is_registered_with_a_timeout_above_the_extraction_timeout():
+    from executor.handlers.distill import (
+        DISTILL_JOB_KIND,
+        extraction_timeout_seconds,
+    )
+
+    registration = poller.DEFAULT_HANDLERS[DISTILL_JOB_KIND]
+    assert registration.timeout_seconds > extraction_timeout_seconds({})

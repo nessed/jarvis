@@ -10,6 +10,19 @@ competes with live replies for exactly the same model, which is what starved
 eight inbound messages on 26 August.
 
     .venv\\Scripts\\python.exe tools/distill_memory.py [--limit N] [--dry-run]
+
+This is no longer the only thing that distills. The executor now runs a
+``distill_memory`` job kind that works one turn at a time and yields to any
+queued live work, which is what actually closed ``docs/state.md`` open blocker
+1 — see ``executor/handlers/distill.py`` and the adversarial comparison of the
+three candidate mechanisms saved at
+``docs/consults/2026-08-27-distill-scheduling-mechanism/``.
+
+This CLI stays, unchanged in behaviour, as the guarded manual entry point: it
+still refuses to run while the executor is polling, it still takes ``--force``,
+and it still drains the whole backlog in one go rather than a turn at a time.
+Both paths share ``memory.distill.distill_turns``, so the "mark distilled only
+after extraction succeeded" invariant cannot drift between them.
 """
 
 from __future__ import annotations
@@ -17,7 +30,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -26,6 +38,7 @@ from dotenv import load_dotenv
 
 from executor.heartbeat import refuse_if_executor_is_live
 from memory.conversation import open_conversation_memory
+from memory.distill import distill_turns, preview
 from memory.runtime import open_local_mem0_memory
 
 logger = logging.getLogger("distill")
@@ -58,40 +71,38 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("%d turn(s) to distill", len(pending))
         if args.dry_run:
             for fact in pending:
-                logger.info("  would distill %s  %s", fact.created_at.date(), _preview(fact.text))
+                logger.info("  would distill %s  %s", fact.created_at.date(), preview(fact.text))
             return 0
 
         mem0 = open_local_mem0_memory(args.database)
-        distilled = failed = 0
         try:
-            for fact in pending:
-                user_id = str(fact.metadata.get("user_id") or "jarvis")
-                role = str(fact.metadata.get("role") or "user")
-                started = time.monotonic()
-                try:
-                    mem0.remember(f"{role.capitalize()}: {fact.text}", user_id=user_id)
-                except Exception as exc:
-                    failed += 1
-                    logger.warning("  failed %s (%s)", _preview(fact.text), type(exc).__name__)
-                    continue
-                # Mark only after extraction succeeded, so a crash or a timeout
-                # leaves the turn eligible for the next run instead of silently
-                # dropping it.
-                conversation.mark_distilled(fact)
-                distilled += 1
-                logger.info("  distilled in %.1fs  %s", time.monotonic() - started, _preview(fact.text))
+            report = distill_turns(
+                conversation,
+                mem0,
+                limit=args.limit,
+                on_distilled=lambda fact, seconds: logger.info(
+                    "  distilled in %.1fs  %s", seconds, preview(fact.text)
+                ),
+                # A human is watching this output, so a failed turn is logged
+                # and the rest of the batch still runs. The executor handler
+                # deliberately does the opposite and lets failures propagate
+                # into the queue's retry path.
+                on_error=lambda fact, exc: logger.warning(
+                    "  failed %s (%s)", preview(fact.text), type(exc).__name__
+                ),
+            )
         finally:
             mem0.close()
 
-        logger.info("done: %d distilled, %d failed, %d remaining", distilled, failed, len(pending) - distilled)
-        return 0 if distilled or not failed else 1
+        logger.info(
+            "done: %d distilled, %d failed, %d remaining",
+            report.distilled,
+            report.failed,
+            report.attempted - report.distilled,
+        )
+        return 0 if report.distilled or not report.failed else 1
     finally:
         conversation.close()
-
-
-def _preview(text: str, width: int = 60) -> str:
-    flat = " ".join(text.split())
-    return flat if len(flat) <= width else flat[: width - 1] + "…"
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point

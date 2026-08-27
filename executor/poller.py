@@ -28,6 +28,12 @@ from db.jobs import (
     set_timeout,
 )
 from executor.flp.sort import build_flp_sort_handler
+from executor.handlers.distill import (
+    DISTILL_JOB_KIND,
+    HANDLER_TIMEOUT_SECONDS as DISTILL_TIMEOUT_SECONDS,
+    build_distill_memory_handler,
+    seed_distill_chain,
+)
 from executor.handlers.whatsapp import build_whatsapp_webhook_handler
 from executor.heartbeat import touch as touch_heartbeat
 from router import RoutedResult, route
@@ -63,9 +69,19 @@ JobHandlers = Mapping[str, "HandlerRegistration | JobHandler"]
 # ``memory_extract`` has no registered handler yet — nothing enqueues that
 # kind independently of the whatsapp_webhook flow below, which does its own
 # recall/remember inline rather than as a separate job.
+#
+# ``distill_memory`` carries a longer timeout than the default 300s would
+# suggest is needed, but the number that matters is the *other* direction: it
+# must stay above the Ollama client's own extraction timeout so a wedged model
+# raises inside the handler thread rather than leaving that thread abandoned,
+# still holding the single local Ollama, while this loop claims the next job.
+# See ``executor/handlers/distill.py``.
 DEFAULT_HANDLERS: dict[str, HandlerRegistration] = {
     "whatsapp_webhook": HandlerRegistration(build_whatsapp_webhook_handler()),
     "flp_sort": HandlerRegistration(build_flp_sort_handler()),
+    DISTILL_JOB_KIND: HandlerRegistration(
+        build_distill_memory_handler(), timeout_seconds=DISTILL_TIMEOUT_SECONDS
+    ),
 }
 
 
@@ -199,6 +215,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.interval <= 0:
         parser.error("--interval must be greater than zero")
 
+    if not args.once:
+        _seed_distill_chain()
+
     try:
         while True:
             # Marks the executor live so batch tools (distill, backfill) can
@@ -216,6 +235,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         return 0
+
+
+def _seed_distill_chain() -> None:
+    """Start the batch-distillation chain if it is not already in the queue.
+
+    Best-effort on purpose. Supabase connectivity is intermittently flaky on
+    this machine, and a failed seed costs one idle cooldown at worst — an
+    executor that refuses to start because a background chain could not be
+    seeded would be a far worse trade. Skipped for ``--once`` runs, which are
+    diagnostics and must not mutate the queue.
+    """
+    try:
+        if seed_distill_chain():
+            logger.info("seeded the %s chain", DISTILL_JOB_KIND)
+    except Exception as exc:
+        logger.warning("could not seed the %s chain (%s)", DISTILL_JOB_KIND, type(exc).__name__)
 
 
 async def request_completion(

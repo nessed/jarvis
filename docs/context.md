@@ -8,21 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `09363de Record the duplicate start_jarvis.py incident in context.md` on `main`, in sync with origin.
+**HEAD** `1527ee9 Gitignore test_projects/ before real .flp guinea pigs land` on `main`, 1 ahead, 0 behind origin.
 
-**Working tree:** 2 changed
+**Working tree:** 26 changed
 
 ```
-  M  .gitignore
+  M  db/jobs.py
+  A  docs/blockers/pyflp-python-312.md
+  A  docs/consults/2026-08-27-distill-scheduling-mechanism/prompt.md
+  A  docs/consults/2026-08-27-distill-scheduling-mechanism/response.md
+  A  docs/consults/2026-08-27-distill-scheduling-mechanism/verdict.json
+  A  docs/consults/2026-08-27-path-smoke-test/prompt.md
+  A  docs/consults/2026-08-27-path-smoke-test/response.md
+  A  docs/consults/2026-08-27-path-smoke-test/verdict.json
   M  docs/context.md
+  M  docs/state.md
+  A  docs/tasks/backfill-liveness-guard.md
+  A  docs/tasks/distill-scheduling.md
+  ...and 14 more
 ```
 
-**Offline suite:** 196 passed, 1 deselected in 6.12s _(recorded 2026-08-27)_
+**Offline suite:** 272 passed, 1 deselected in 5.88s _(recorded 2026-08-27)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `1527ee9` Gitignore test_projects/ before real .flp guinea pigs land  _(2026-08-27)_
 - `09363de` Record the duplicate start_jarvis.py incident in context.md  _(2026-08-27)_
 - `a7a2030` Reconcile the context docs with what actually landed tonight  _(2026-08-27)_
 - `0de7c89` Add one-command startup so the whole stack comes up together  _(2026-08-27)_
@@ -30,27 +42,30 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `123b724` Pin the queue client timeout so a hung connection can't stall every message  _(2026-08-27)_
 - `603cec6` Make conversation memory work by taking extraction off the reply path  _(2026-08-27)_
 - `a35b654` Add Phase 1 scalability and blueprint review  _(2026-08-27)_
-- `c91279c` Fix run_backfill's usage docstring and record a near-miss with live traffic  _(2026-08-27)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-Replies work and land in seconds — three fixes landed tonight (memory off the
-reply path, queue timeout pinned to 10s, `start-jarvis.bat`). But **two full
-copies of the stack are running right now**, one under `.venv`, one under the
-global Python install, cause unconfirmed. Force-killing them by PID
-(`taskkill /T`) already caused one full outage tonight — Windows' parent/child
-tracking on this machine did not match reality. Do not repeat that; only
-`Ctrl+C` in the owning window is trusted to stop a copy cleanly.
+**Nothing is running.** Every process was enumerated: zero `python`, zero
+`cloudflared`, zero `ollama`, nothing on 8000 or 11434. The two duplicate
+stacks died on their own, most likely a reboot. Nothing to Ctrl+C — but nothing
+receives WhatsApp messages until Ollama is started and `start-jarvis.bat` is
+run again.
 
-Next, unstarted: schedule `tools/distill_memory.py`, or Phase 2 (FL Studio,
-blocked on Python 3.12 — see `docs/state.md` blocker 5).
+Four lanes landed: the launcher singleton lock, `run_backfill.py`'s liveness
+guard, the `distill_memory` job chain (retires old blocker 1), and the PyFLP
+blocker file. `tools/consult.py` was found broken on Windows and fixed —
+prompts were truncated to one line, so archived verdicts predating today are
+suspect.
+
+Next, unstarted: Phase 2 needs Python 3.11 installed (blocker 4).
 
 ## Waiting on you
 
-Find and `Ctrl+C` any extra terminal/window running `start-jarvis.bat` or
-`start_jarvis.py`, so only one copy of the stack is left running.
+One approval: **install Python 3.11** — it is not on this machine — and create
+`.venv311` for Phase 2 FLP work. Plan is in
+`docs/blockers/pyflp-python-312.md`.
 
 ## Where facts go
 

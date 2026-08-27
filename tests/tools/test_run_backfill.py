@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
+import pytest
+
+from executor.heartbeat import DEFAULT_MAX_AGE_SECONDS
 from ingest.pipeline import BackfillCheckpoint
 from tools.run_backfill import main, run_backfill_over_intake
+
+
+@pytest.fixture(autouse=True)
+def _isolated_heartbeat(tmp_path: Path, monkeypatch) -> Path:
+    """Point every test in this file at a throwaway marker.
+
+    The repo's real ``.executor-heartbeat`` is written by a live executor. No
+    test may read it: whether the suite passes would then depend on whether
+    the executor happened to be running.
+    """
+    path = tmp_path / "heartbeat" / "absent"
+    monkeypatch.setenv("JARVIS_EXECUTOR_HEARTBEAT", str(path))
+    return path
 
 
 class FakeSink:
@@ -133,3 +150,106 @@ def test_main_requires_user_id_unless_dry_run(tmp_path: Path) -> None:
         assert exc.code == 2
 
     assert raised
+
+
+def _fresh(heartbeat: Path) -> None:
+    heartbeat.parent.mkdir(parents=True, exist_ok=True)
+    heartbeat.write_text(str(time.time()), encoding="utf-8")
+
+
+def _stale(heartbeat: Path) -> None:
+    heartbeat.parent.mkdir(parents=True, exist_ok=True)
+    heartbeat.write_text(str(time.time() - (DEFAULT_MAX_AGE_SECONDS + 100)), encoding="utf-8")
+
+
+def _record_the_run(monkeypatch) -> list[dict]:
+    """Let ``main`` reach the work, without opening a model or reading a file."""
+    runs: list[dict] = []
+
+    class FakeMemory:
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("tools.run_backfill.open_local_mem0_memory", lambda *a, **k: FakeMemory())
+    monkeypatch.setattr(
+        "tools.run_backfill.run_backfill_over_intake", lambda **kwargs: (runs.append(kwargs), [])[1]
+    )
+    return runs
+
+
+def _fail_if_anything_runs(monkeypatch) -> None:
+    def boom(*args, **kwargs):
+        raise AssertionError("backfill work started despite the liveness guard")
+
+    monkeypatch.setattr("tools.run_backfill.open_local_mem0_memory", boom)
+    monkeypatch.setattr("tools.run_backfill.run_backfill_over_intake", boom)
+
+
+def test_main_refuses_to_start_while_the_executor_is_polling(
+    tmp_path: Path, monkeypatch, caplog, _isolated_heartbeat: Path
+) -> None:
+    intake = tmp_path / "intake"
+    _write(intake, "a.txt", "one two three")
+    _fresh(_isolated_heartbeat)
+    _fail_if_anything_runs(monkeypatch)
+
+    exit_code = main(["--intake-dir", str(intake), "--user-id", "923000000000"])
+
+    assert exit_code == 2
+    assert "executor is running" in caplog.text
+
+
+def test_force_runs_even_while_the_executor_is_polling(
+    tmp_path: Path, monkeypatch, _isolated_heartbeat: Path
+) -> None:
+    intake = tmp_path / "intake"
+    _write(intake, "a.txt", "one two three")
+    _fresh(_isolated_heartbeat)
+    runs = _record_the_run(monkeypatch)
+
+    exit_code = main(["--intake-dir", str(intake), "--user-id", "923000000000", "--force"])
+
+    assert exit_code == 0
+    assert len(runs) == 1
+
+
+def test_a_stale_heartbeat_does_not_block_a_run(
+    tmp_path: Path, monkeypatch, _isolated_heartbeat: Path
+) -> None:
+    intake = tmp_path / "intake"
+    _write(intake, "a.txt", "one two three")
+    _stale(_isolated_heartbeat)
+    runs = _record_the_run(monkeypatch)
+
+    exit_code = main(["--intake-dir", str(intake), "--user-id", "923000000000"])
+
+    assert exit_code == 0
+    assert len(runs) == 1
+
+
+def test_a_missing_heartbeat_file_does_not_block_a_run(
+    tmp_path: Path, monkeypatch, _isolated_heartbeat: Path
+) -> None:
+    intake = tmp_path / "intake"
+    _write(intake, "a.txt", "one two three")
+    assert not _isolated_heartbeat.exists()
+    runs = _record_the_run(monkeypatch)
+
+    exit_code = main(["--intake-dir", str(intake), "--user-id", "923000000000"])
+
+    assert exit_code == 0
+    assert len(runs) == 1
+
+
+def test_a_dry_run_is_never_blocked_by_a_live_executor(
+    tmp_path: Path, monkeypatch, capsys, _isolated_heartbeat: Path
+) -> None:
+    intake = tmp_path / "intake"
+    _write(intake, "a.txt", "one two three")
+    _fresh(_isolated_heartbeat)
+    _fail_if_anything_runs(monkeypatch)
+
+    exit_code = main(["--intake-dir", str(intake), "--dry-run"])
+
+    assert exit_code == 0
+    assert str(intake / "a.txt") in capsys.readouterr().out

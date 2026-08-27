@@ -10,7 +10,7 @@ find yourself writing a date and a story, you are in the wrong file.
 ## Phase position
 
 Phase 0 complete and verified. Phase 1 underway. Phase 2 scaffolding started
-in parallel (blueprint-authorized), blocked — see open blocker 6.
+in parallel (blueprint-authorized), blocked — see open blocker 4.
 
 Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 5 vision fallback. Phases 3 to 5 have not started.
@@ -23,13 +23,16 @@ Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 | Supabase queue | Migrations `0001` and `0002` applied live. RLS on, no public policies, RPCs service-role only |
 | Queue client | Rejects publishable/anon credentials, requires `SUPABASE_SECRET_KEY`. PostgREST timeout pinned to 10s (`SUPABASE_QUEUE_TIMEOUT_SECONDS`) — supabase-py's 120s default let one hung connection stall the serial poll loop for two minutes |
 | Executor | Atomic claim, checkpoint, complete. Retry, backoff, per-job timeout, dead-letter |
-| Memory | SQLite facts, sqlite-vec index, loopback Ollama. Two paths: conversation turns embed-and-store inline (fast), and `tools/distill_memory.py` folds them into Mem0 facts as an offline batch |
+| Memory | SQLite facts, sqlite-vec index, loopback Ollama. Two paths: conversation turns embed-and-store inline (fast), and the shared loop in `memory/distill.py` folds them into Mem0 facts as an offline batch |
+| Batch distillation | Job kind `distill_memory` (`executor/handlers/distill.py`), self-re-enqueuing. One turn per job; a yield check for ready non-distill work runs **before** any extraction, so a ripe distill row costs one query rather than 55s when a reply is waiting. `run_after` is a duty-cycle throttle only, never a priority — the queue has no priority column and `claim_next_job` orders by `run_after asc, created_at asc`, so the ordering inversion is real and is absorbed by the yield check, not prevented. The executor seeds the chain at startup (not for `--once`), best-effort. Mechanism chosen adversarially: `docs/consults/2026-08-27-distill-scheduling-mechanism/`. `tools/distill_memory.py` remains as the manual path, still heartbeat-guarded |
+| Batch-tool liveness guards | Both Ollama-driving batch tools refuse while the executor's heartbeat is fresh: `tools/distill_memory.py` and now `tools/run_backfill.py`. Same `--force` override, same message from `executor/heartbeat.py`. `--dry-run` is never blocked |
 | Conversation wiring | `whatsapp_webhook` handler: recall, route, **send**, then store the turn. Reply-first is an authorized amendment to the blueprint's step order. Turns are stored verbatim via `memory/conversation.py` (~0.5s embed), **not** Mem0 extraction. Dedups by Meta's message id. See `docs/history/whatsapp-reply-failures.md` |
 | Outbound WhatsApp | `WhatsAppClient.send_text_message()`. A real send through the live Graph API succeeded 26 August 2026 |
-| Process tooling | `tools/consult.py`, `tools/repoint_webhook.py`, `tests/live/`, pre-commit hook |
+| Process tooling | `tools/consult.py`, `tools/repoint_webhook.py`, `tests/live/`, pre-commit hook. **`consult.py` sends the prompt on stdin, never in argv** — `claude.cmd` runs through `cmd.exe`, where a newline in an argv element terminates the command and the line is capped at 8191 chars, so every consult before 27 Aug 2026 delivered only its first line and got a confidently wrong answer back. Treat archived verdicts predating that fix as suspect |
 | `/status` | Reports `retry_health` (dead-letter and retried-job counts) from the live queue, additive to the existing payload |
-| FL Studio sort (`executor/flp/sort.py`) | `flp_backup`, `load`/`save`, `apply_rules`, `diff_report`, `verify`, `build_flp_sort_handler` built and unit-tested against fakes (16 tests). Registered as job kind `flp_sort` in `executor/poller.py`'s `DEFAULT_HANDLERS`, but nothing enqueues it yet. Reordering mixer inserts raises `ReorderNotSupported` rather than silently no-op'ing: PyFLP has no insert-move API. Cannot be exercised against a real or synthetic `.flp` yet — see open blocker 6 |
+| FL Studio sort (`executor/flp/sort.py`) | `flp_backup`, `load`/`save`, `apply_rules`, `diff_report`, `verify`, `build_flp_sort_handler` built and unit-tested against fakes (16 tests). Registered as job kind `flp_sort` in `executor/poller.py`'s `DEFAULT_HANDLERS`, but nothing enqueues it yet. Reordering mixer inserts raises `ReorderNotSupported` rather than silently no-op'ing: PyFLP has no insert-move API. Cannot be exercised against a real or synthetic `.flp` yet — see open blocker 4 |
 | Startup | `start-jarvis.bat` -> `tools/start_jarvis.py` brings up Ollama check, bus, tunnel, Meta re-point and executor in order, waiting for each to answer before the next. Ctrl+C stops the set together; a child dying reports which and shuts the rest down |
+| Single-instance guard | The launcher binds `127.0.0.1:8765` exclusively (`JARVIS_SINGLETON_PORT` overrides) as `main`'s first side effect, before the Ollama probe and before any child. A second copy refuses, names the holding PID via `netstat -ano`, exits nonzero, and mints no tunnel and re-points nothing. `SO_REUSEADDR` is deliberately never set. Fails open like `executor/heartbeat.py`: the OS releases the bind however the process dies, so no stale lock can wedge a future launch. The refusal never kills anything — it says Ctrl+C in the owning window. Loopback health probes could not catch a duplicate: an HTTP 200 on `127.0.0.1:8000` does not say whose process answered |
 | Bus logging | uvicorn's access log redacts `hub.verify_token`'s value instead of printing it in plaintext |
 
 Ollama 0.32.15 and `nomic-embed-text` are active on loopback. `memory.db` and
@@ -52,29 +55,24 @@ DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
 
 ## Open blockers
 
-1. **Batch distillation is not scheduled.** Mem0 fact extraction costs ~55s
-   per turn, so it is off the reply path: turns are stored verbatim and
-   `tools/distill_memory.py` folds them into facts later. Nothing runs it, so
-   distilled facts lag until it is invoked by hand. It refuses to start while
-   the executor is polling (`executor/heartbeat.py`), so scheduling it needs a
-   window with the executor stopped, or `--force` and slower replies.
-2. **No opted-in backfill.** No corpus has completed the fact-extraction and
+1. **No opted-in backfill.** No corpus has completed the fact-extraction and
    review acceptance loop.
-3. **Meta app is unpublished.** Dashboard test events arrive, production data
+2. **Meta app is unpublished.** Dashboard test events arrive, production data
    does not.
-4. **The tunnel is ephemeral.** A Cloudflare Quick Tunnel URL dies whenever
+3. **The tunnel is ephemeral.** A Cloudflare Quick Tunnel URL dies whenever
    cloudflared or the laptop stops. `start-jarvis.bat` now mints a new one and
    re-points Meta automatically on each run, so this is no longer a manual
    step — but nothing receives messages while the laptop is off. A named
    tunnel, and moving the bus off the laptop, are both Phase 4.
-5. **PyFLP does not work on this machine's Python (3.12).** A stdlib
+4. **PyFLP does not work on this machine's Python (3.12).** A stdlib
    `enum.py` change breaks `pyflp.parse()` on any input, and `pyflp.save()`
    cannot create a project from scratch either — reproduced on both an empty
    project and a real PyFLP test fixture. PyFLP's own support matrix only
    claims 3.8–3.11. Blocks all of Phase 2 until a Python 3.11 environment is
    set up for this project; not worked around. Also still needs blueprint
    2.1: real guinea-pig `.flp` files and the user's dictated mixer-sorting
-   convention, neither of which exist yet.
+   convention, neither of which exist yet. Full reproduction, tracebacks and
+   the proposed unblock: `docs/blockers/pyflp-python-312.md`.
 
 ## Meta account
 

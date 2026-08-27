@@ -168,6 +168,49 @@ class SupabaseJobsRepository:
         ).execute()
         return _one_job(response)
 
+    # The two reads below are deliberately NOT on the ``JobRepository``
+    # Protocol. Widening that Protocol once stranded a test double in a file no
+    # lane owned and shipped a red tree behind a green focused run — see
+    # ``.githooks/pre-commit``. Callers that need these depend on a narrow
+    # Protocol of their own instead, so every existing fake keeps satisfying
+    # ``JobRepository`` unchanged. Both select ``id`` only: no payloads and no
+    # checkpoints, the same safe-field discipline as ``bus/status.py``.
+
+    def has_ready_job_excluding_kind(self, kind: str) -> bool:
+        """Is there queued work, other than ``kind``, that is ready to run now?
+
+        The distill chain's yield check. ``run_after <= now()`` matters: a job
+        deliberately scheduled for later is not work being kept waiting, so it
+        must not stop a batch pass from using an otherwise idle machine.
+        """
+        response = (
+            self._client.table("jobs")
+            .select("id")
+            .eq("status", "queued")
+            .neq("kind", kind)
+            .lte("run_after", "now()")
+            .limit(1)
+            .execute()
+        )
+        return bool(response.data)
+
+    def has_open_job_of_kind(self, kind: str) -> bool:
+        """Is a job of ``kind`` already queued or running?
+
+        Makes seeding a self-re-enqueuing chain idempotent: restarting the
+        executor must never fork a second chain, because two chains means two
+        competitors for the one local Ollama.
+        """
+        response = (
+            self._client.table("jobs")
+            .select("id")
+            .in_("status", ["queued", "running"])
+            .eq("kind", kind)
+            .limit(1)
+            .execute()
+        )
+        return bool(response.data)
+
 
 def _one_job(response: Any) -> Job:
     """Normalize Supabase's list/object RPC responses and reject missing jobs."""

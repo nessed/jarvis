@@ -9,20 +9,31 @@ Usage (run as a module - this package imports ingest/memory as siblings, which
 only resolves when the repo root is on sys.path, as -m guarantees):
     .venv/Scripts/python.exe -m tools.run_backfill --user-id +92XXXXXXXXXX
     .venv/Scripts/python.exe -m tools.run_backfill --dry-run
+    .venv/Scripts/python.exe -m tools.run_backfill --user-id +92XXXXXXXXXX --force
+
+Run it while the executor is idle. Ollama is a single serial resource - this
+competes with live replies for exactly the same model, which is what starved
+eight inbound messages on 26 August. A real run refuses to start while the
+executor's heartbeat is fresh; --force overrides that. --dry-run touches no
+model and is never blocked.
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from executor.heartbeat import refuse_if_executor_is_live
 from ingest.backfill import BackfillResult, FactSink, run_backfill
 from ingest.mem0_sink import Mem0BackfillSink
 from ingest.pipeline import BackfillCheckpoint, build_manifest, discover_intake
 from memory.runtime import open_local_mem0_memory
 
 DEFAULT_INTAKE_DIR = Path("ingest/data")
+
+logger = logging.getLogger("backfill")
 
 
 @dataclass(frozen=True)
@@ -98,7 +109,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--max-tokens", type=int, default=500)
     parser.add_argument("--dry-run", action="store_true", help="List discovered files without processing them")
+    parser.add_argument("--force", action="store_true", help="run even while the executor is polling")
     args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    # Before any work, and before the model is opened: a real run drives the
+    # same single local Ollama the executor needs for live replies. A dry run
+    # drives no model, so it stays usable at any time.
+    if not args.force and not args.dry_run:
+        refusal = refuse_if_executor_is_live("Backfilling")
+        if refusal:
+            logger.error(refusal)
+            return 2
 
     files = discover_intake(args.intake_dir)
     if args.dry_run:

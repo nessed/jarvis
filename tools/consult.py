@@ -261,9 +261,18 @@ def main() -> int:
         print("claude CLI not found on PATH; cannot consult", file=sys.stderr)
         return 2
 
+    # The prompt goes on STDIN, never in argv. ``executable`` is ``claude.cmd``,
+    # and Windows runs a ``.cmd`` through ``cmd.exe``, which re-parses the
+    # command line: a newline in an argv element terminates the command, so
+    # everything after the prompt's first line was silently dropped. cmd.exe
+    # also caps a command line at 8191 characters, which any consult carrying
+    # attachments exceeds. Both defects delivered a one-line prompt and got a
+    # confidently wrong answer back. Reproduced and fixed 27 Aug 2026; see
+    # docs/consults/2026-08-27-path-smoke-test/.
     try:
         completed = subprocess.run(
-            [executable, "-p", prompt, "--output-format", "json", "--model", args.model],
+            [executable, "-p", "--output-format", "json", "--model", args.model],
+            input=prompt,
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
