@@ -17,6 +17,8 @@ No real Ollama, no real Supabase, no sleeping: the chain runs on a fake clock.
 from __future__ import annotations
 
 import itertools
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -24,6 +26,9 @@ import pytest
 from db.jobs import Job
 from executor.handlers import distill as distill_handler
 from executor.handlers.distill import (
+    DEFAULT_BUSY_COOLDOWN_SECONDS,
+    DEFAULT_IDLE_COOLDOWN_SECONDS,
+    DEFAULT_YIELD_COOLDOWN_SECONDS,
     DISTILL_JOB_KIND,
     HANDLER_TIMEOUT_SECONDS,
     assert_timeouts_ordered,
@@ -149,6 +154,20 @@ class FakeQueue:
     def has_open_job_of_kind(self, kind: str) -> bool:
         return any(
             row["kind"] == kind and row["status"] in {"queued", "running"}
+            for row in self.rows
+        )
+
+    def status_of_job(self, job_id: str) -> str | None:
+        for row in self.rows:
+            if row["id"] == job_id:
+                return str(row["status"])
+        return None
+
+    def has_open_job_of_kind_excluding(self, kind: str, job_id: str) -> bool:
+        return any(
+            row["kind"] == kind
+            and row["status"] in {"queued", "running"}
+            and row["id"] != job_id
             for row in self.rows
         )
 
@@ -287,7 +306,93 @@ def test_the_last_turn_schedules_the_successor_at_the_idle_cooldown(clock):
     _chain(clock, queue, turns, FakeExtractor())(seed)
 
     assert turns.remaining == []
-    assert _successor(queue, seed)["payload"] == {"reason": "idle"}
+    successor = _successor(queue, seed)
+    assert successor["payload"] == {"reason": "idle"}
+    # The label is not the property that matters; the delay is. Draining the
+    # backlog must drop the chain to the slow cadence in the same pass, not on
+    # some later one.
+    assert successor["run_after"] == clock.now + timedelta(seconds=600)
+
+
+def test_the_shipped_default_cooldowns_are_ordered_busy_then_yield_then_idle():
+    """The cooldowns every other test injects are fakes; these are the real ones.
+
+    A regression that set the idle cooldown to the busy value would leave every
+    injected-cooldown test in this file green while an idle laptop ground the
+    chain at four claims a minute forever.
+    """
+    assert DEFAULT_BUSY_COOLDOWN_SECONDS < DEFAULT_YIELD_COOLDOWN_SECONDS
+    assert DEFAULT_YIELD_COOLDOWN_SECONDS < DEFAULT_IDLE_COOLDOWN_SECONDS
+    # An order of magnitude, not one second: idling is meant to be cheap.
+    assert DEFAULT_IDLE_COOLDOWN_SECONDS >= 10 * DEFAULT_BUSY_COOLDOWN_SECONDS
+
+
+def _mark_done(queue: FakeQueue, job_id: str) -> None:
+    """What the poller does to the row a handler returned from."""
+    queue.complete(job_id)
+
+
+def test_the_chain_drains_from_the_busy_cadence_to_the_idle_one_and_stays(clock):
+    """Follow one chain across the transition the brief asks about.
+
+    Two turns, then nothing. The pass that clears the last turn must already
+    schedule at the idle cooldown, and every pass after it — where there is
+    genuinely nothing to distill — must keep doing so rather than reverting to
+    the busy rate.
+    """
+    queue = FakeQueue(clock)
+    turns, extractor = FakeTurns(2), FakeExtractor()
+    handle = _chain(clock, queue, turns, extractor)
+
+    job = queue.enqueue(DISTILL_JOB_KIND, {"reason": "seed"})
+    reasons: list[str] = []
+    delays: list[float] = []
+
+    for _ in range(4):
+        before = {row["id"] for row in queue.of_kind(DISTILL_JOB_KIND)}
+        handle(job)
+        _mark_done(queue, job.id)
+        fresh = [row for row in queue.of_kind(DISTILL_JOB_KIND) if row["id"] not in before]
+        assert len(fresh) == 1, "one link in, one link out"
+        reasons.append(fresh[0]["payload"]["reason"])
+        delays.append((fresh[0]["run_after"] - clock.now).total_seconds())
+        clock.advance(delays[-1])
+        job = Job.from_row(fresh[0])
+
+    assert reasons == ["backlog", "idle", "idle", "idle"]
+    assert delays == [10.0, 600.0, 600.0, 600.0]
+    assert len(extractor.calls) == 2, "only the two real turns were ever extracted"
+
+
+def test_an_idle_laptop_ticks_at_the_idle_cadence_and_never_at_the_busy_one(clock):
+    """Twelve simulated hours of an empty backlog, driven through ``poll_once``.
+
+    The chain does not end when there is nothing to distill — it keeps one row
+    in the queue on purpose, so it never needs re-seeding. That is a design
+    choice, and this is the test that pins its cost: one claim per idle
+    cooldown, one open row at every instant, and zero extractions.
+    """
+    queue = FakeQueue(clock)
+    extractor = FakeExtractor()
+    handlers = {
+        DISTILL_JOB_KIND: HandlerRegistration(
+            _chain(clock, queue, FakeTurns(0), extractor),
+            timeout_seconds=HANDLER_TIMEOUT_SECONDS,
+        )
+    }
+    seed_distill_chain(repository=queue, delay_seconds=0, enabled=True)
+
+    runs = 0
+    for _ in range(12 * 60):  # twelve hours at a one-minute poll
+        if poll_once(repository=queue, handlers=handlers) is not None:
+            runs += 1
+        clock.advance(60)
+        assert len(queue.of_kind(DISTILL_JOB_KIND, "queued", "running")) == 1
+
+    assert extractor.calls == []
+    # 600s idle cooldown over twelve hours. At the 10s busy cooldown this would
+    # be 4320, which is the runaway the chain must not become.
+    assert runs == 12 * 3600 // 600
 
 
 # --------------------------------------------------------------------------
@@ -495,6 +600,94 @@ def test_a_laptop_asleep_for_hours_claims_the_stale_row_once_without_bursting(cl
 # --------------------------------------------------------------------------
 # Failure isolation.
 # --------------------------------------------------------------------------
+
+
+def test_a_raising_extraction_enqueues_no_successor_at_all(clock):
+    """The successor is enqueued last, so a raise means there is no successor.
+
+    This is the whole reason the ordering inside ``handle`` is load-bearing. If
+    the successor were scheduled before extraction, a failing turn would leave
+    the retried row *and* a fresh link — a fork on every failure.
+    """
+    queue = FakeQueue(clock)
+    seed = queue.enqueue(DISTILL_JOB_KIND, {"reason": "seed"})
+
+    with pytest.raises(RuntimeError):
+        _chain(clock, queue, FakeTurns(3), FakeExtractor(explode=True))(seed)
+
+    assert [row["id"] for row in queue.of_kind(DISTILL_JOB_KIND)] == [seed.id]
+
+
+def test_a_raising_extraction_never_leaves_two_open_rows_on_any_retry(clock):
+    """Not "one row afterwards" — one row after *every* attempt, to the end."""
+    queue = FakeQueue(clock)
+    handlers = {
+        DISTILL_JOB_KIND: HandlerRegistration(
+            _chain(clock, queue, FakeTurns(3), FakeExtractor(explode=True)),
+            timeout_seconds=HANDLER_TIMEOUT_SECONDS,
+        )
+    }
+    seed_distill_chain(repository=queue, delay_seconds=0, enabled=True)
+
+    for _ in range(6):
+        poll_once(repository=queue, handlers=handlers)
+        clock.advance(600)
+        assert len(queue.of_kind(DISTILL_JOB_KIND, "queued", "running")) <= 1
+
+    assert queue.of_kind(DISTILL_JOB_KIND, "dead_letter")
+
+
+def test_a_timeout_after_the_successor_is_enqueued_does_not_fork_the_chain(clock):
+    """A stalled successor enqueue plus the poller's own timeout makes two chains.
+
+    The delay is injected through the handler's own ``enqueue_successor`` seam,
+    which is what a hosted-queue write stalling looks like from the poller's
+    side. Everything else here is the shipped ``poll_once`` path.
+    """
+    queue = FakeQueue(clock)
+    released = threading.Event()
+
+    def stalled_schedule(delay_seconds: float, reason: str, *, may_write=None) -> None:
+        # The stall sits between the handler deciding to enqueue and the row
+        # actually landing — which is the window the poller's timeout falls
+        # into. ``may_write`` is forwarded rather than dropped precisely so the
+        # guard is evaluated on the far side of the stall, at the write itself.
+        time.sleep(0.5)
+        distill_handler._enqueue_successor(
+            delay_seconds, reason, repository=queue, may_write=may_write
+        )
+        released.set()
+
+    handlers = {
+        DISTILL_JOB_KIND: HandlerRegistration(
+            _chain(
+                clock,
+                queue,
+                FakeTurns(3),
+                FakeExtractor(),
+                enqueue_successor=stalled_schedule,
+            ),
+            timeout_seconds=0.05,
+        )
+    }
+    seed_distill_chain(repository=queue, delay_seconds=0, enabled=True)
+
+    poll_once(repository=queue, handlers=handlers)  # gives up, re-queues the row
+    assert released.wait(10.0), "the abandoned thread never finished its enqueue"
+
+    assert len(queue.of_kind(DISTILL_JOB_KIND, "queued", "running")) == 1
+
+
+def test_a_misconfigured_extraction_timeout_is_rejected_before_a_distill_job_runs(
+    clock, monkeypatch
+):
+    monkeypatch.setenv("OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS", "9999")
+    queue = FakeQueue(clock)
+
+    with pytest.raises(ValueError):
+        _chain(clock, queue, FakeTurns(3), FakeExtractor())(
+            queue.enqueue(DISTILL_JOB_KIND, {})
+        )
 
 
 def test_a_failed_extraction_leaves_the_turn_undistilled_and_one_row_queued(clock):

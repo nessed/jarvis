@@ -66,6 +66,22 @@ LOG_DIR = ROOT / "tools"
 BUS_HOST = "127.0.0.1"
 BUS_PORT = 8000
 
+# cloudflared prefers QUIC, which is UDP on port 7844. That is blocked or
+# unroutable on this network: every dial failed with "wsasendto: A socket
+# operation was attempted to an unreachable network", the tunnel never
+# registered, and the launcher minted a URL that resolved nowhere while
+# ordinary TCP to the same edge was fine (github 200, api.cloudflare.com 301).
+# Forcing the http2 transport registered on the first attempt with zero errors.
+# Overridable because this is a property of the network, not of the tool — set
+# JARVIS_TUNNEL_PROTOCOL=quic on a network that permits UDP 7844.
+TUNNEL_PROTOCOL_ENV = "JARVIS_TUNNEL_PROTOCOL"
+DEFAULT_TUNNEL_PROTOCOL = "http2"
+
+
+def tunnel_protocol(environ: dict[str, str] | None = None) -> str:
+    settings = os.environ if environ is None else environ
+    return settings.get(TUNNEL_PROTOCOL_ENV, DEFAULT_TUNNEL_PROTOCOL).strip() or DEFAULT_TUNNEL_PROTOCOL
+
 SINGLETON_HOST = "127.0.0.1"
 SINGLETON_PORT_ENV = "JARVIS_SINGLETON_PORT"
 DEFAULT_SINGLETON_PORT = 8765
@@ -334,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
                 "tunnel",
                 "--url",
                 f"http://{BUS_HOST}:{BUS_PORT}",
+                "--protocol",
+                tunnel_protocol(),
                 "--logfile",
                 str(tunnel_log),
             ],

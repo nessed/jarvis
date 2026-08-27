@@ -48,7 +48,22 @@ already has its own extraction timeout (``OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS
 default 90s, applied in ``memory/mem0_wrapper.py``), and this handler registers
 a longer one, so a wedged model *raises* inside the thread and the thread
 exits, well before the poller would ever abandon it. ``assert_timeouts_ordered``
-below is that invariant, and it is tested.
+below is that invariant. It is checked twice, and both are load-bearing: once at
+executor startup (``executor/poller.py::main``, after ``load_dotenv``) so a
+misconfigured machine refuses to start, and once per row at the top of the
+handler so a ``.env`` edited under a long-lived executor cannot silently
+re-open the hazard. Until 27 August 2026 it had *no* production caller at all.
+
+Why one chain never becomes two
+-------------------------------
+The successor is enqueued last, so a raised extraction leaves only the claimed
+row. That is necessary but not sufficient: the poller re-queues the row it
+claimed when it gives up waiting, and the abandoned thread then completes its
+own enqueue beside it. Forks never merge, and each one permanently doubles the
+duty cycle against the one serial Ollama. So the write carries a veto
+(``may_write``) evaluated at the write site itself, and it refuses when this
+pass no longer owns its row or when a sibling row is already open. See
+``_repository_fork_guard``.
 """
 
 from __future__ import annotations
@@ -106,9 +121,22 @@ class ChainQueue(Protocol):
 
     def has_open_job_of_kind(self, kind: str) -> bool: ...
 
+    def has_open_job_of_kind_excluding(self, kind: str, job_id: str) -> bool: ...
+
+    def status_of_job(self, job_id: str) -> str | None: ...
+
 
 LiveWorkCheck = Callable[[], bool]
-SuccessorEnqueue = Callable[[float, str], None]
+# ``may_write`` is evaluated at the write site, not before it. The guard has to
+# be the last thing that happens before the row lands: a check performed
+# earlier is separated from the write by however long the queue takes to
+# answer, and that gap is exactly when the poller's timeout re-queues the row
+# out from under an abandoned thread.
+SuccessorEnqueue = Callable[..., None]
+# Given the row being handled and the status it had when this pass started,
+# must this pass refrain from enqueuing a successor? True in either forking
+# case; see ``_repository_fork_guard``.
+ForkGuard = Callable[[str, "str | None"], bool]
 
 
 def distillation_enabled(environ: Mapping[str, str] | None = None) -> bool:
@@ -168,6 +196,7 @@ def build_distill_memory_handler(
     turns_per_job: int = DEFAULT_TURNS_PER_JOB,
     has_live_work: LiveWorkCheck | None = None,
     enqueue_successor: SuccessorEnqueue | None = None,
+    fork_guard: ForkGuard | None = None,
     repository: JobRepository | None = None,
     busy_cooldown_seconds: float = DEFAULT_BUSY_COOLDOWN_SECONDS,
     idle_cooldown_seconds: float = DEFAULT_IDLE_COOLDOWN_SECONDS,
@@ -191,9 +220,42 @@ def build_distill_memory_handler(
         raise ValueError("turns_per_job must be at least 1")
 
     live_work = has_live_work or _repository_live_work_check(repository)
-    schedule = enqueue_successor or _repository_successor_enqueue(repository)
+    raw_schedule = enqueue_successor or _repository_successor_enqueue(repository)
+    must_not_enqueue = fork_guard or _repository_fork_guard(repository)
 
     def handle(job: Job) -> None:
+        # Checked per row as well as once at executor startup
+        # (``executor/poller.py::main``). Startup alone is not enough: ``.env``
+        # can change under a long-lived executor, and the failure this guards
+        # is silent — an extraction timeout above the handler's own timeout
+        # leaves an abandoned thread holding the one serial Ollama while the
+        # poller claims the next job. Raising here fails the row loudly into
+        # retry_health instead of letting it run misconfigured.
+        assert_timeouts_ordered(handler_timeout_seconds=HANDLER_TIMEOUT_SECONDS)
+
+        entry_status = _status_at_entry(job.id, repository)
+
+        def schedule(delay_seconds: float, reason: str) -> None:
+            """Hand the write a veto it evaluates at the last possible moment.
+
+            Enqueue-side and self-excluding, both deliberately. A symmetric
+            "another row exists, so I stop" check would let two briefly
+            coexisting rows each defer to the other and end the chain for good.
+            """
+
+            def may_write() -> bool:
+                try:
+                    return not must_not_enqueue(job.id, entry_status)
+                except Exception as exc:  # noqa: BLE001 - liveness beats certainty
+                    logger.warning(
+                        "could not run the %s fork guard (%s); enqueuing anyway",
+                        DISTILL_JOB_KIND,
+                        type(exc).__name__,
+                    )
+                    return True
+
+            raw_schedule(delay_seconds, reason, may_write=may_write)
+
         if not (distillation_enabled() if enabled is None else enabled):
             # No re-enqueue: let the chain drain out of the queue.
             logger.info("distill chain disabled (JARVIS_DISTILL); ending chain")
@@ -307,22 +369,102 @@ def _repository_live_work_check(repository: JobRepository | None) -> LiveWorkChe
     return check
 
 
+def _status_at_entry(job_id: str, repository: JobRepository | None) -> str | None:
+    """The row's status as this pass begins, or ``None`` if it cannot be read.
+
+    ``None`` disables the ownership half of the fork guard rather than failing
+    the pass, which keeps a queue that cannot answer from silently killing the
+    chain. The sibling-row half still applies.
+    """
+    try:
+        queue = repository if repository is not None else _default_repository()
+        status_of = getattr(queue, "status_of_job", None)
+        return None if status_of is None else status_of(job_id)
+    except Exception as exc:  # noqa: BLE001 - a guard must not break the handler
+        logger.warning("could not read %s status at entry (%s)", job_id, type(exc).__name__)
+        return None
+
+
+def _repository_fork_guard(repository: JobRepository | None) -> ForkGuard:
+    """Whether this pass must refrain from enqueuing a successor.
+
+    Two distinct ways one chain becomes two, and a check for each:
+
+    1. **The row stopped being ours.** The poller cannot kill a handler thread,
+       only stop waiting for it, and it re-queues what it claimed on timeout.
+       The abandoned thread then finishes its enqueue — and its own row is
+       queued again beside the successor it just wrote. Excluding "other" rows
+       cannot catch this, because the duplicate *is* our row. So: if our status
+       is no longer ``running``, we were fired, and a fired worker writes
+       nothing.
+    2. **A sibling row is already open.** ``complete()`` failing after the
+       successor was enqueued leaves the row running, the stale lease is
+       reclaimed by ``0002_job_retries.sql``, and the handler runs a second
+       time. Here the successor from the first run is the rival, and excluding
+       ourselves is exactly right.
+
+    Both are enqueue-side and neither is symmetric, so two briefly-coexisting
+    rows can never both defer and end the chain for good.
+    """
+
+    def check(job_id: str, entry_status: str | None) -> bool:
+        queue = repository if repository is not None else _default_repository()
+
+        status_of = getattr(queue, "status_of_job", None)
+        if status_of is not None and entry_status is not None:
+            current = status_of(job_id)
+            # A *change* is the signal, not any particular value. Asserting
+            # "running" would be wrong: a handler invoked directly, outside the
+            # poll loop, legitimately sees its own row still queued. What can
+            # never be legitimate is the status moving out from under us
+            # mid-pass — that is the poller having re-queued what it claimed.
+            if current is not None and current != entry_status:
+                return True
+
+        rival = getattr(queue, "has_open_job_of_kind_excluding", None)
+        if rival is not None and rival(DISTILL_JOB_KIND, job_id):
+            return True
+
+        # Unknown means enqueue, the mirror image of the yield check above.
+        # There, silence is the expensive failure; here, a dead chain is.
+        return False
+
+    return check
+
+
 def _repository_successor_enqueue(repository: JobRepository | None) -> SuccessorEnqueue:
-    def schedule(delay_seconds: float, reason: str) -> None:
-        _enqueue_successor(delay_seconds, reason, repository=repository)
+    def schedule(
+        delay_seconds: float, reason: str, *, may_write: Callable[[], bool] | None = None
+    ) -> None:
+        _enqueue_successor(delay_seconds, reason, repository=repository, may_write=may_write)
 
     return schedule
 
 
 def _enqueue_successor(
-    delay_seconds: float, reason: str, *, repository: JobRepository | None
-) -> Job:
-    """Enqueue the chain's next link.
+    delay_seconds: float,
+    reason: str,
+    *,
+    repository: JobRepository | None,
+    may_write: Callable[[], bool] | None = None,
+) -> Job | None:
+    """Enqueue the chain's next link, unless the fork guard vetoes it here.
 
     The payload carries scheduling metadata only. No turn text, no user id, and
     nothing derived from a conversation ever goes into the durable queue, which
     is hosted; personal content stays on loopback.
+
+    ``may_write`` is checked immediately before the write and nowhere else.
+    Returns ``None`` when the write was suppressed.
     """
+    if may_write is not None and not may_write():
+        logger.warning(
+            "not enqueuing a %s successor: this pass no longer owns its row, or a "
+            "sibling row is already open (reason would have been %s)",
+            DISTILL_JOB_KIND,
+            reason,
+        )
+        return None
     run_after = _utcnow() + timedelta(seconds=max(0.0, delay_seconds))
     return enqueue(
         DISTILL_JOB_KIND,

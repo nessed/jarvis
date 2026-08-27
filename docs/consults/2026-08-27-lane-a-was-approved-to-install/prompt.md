@@ -1,13 +1,35 @@
-# PyFLP is unusable on this machine's Python 3.12 — RESOLVED 27 Aug 2026
+You are a second opinion on a decision inside an AI-agent-built project.
+The agent asking has already gathered the evidence below and could not
+resolve the question from it alone. Do not restate the evidence. Decide.
 
-Resolved by a scoped `.venv311` on **CPython 3.11.5**. The diagnosis below
-was right about the cause and wrong about the fix version: the breaking
-stdlib guard was backported into **3.11.6**, so "install Python 3.11" is not
-sufficient — see "Resolution" at the end of this file, which carries the
-evidence. Everything between here and there is the original diagnosis, kept
-unedited.
+## Question
 
----
+Lane A was approved to 'install Python 3.11 and create .venv311' to unblock PyFLP 2.2.1, which cannot construct any event on Python 3.12 because pyflp._events.EventEnum is an empty enum.Enum subclass relying on its own _missing_ hook, and CPython raises TypeError before _missing_ is consulted when the enum has no members.
+
+I installed Python 3.11 via 'winget install Python.Python.3.11'. That gave 3.11.9. PyFLP still fails there, identically in effect:
+
+  File "...\.venv311\Lib\site-packages\pyflp\__init__.py", line 123, in parse
+    id = EventEnum(int.from_bytes(stream.read(1), 'little'))
+  File "...\Python311\Lib\enum.py", line 1117, in __new__
+    raise TypeError('%r has no members defined' % cls)
+
+Evidence I already hold:
+1. The empty-enum guard was BACKPORTED into 3.11.6. I grepped Lib/enum.py across CPython tags for the string 'has no members defined': v3.10.11=0, v3.11.0=0, v3.11.1=0, v3.11.2=0, v3.11.3=0, v3.11.4=0, v3.11.5=0, v3.11.6=1, v3.11.7=1, v3.11.8=1, v3.11.9=1. So PyFLP 2.2.1 works on 3.11.0-3.11.5 and is broken on 3.11.6+.
+2. I PROVED that is the only difference: running the 3.11.9 interpreter with v3.11.5's Lib/enum.py shadowed onto PYTHONPATH, pyflp.parse() of the real upstream fixture 'FL 20.8.4.flp' succeeds and prints: parsed: FL Studio v20.8.4.2576 Project / title: 'PyFLP Test FLP' / ppq: 96 / channels: 19.
+3. PyFLP 2.2.1 is the LATEST release on PyPI (checked pypi.org/pypi/pyflp/json). There is no newer version and no upstream fix coming. Its classifiers list 3.8-3.11 only.
+4. python.org still serves python-3.11.5-amd64.exe (HTTP 200, 25,932,664 bytes, last-modified 2023-08-24). winget only offers 3.11.9 for the 3.11 line.
+5. PyFLP declares 'Requires-Dist: f-enum (>=0.2.0) ; python_version <= "3.10"' and calls fastenum.enable() only when sys.version_info < (3,11), citing an upstream fastenum bug on 3.11 (github.com/Bobronium/fastenum/issues/2). So the 3.10 route needs an extra dependency and 3.10.11 (Apr 2023) is equally unpatched.
+6. The project rule set says monkey-patching around the empty enum was considered and explicitly rejected as the wrong risk, because this code will eventually write to the user's real .flp files.
+7. .venv311 is a single-purpose, offline FLP sandbox: only pyflp and pytest. The main .venv stays on 3.12 and stays the default. The pre-commit hook stays 3.12-only.
+
+The judgment: should I uninstall the 3.11.9 I just installed and install python-3.11.5-amd64.exe (silently, PrependPath=0) so .venv311 is built on 3.11.5 — accepting an interpreter with no security patches since Aug 2023, confined to this offline FLP sandbox? Or is stepping to a specific older patch release outside 'install Python 3.11' and therefore a new user decision I must halt on?
+
+## Evidence
+
+### docs/blockers/pyflp-python-312.md
+
+```
+# PyFLP is unusable on this machine's Python 3.12 — OPEN
 
 PyFLP 2.2.1 cannot read *or* write an FL Studio project under Python 3.12.
 Both directions fail on the same stdlib `enum` change, so there is no
@@ -394,273 +416,125 @@ works; moving does not. That constraint survives the upgrade to 3.11.
 So the order is: 3.11 environment → real `.flp` copies → dictated convention →
 Phase 2 end-to-end.
 
----
-
-# Resolution — 27 August 2026
-
-`.venv311` on **CPython 3.11.5** parses and saves real `.flp` files. The Python
-side of this blocker is closed.
-
-## The correction: 3.11 is not enough, 3.11.5 is
-
-The original diagnosis pinned the break on Python 3.12's rewritten
-`EnumType.__call__`. That is true but not the whole story. **The same guard was
-backported into CPython 3.11.6**, in `Enum.__new__` rather than
-`EnumType.__call__`. `winget install Python.Python.3.11` installs 3.11.9, and
-PyFLP fails there too — different file, different line, identical effect:
+```
+### docs/tasks/python311-flp-env.md
 
 ```
-> .venv311\Scripts\python.exe -c "import pyflp; pyflp.parse(r'...\FL 20.8.4.flp')"
-  File "C:\Users\Ali\Desktop\jarvis\.venv311\Lib\site-packages\pyflp\__init__.py", line 123, in parse
-    id = EventEnum(int.from_bytes(stream.read(1), "little"))
-  File "C:\Users\Ali\AppData\Local\Programs\Python\Python311\Lib\enum.py", line 714, in __call__
-    return cls.__new__(cls, value)
-  File "C:\Users\Ali\AppData\Local\Programs\Python\Python311\Lib\enum.py", line 1117, in __new__
-    raise TypeError("%r has no members defined" % cls)
-TypeError: <enum 'EventEnum'> has no members defined
-```
+# Lane A: Python 3.11 environment for the FLP lane — APPROVED
 
-Which release introduced it, by counting the string in each tag's `Lib/enum.py`:
+The user approved this on 27 August 2026. Install Python 3.11, create
+`.venv311`, install PyFLP into it, and **prove the blocker is gone with
+output**, not with a claim.
 
-```
-for t in v3.10.11 v3.11.0 ... v3.11.9; do
-  curl -sSL "https://raw.githubusercontent.com/python/cpython/$t/Lib/enum.py" \
-    | grep -c "has no members defined"
-done
+## Background you need
 
-v3.10.11   0
-v3.11.0    0
-v3.11.1    0
-v3.11.2    0
-v3.11.3    0
-v3.11.4    0
-v3.11.5    0
-v3.11.6    1
-v3.11.7    1
-v3.11.8    1
-v3.11.9    1
-```
+`docs/blockers/pyflp-python-312.md` has the full diagnosis. In short: PyFLP's
+`EventEnum` is an `enum.Enum` subclass with **no members**, relying on its own
+`_missing_` hook. Python 3.12 rewrote `EnumType.__call__` to raise `TypeError`
+before `_missing_` is consulted when the enum is empty. So `EventBase.__init__`
+— which normalises every ID through `EventEnum(id)` — cannot construct any
+event at all. Read and write die on the identical line. PyFLP's support matrix
+is 3.8–3.11.
 
-**The supported window for PyFLP 2.2.1 is therefore CPython >= 3.8, < 3.11.6.**
+3.11 is the target because it is the newest supported interpreter **and** the
+only supported one that needs no extra `fastenum` dependency (PyFLP carries
+`Requires-Dist: f-enum (>=0.2.0) ; python_version <= "3.10"`).
 
-That one file is the entire delta. Running the *3.11.9* interpreter with
-v3.11.5's `Lib/enum.py` shadowed onto `PYTHONPATH` made PyFLP work immediately,
-which is what justified installing 3.11.5 rather than shimming anything:
+**The main `.venv` stays on 3.12 and stays the default.** Do not migrate
+anything else onto 3.11. This is a second, scoped environment for the FLP lane
+only.
 
-```
-> PYTHONPATH=<scratch>/enum315 .venv311\Scripts\python.exe -c "..."
-python: 3.11.9 | enum.py from: <scratch>\enum315\enum.py
-parsed: FL Studio v20.8.4.2576 Project
-title: 'PyFLP Test FLP' | ppq: 96 | channels: 19
-```
+## Owned files — edit nothing else
 
-Other routes were checked and rejected on evidence, not preference:
+- `.venv311/` (create)
+- `docs/blockers/pyflp-python-312.md`
+- `docs/state.md` — **open blocker 4**, not 5. It was renumbered when blocker 1
+  was retired last session. Two other references to "open blocker 4" exist at
+  line 13 and in the FL Studio table row; keep them consistent.
+- `pytest.ini` (or wherever pytest config lives — check first)
+- A scoped requirements file for this lane, e.g. `requirements-flp.txt` (new).
+  **Do not edit `requirements.txt`.**
+- `tests/flp/` (new directory, if you add tests there)
 
-- **A newer PyFLP.** There is none. 2.2.1 is the latest on PyPI, and
-  `demberto/PyFLP` master carries the identical `EventEnum` and the identical
-  `if sys.version_info < (3, 11)` fastenum guard. No upstream fix is coming.
-- **Python 3.10 + `f-enum`.** Adds a dependency PyFLP only wants below 3.11,
-  and 3.10.11 (Apr 2023) is older than 3.11.5 (Aug 2023), so it trades nothing
-  for something.
-- **Monkey-patching the empty enum.** Already rejected above, unchanged.
+Do not touch `executor/flp/sort.py`, `tests/executor/test_flp_sort.py`,
+`docs/context.md`, or any other lane's files.
 
-The judgement to step to a specific patch release rather than halt was taken
-through `tools/consult.py`; verdict and reasoning:
-`docs/consults/2026-08-27-lane-a-was-approved-to-install/`.
+## Steps
 
-## What was installed
+1. **Install Python 3.11.** `winget install Python.Python.3.11` is the
+   expected route; the python.org installer is acceptable if winget fails.
+   Verify with `py -0p` afterwards and cite the output.
+2. **Create `.venv311`** scoped to this project. Confirm
+   `.venv311\Scripts\python.exe --version` reports 3.11.x and cite it.
+3. **Install PyFLP into it**, plus `pytest`. Record exact versions in
+   `requirements-flp.txt`, pinned.
+4. **Prove the blocker is gone.** Three separate pieces of cited output:
+   - Instantiate an `EventEnum` member successfully — the exact operation that
+     raised `TypeError` on 3.12.
+   - `pyflp.parse()` a real PyFLP test fixture. The blocker file records which
+     fixture was used before (`FL 20.8.4.flp`); fetch it to a scratch path
+     **outside the repo**, do not commit a binary.
+   - `pyflp.save()` a project successfully, and re-parse what you saved to
+     prove the write is real, not just non-raising.
+   Paste the actual command and actual output for each. A traceback-free run
+   is not proof on its own — show the values.
+5. **Document how pytest selects the 3.11 interpreter** for FLP tests without
+   disturbing the main `.venv`. The previously drafted recommendation was a
+   `realflp` marker registered in pytest config and excluded from the default
+   run via `addopts`, invoked deliberately as:
+   ```
+   .venv311\Scripts\python.exe -m pytest -q -m realflp -p no:cacheprovider --basetemp=.pytest-basetemp
+   ```
+   Implement that unless you find a concrete reason it fails, in which case
+   report the reason and what you did instead. The default suite must stay
+   green on 3.12 and must not try to import pyflp.
+   **This machine's system `TEMP` is locked down** — every pytest invocation
+   needs `-p no:cacheprovider --basetemp=.pytest-basetemp`.
+6. **Update the blocker file to resolved**, with the evidence inline. Keep the
+   original diagnosis — it is the value. Add a resolution section carrying the
+   real output. Then update `docs/state.md` blocker 4 to reflect that the
+   Python side is resolved and note what still blocks Phase 2: blueprint 2.1
+   still needs real guinea-pig `.flp` files and the user's dictated
+   mixer-sorting convention, and both are the user's to provide.
+7. Confirm `.venv311/` is gitignored, or add it. Do not commit a virtualenv.
 
-```
-> py -0p
- -V:3.14 *        C:\Users\Ali\AppData\Local\Python\pythoncore-3.14-64\python.exe
- -V:3.13          C:\Users\Ali\AppData\Local\Programs\Python\Python313\python.exe
- -V:3.12          C:\Users\Ali\AppData\Local\Programs\Python\Python312\python.exe
- -V:3.11          C:\Users\Ali\AppData\Local\Programs\Python\Python311\python.exe
- -V:Astral/CPython3.10.19 C:\Users\Ali\Downloads\StabilityMatrix-win-x64\Data\Assets\Python\cpython-3.10.19-windows-x86_64-none\python.exe
+## Out of scope
 
-> py -3.11 --version
-Python 3.11.5
+- Migrating the project, the main `.venv`, or any other component to 3.11.
+- Committing. The orchestrator commits.
+- Guessing at real mixer-sorting conventions.
 
-> python --version
-Python 3.12.10
-```
+## Verify before reporting
 
-That last line matters: the PATH default is unchanged, still 3.12.
-
-The 3.11.9 that winget installed was uninstalled again before 3.11.5 went in,
-so only one `-V:3.11` is registered. The installer was `python-3.11.5-amd64.exe`
-from python.org, checksum-verified against the published MD5 before running:
-
-```
-expected md5 (python.org): 3afd5b0ba1549f5b9a90c1e3aa8f041e
-actual   md5:              3afd5b0ba1549f5b9a90c1e3aa8f041e
-```
-
-It was installed for the current user with `PrependPath=0 Include_launcher=0
-AssociateFiles=0 Shortcuts=0`, so it cannot shadow 3.12 on `PATH`. Note for
-whoever repeats this: **do not pass `SimpleInstall=1` together with `/quiet`** —
-that combination deadlocks the bootstrapper after its detect phase and it sits
-there indefinitely.
-
-`.venv311` was then built on it:
+Both suites, both cited:
 
 ```
-> py -3.11 -m venv --clear .venv311
-> type .venv311\pyvenv.cfg
-home = C:\Users\Ali\AppData\Local\Programs\Python\Python311
-include-system-site-packages = false
-version = 3.11.5
-
-> .venv311\Scripts\python.exe --version
-Python 3.11.5
+.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp --ignore=tests/db/test_jobs_integration.py
 ```
 
-Contents are pinned in `requirements-flp.txt`: `pyflp==2.2.1`, `pytest==9.1.1`
-and their transitive dependencies, nothing else. `requirements.txt` and the
-main `.venv` are untouched, and 3.12 remains the default for everything else.
-`.venv311/` is gitignored (`.gitignore:3`).
+and the 3.11 invocation from step 5.
 
-## Proof 1 — `EventEnum` is constructible again
+## Report back
 
-The exact call that raised `TypeError` on both 3.12 and 3.11.9, plus
-Reproduction 3b's hand-built event:
-
-```
-> .venv311\Scripts\python.exe -c "..."
-interpreter: 3.11.5 (tags/v3.11.5:cce6ba9, Aug 24 2023, 14:38:34) [MSC v.1936 64 bit (AMD64)]
-EventEnum(199)            -> <ProjectID.FLVersion: 199> | int: 199 | name: FLVersion
-EventEnum(FLVersion=199)  -> <ProjectID.FLVersion: 199> | value: 199
-AsciiEvent(FLVersion,...) -> <<class 'pyflp._events.AsciiEvent'>(id=<ProjectID.FLVersion: 199>, value='20.8.4.2576')> | id: <ProjectID.FLVersion: 199> | value: '20.8.4.2576' | size: 14
-```
-
-`_missing_` is reached, resolves 199 against `ProjectID`, and returns the named
-member — exactly the behaviour PyFLP's design assumes.
-
-## Proof 2 — `parse()` on the real upstream fixture
-
-Same fixture as Reproduction 1: `tests/assets/FL 20.8.4.flp` from PyFLP's
-repository, 190,128 bytes, fetched to a scratch path outside the repo, so no
-binary is committed.
+- `py -0p` after install, verbatim.
+- The three proofs from step 4, with real output.
+- The exact command that runs FLP tests on 3.11.
+- Both suite results.
 
 ```
-> .venv311\Scripts\python.exe -c "..."
-fixture: FL 20.8.4.flp 190128 bytes
-project      : FL Studio v20.8.4.2576 Project
-title        : 'PyFLP Test FLP'
-artists      : 'demberto'
-format       : 0 | ppq: 96 | tempo: 69.42
-channels     : 19 -> ['BooBass', 'Instrument track', 'Layer', 'Sampler', 'Colored', 'Automation Clip']
-mixer inserts: 127
-patterns     : 5 | arrangements: 2
-```
 
-## Proof 3 — `save()` writes a file that re-parses with the edit intact
+## Response format
 
-A traceback-free `save()` proves nothing on its own, so the saved file is read
-back and the values compared:
+Answer as strict JSON and nothing else. No prose before or after, no code
+fence. Exactly these keys:
 
-```
-> .venv311\Scripts\python.exe -c "..."
-BEFORE  channel[0].name : 'BooBass'
-BEFORE  insert[1].name  : 'Instrument track'
-BEFORE  title           : 'PyFLP Test FLP'
-SAVED   -> proof3_saved.flp 190166 bytes
-REPARSE channel[0].name : 'JARVIS proof channel'
-REPARSE insert[1].name  : 'JARVIS proof insert'
-REPARSE title           : 'JARVIS round trip'
-REPARSE channels/inserts/ppq/tempo: 19 127 96 69.42
-ASSERTIONS: all passed - the write is real
-```
+{
+  "verdict": "the decision or answer, one or two sentences, actionable",
+  "reasoning": "why, citing the specific evidence above that drove it",
+  "confidence": "high | medium | low",
+  "what_would_change_this": "the concrete observation that would flip this verdict"
+}
 
-A channel rename, a mixer-insert rename and the project title all survived the
-round trip, and channel count, insert count, PPQ and tempo were unchanged. That
-is the first evidence in this project that PyFLP writes are real.
-
-## How pytest selects the 3.11 interpreter
-
-A `realflp` marker, registered in `pytest.ini` and excluded from the default
-run, mirroring the existing `live` idiom:
-
-```ini
-markers =
-    live: requires real local services or network (Ollama, Supabase, Meta). Excluded from the default run.
-    realflp: requires the Python 3.11 sandbox (.venv311) and PyFLP against a real .flp. Excluded from the default run.
-addopts = -m "not live and not realflp"
-```
-
-Tests live in `tests/flp/test_flp_real.py`. Run them deliberately:
-
-```
-.venv311\Scripts\python.exe -m pytest -q -m realflp tests/flp -p no:cacheprovider --basetemp=.pytest-basetemp
-```
-
-**`tests/flp` in that command is required, and is the one deviation from the
-drafted plan.** `testpaths = tests` makes a bare `-m realflp` collect the whole
-tree with `.venv311`'s interpreter, which holds only `pyflp` and `pytest`:
-
-```
-> .venv311\Scripts\python.exe -m pytest -q -m realflp -p no:cacheprovider --basetemp=.pytest-basetemp
-E   ModuleNotFoundError: No module named 'httpx'
-!!!!!!!!!!!!!!!!!! Interrupted: 19 errors during collection !!!!!!!!!!!!!!!!!!!
-93 deselected, 19 errors in 1.68s
-```
-
-Naming the directory scopes collection and fixes it. The alternative — install
-all of `requirements.txt` into `.venv311` — is exactly the drift the sandbox
-exists to prevent.
-
-Underneath the marker, a version guard skips rather than errors if someone runs
-it on the wrong interpreter. It is a backstop, never the primary mechanism.
-Captured on 3.11.9, before the downgrade:
-
-```
-> .venv311\Scripts\python.exe -m pytest -q -m realflp tests\flp -p no:cacheprovider --basetemp=.pytest-basetemp -rs
-SKIPPED [1] tests\flp\test_flp_real.py:48: PyFLP 2.2.1 needs CPython >=3.8,<3.11.6; this is 3.11.9. Use .venv311.
-3 skipped in 0.03s
-```
-
-The fixture path comes from `JARVIS_FLP_FIXTURE`. Without it, the two tests that
-need a real file skip with a stated reason, so no `.flp` binary ever enters the
-repository:
-
-```
-> .venv311\Scripts\python.exe -m pytest -q -m realflp tests/flp -p no:cacheprovider --basetemp=.pytest-basetemp -rs
-SKIPPED [2] tests\flp\test_flp_real.py:32: JARVIS_FLP_FIXTURE is not set; no real .flp to test against
-1 passed, 2 skipped in 0.20s
-```
-
-With it set, on 3.11.5:
-
-```
-> set JARVIS_FLP_FIXTURE=<scratch>\FL 20.8.4.flp
-> .venv311\Scripts\python.exe -m pytest -q -m realflp tests/flp -p no:cacheprovider --basetemp=.pytest-basetemp
-3 passed in 2.12s
-```
-
-The pre-commit hook stays 3.12-only by design, so `realflp` never gates a
-commit.
-
-## Standing constraints this did not change
-
-- **`.venv311` must never be upgraded past 3.11.5.** Any `winget upgrade` or
-  reinstall that lands 3.11.6+ silently re-breaks it. The version guard in
-  `tests/flp/test_flp_real.py` turns that into a visible skip rather than a
-  mystery.
-- **3.11.5 is unpatched** (Aug 2023). Acceptable only because this environment
-  is offline, holds two packages, is not on `PATH`, and only ever reads the
-  user's own `.flp` copies. If any of those stops being true, revisit it.
-- **Reordering mixer inserts still raises `ReorderNotSupported`.** PyFLP has no
-  insert-move API. Renaming works, moving does not. Unrelated to the
-  interpreter, and it survives this fix.
-
-## Phase 2 is still blocked, on the user
-
-The interpreter was one of two prerequisites. The other is blueprint 2.1, and
-it is Class C:
-
-1. **Real guinea-pig `.flp` files.** `test_projects/` still does not exist. The
-   user has to supply real projects — copies, never originals. Until then
-   `executor/flp/sort.py` is still exercised only against fakes; the proofs
-   above are of PyFLP itself, not of `sort.py`.
-2. **The dictated mixer-sorting convention.** `apply_rules()` still runs on a
-   deliberate placeholder ruleset. Guessing it remains out of scope.
+Set confidence to low rather than guessing. If the evidence provided is not
+enough to decide, say exactly what is missing in what_would_change_this — that
+is a useful answer, an invented one is not.

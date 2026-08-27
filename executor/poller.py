@@ -31,6 +31,7 @@ from executor.flp.sort import build_flp_sort_handler
 from executor.handlers.distill import (
     DISTILL_JOB_KIND,
     HANDLER_TIMEOUT_SECONDS as DISTILL_TIMEOUT_SECONDS,
+    assert_timeouts_ordered,
     build_distill_memory_handler,
     seed_distill_chain,
 )
@@ -203,6 +204,14 @@ def _run_with_timeout(registration: HandlerRegistration, job: Job) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the local executor until interrupted, or once for diagnostics."""
     load_dotenv()
+    # Here, and not at handler-build time: DEFAULT_HANDLERS is constructed at
+    # module import, before load_dotenv has run, so a build-time check reads an
+    # environment that does not yet hold the value. Without this call the
+    # invariant the distill module documents as "tested" has no production
+    # caller at all — raise OLLAMA_FACT_EXTRACTION_TIMEOUT_SECONDS above the
+    # handler's own timeout and nothing would notice, re-opening the abandoned
+    # -thread hazard that starved eight inbound messages on 26 August 2026.
+    assert_timeouts_ordered()
     parser = argparse.ArgumentParser(description="Poll the JARVIS local job queue")
     parser.add_argument(
         "--interval",

@@ -194,6 +194,48 @@ class SupabaseJobsRepository:
         )
         return bool(response.data)
 
+    def status_of_job(self, job_id: str) -> str | None:
+        """Current status of ``job_id``, or ``None`` if the row is gone.
+
+        Lets a handler check that the row it is running on is still *its* row
+        before it writes anything on that row's behalf. The poller cannot kill
+        a handler thread, only stop waiting for it and re-queue what it
+        claimed — so an abandoned thread waking up mid-write must be able to
+        notice it was fired.
+        """
+        response = (
+            self._client.table("jobs").select("status").eq("id", job_id).limit(1).execute()
+        )
+        rows = response.data or []
+        return str(rows[0]["status"]) if rows else None
+
+    def has_open_job_of_kind_excluding(self, kind: str, job_id: str) -> bool:
+        """Is a job of ``kind`` open *other than* ``job_id``?
+
+        The fork guard for a self-re-enqueuing chain. Seeding is not the only
+        way a chain can double: the poller abandons a handler thread on timeout
+        and re-queues the row it claimed, and that abandoned thread still goes
+        on to enqueue its successor. ``complete()`` failing after the successor
+        is enqueued does the same, because the stale lease is reclaimed and the
+        handler runs again. Forks never merge, so each one permanently doubles
+        the chain's duty cycle against the one serial Ollama.
+
+        Excluding the caller's own row is what makes this safe to check on the
+        enqueue side. A symmetric "another row exists, so I stop" check would
+        kill the chain outright whenever two rows were briefly open, since both
+        would see the other and neither would continue.
+        """
+        response = (
+            self._client.table("jobs")
+            .select("id")
+            .in_("status", ["queued", "running"])
+            .eq("kind", kind)
+            .neq("id", job_id)
+            .limit(1)
+            .execute()
+        )
+        return bool(response.data)
+
     def has_open_job_of_kind(self, kind: str) -> bool:
         """Is a job of ``kind`` already queued or running?
 

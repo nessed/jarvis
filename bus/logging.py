@@ -14,7 +14,15 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 REQUEST_ID_HEADER = "X-Request-ID"
-_VERIFY_TOKEN_QUERY_PARAM = re.compile(r"(hub\.verify_token=)[^&\s\"]+")
+
+# Both separators, deliberately. The original pattern anchored on the literal
+# ``hub.verify_token`` that Meta documents, and a real handshake on 27 Aug 2026
+# arrived carrying *both* spellings in one query string — ``hub.verify_token``
+# was redacted and the ``hub_verify_token`` duplicate beside it went to
+# tools/bus.out.log in plaintext. Matching the separator as a character class
+# closes that, and ``hub_challenge``/``hub.challenge`` is left alone on purpose:
+# the challenge is a public nonce, the token is a credential.
+_VERIFY_TOKEN_QUERY_PARAM = re.compile(r"(hub[._]verify_token=)[^&\s\"]+")
 
 
 class RedactVerifyTokenFilter(logging.Filter):
@@ -23,6 +31,9 @@ class RedactVerifyTokenFilter(logging.Filter):
     Meta's webhook handshake sends the token as a `GET /webhook` query
     parameter, and uvicorn's access logger prints the full request line
     (path and query string included) by default.
+
+    Matches ``hub.verify_token`` and ``hub_verify_token`` alike — a live
+    handshake carried both, and only the dotted one was being caught.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
