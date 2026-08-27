@@ -8,21 +8,22 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `628b6ea Close two injection channels, unfork the distill chain, unblock PyFLP` on `main`, in sync with origin.
+**HEAD** `d08cea3 Let a lane repair a mandated tool it doesn't own` on `main`, in sync with origin.
 
 **Working tree:** 2 changed (plus 5 untracked)
 
 ```
-  M  agents.md
-   M docs/context.md
+  A  docs/blockers/pyflp-channel-groups-indexerror.md
+  M  docs/state.md
 ```
 
-**Offline suite:** 291 passed, 4 deselected in 6.50s _(recorded 2026-08-27)_
+**Offline suite:** 291 passed, 4 deselected in 6.62s _(recorded 2026-08-27)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `d08cea3` Let a lane repair a mandated tool it doesn't own  _(2026-08-27)_
 - `628b6ea` Close two injection channels, unfork the distill chain, unblock PyFLP  _(2026-08-27)_
 - `d3094ad` Make a second stack impossible and run distillation on the queue  _(2026-08-27)_
 - `1527ee9` Gitignore test_projects/ before real .flp guinea pigs land  _(2026-08-27)_
@@ -30,7 +31,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `a7a2030` Reconcile the context docs with what actually landed tonight  _(2026-08-27)_
 - `0de7c89` Add one-command startup so the whole stack comes up together  _(2026-08-27)_
 - `607bde1` Add PyFLP proof-of-concept scaffolding for Phase 2  _(2026-08-27)_
-- `123b724` Pin the queue client timeout so a hung connection can't stall every message  _(2026-08-27)_
 
 <!-- END GENERATED -->
 

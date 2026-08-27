@@ -71,13 +71,19 @@ DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
    against PyFLP's own `FL 20.8.4.flp` fixture with a rename that survived a
    save-and-re-parse round trip. What is still missing is blueprint 2.1, and
    both halves are the user's:
-   - **Real guinea-pig `.flp` files.** `test_projects/` does not exist. Copies
-     only, never originals. Until they exist, `executor/flp/sort.py` is still
-     exercised only against fakes — PyFLP works, `sort.py` is unproven.
+   - ~~Real guinea-pig `.flp` files.~~ **Done.** A real project is now in
+     `test_projects/` (gitignored, copy only). Parsing it exposed a second,
+     independent PyFLP failure — see the note below.
    - **The dictated mixer-sorting convention.** `apply_rules()` runs on a
      placeholder ruleset. Guessing it is out of scope.
 
    Evidence and the full history: `docs/blockers/pyflp-python-312.md`.
+   **New, separate from the above:** parsing the real project raises
+   `IndexError: list index out of range` inside PyFLP's own channel-grouping
+   code (`channel.py:1586`) once it reaches a channel referencing a group
+   number PyFLP's own `groups` list doesn't contain. The 3.11.5 interpreter
+   fix is confirmed still working — this is a distinct gap in PyFLP itself, hit
+   once, not yet investigated further. `docs/blockers/pyflp-channel-groups-indexerror.md`.
 5. **One tool-result injection is unexplained.** Text claiming a plan-mode
    transition, and instructing a change of tooling, appeared inside a tool
    result during a session that was never in plan mode. An exhaustive search of
