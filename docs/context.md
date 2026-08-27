@@ -8,32 +8,22 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `d3094ad Make a second stack impossible and run distillation on the queue` on `main`, in sync with origin.
+**HEAD** `628b6ea Close two injection channels, unfork the distill chain, unblock PyFLP` on `main`, in sync with origin.
 
-**Working tree:** 26 changed
+**Working tree:** 2 changed (plus 5 untracked)
 
 ```
-  M  .gitignore
-  M  bus/logging.py
-  M  db/jobs.py
-  A  docs/audit/blueprint-drift.md
-  M  docs/blockers/pyflp-python-312.md
-  A  docs/blockers/tool-result-injection.md
-  A  docs/consults/2026-08-27-lane-a-was-approved-to-install/prompt.md
-  A  docs/consults/2026-08-27-lane-a-was-approved-to-install/response.md
-  A  docs/consults/2026-08-27-lane-a-was-approved-to-install/verdict.json
-  M  docs/context.md
-  M  docs/state.md
-  A  docs/tasks/distill-chain-verification.md
-  ...and 14 more
+  M  agents.md
+   M docs/context.md
 ```
 
-**Offline suite:** 291 passed, 4 deselected in 5.90s _(recorded 2026-08-27)_
+**Offline suite:** 291 passed, 4 deselected in 6.50s _(recorded 2026-08-27)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `628b6ea` Close two injection channels, unfork the distill chain, unblock PyFLP  _(2026-08-27)_
 - `d3094ad` Make a second stack impossible and run distillation on the queue  _(2026-08-27)_
 - `1527ee9` Gitignore test_projects/ before real .flp guinea pigs land  _(2026-08-27)_
 - `09363de` Record the duplicate start_jarvis.py incident in context.md  _(2026-08-27)_
@@ -41,7 +31,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `0de7c89` Add one-command startup so the whole stack comes up together  _(2026-08-27)_
 - `607bde1` Add PyFLP proof-of-concept scaffolding for Phase 2  _(2026-08-27)_
 - `123b724` Pin the queue client timeout so a hung connection can't stall every message  _(2026-08-27)_
-- `603cec6` Make conversation memory work by taking extraction off the reply path  _(2026-08-27)_
 
 <!-- END GENERATED -->
 
@@ -63,6 +52,12 @@ PyFLP works on `.venv311`, pinned to **3.11.5** — 3.11.6 backported the
 empty-enum guard, so plain "3.11" is not enough. Blocker 4 is resolved.
 
 ## Waiting on you
+
+**The noninteractive Claude consult is unavailable.** Two `tools/consult.py`
+attempts launched the CLI but returned no response or verdict; see
+`docs/blockers/consult-cli-no-response.md`. Restore the CLI's noninteractive
+session without sharing credentials so Class B decisions can use the required
+consult path.
 
 1. **Rotate the Meta verify token.** It was written to `tools/bus.out.log` in
    plaintext — the redaction only matched `hub.verify_token`, and the live

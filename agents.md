@@ -73,6 +73,15 @@ stop regardless of how obvious the substitution seems.
   change it describes is overhead, not process.
 - Give every subagent strict, disjoint file ownership. A lane that needs to
   touch another lane's paths reports that need instead of editing them.
+- A lane may repair a tool `agents.md` mandates — `tools/consult.py`,
+  `tools/repoint_webhook.py`, `tools/context_status.py` — when that tool is
+  broken in a way that blocks the lane's own work, even if no lane owns it.
+  The repair is limited to what unblocks the lane, and the lane reports it as
+  a scope expansion with its evidence. A mandated tool that is silently wrong
+  is worse than a lane that fixes it: every Class B stop routed through
+  `consult.py` while it truncated prompts got a verdict reached on one line.
+  This does not extend to files another lane owns, which are still reported
+  and left alone.
 - Write each lane's self-contained brief to `docs/tasks/<lane>.md` before
   dispatch. Include the relevant blueprint detail so the brief is a recovery
   path if context is lost.
