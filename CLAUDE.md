@@ -35,6 +35,25 @@ opening them as an optional first step.
    that thinks one is wrong stops and reports rather than substituting.
 7. Destructive operations need explicit human approval.
 
+## Parallel work board
+
+`docs/plan.md` is a planning index, not a mutable claim board. Before any lane
+edits files or uses an exclusive live resource, claim it atomically and release
+it after verification:
+
+```
+python tools/work_board_claim.py claim --role CORE --work-item ITEM --file PATH [--resource KEY]
+python tools/work_board_claim.py list
+python tools/work_board_claim.py release CLAIM_ID
+```
+
+`CORE` integrates and commits. `BUILD` does not commit. Neither role owns a
+directory: a successful tool claim is the only authority to modify a path.
+Every agent must check `list`, claim every file it will write and exclusive
+resource it will use before acting, stop on a conflict, and release the
+returned claim ID after verification. `docs/plan.md` is the resource index;
+never hand-edit claim state.
+
 ## Commands
 
 ```

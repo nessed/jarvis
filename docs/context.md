@@ -8,32 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `14629c0 Stop the distill chain's emptiness check from decoding the whole fact table` on `main`, 4 ahead, 0 behind origin.
+**HEAD** `1672f8c Add coverage for four tools that had none` on `main`, 5 ahead, 0 behind origin.
 
-**Working tree:** 19 changed (plus 35 untracked)
+**Working tree:** 23 changed (plus 33 untracked)
 
 ```
-  M .gitignore
-   M CLAUDE.md
-   M agents.md
+  M  .gitignore
+  M  CLAUDE.md
+  M  agents.md
    M bus/status.py
    M docs/blockers/tool-result-injection.md
    M docs/consults/2026-08-27-distill-scheduling-mechanism/response.md
    M docs/consults/2026-08-27-path-smoke-test/response.md
+  A  docs/plan.md
    M docs/state.md
-   M executor/flp/__init__.py
-   M executor/flp/sort.py
-   M tests/bus/test_whatsapp_client.py
-   M tests/executor/test_flp_sort.py
-  ...and 7 more
+  A  docs/tasks/board-claim-tool.md
+  A  docs/tasks/board-documentation.md
+  A  docs/tasks/review-work-board.md
+  ...and 11 more
 ```
 
-**Offline suite:** 438 passed, 4 deselected in 9.22s _(recorded 2026-08-29)_
+**Offline suite:** 463 passed, 4 deselected in 14.85s _(recorded 2026-08-29)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `1672f8c` Add coverage for four tools that had none  _(2026-08-29)_
 - `14629c0` Stop the distill chain's emptiness check from decoding the whole fact table  _(2026-08-29)_
 - `b9458fb` Drain the queue without stalling, and stop wasting retries on dead ends  _(2026-08-29)_
 - `49719b9` Stop the router silently mis-handling three fallback edge cases  _(2026-08-29)_
@@ -41,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `f4c5acb` Log a second, distinct PyFLP failure on a real project  _(2026-08-27)_
 - `d08cea3` Let a lane repair a mandated tool it doesn't own  _(2026-08-27)_
 - `628b6ea` Close two injection channels, unfork the distill chain, unblock PyFLP  _(2026-08-27)_
-- `d3094ad` Make a second stack impossible and run distillation on the queue  _(2026-08-27)_
 
 <!-- END GENERATED -->
 

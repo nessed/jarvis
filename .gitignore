@@ -17,3 +17,4 @@ memory.db-*
 .context-status.json
 .executor-heartbeat
 test_projects/
+.work-board/

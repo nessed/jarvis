@@ -95,6 +95,12 @@ stop regardless of how obvious the substitution seems.
 
 ## How we work
 
+- **Claim before acting.** Before an agent edits any file or uses an exclusive
+  resource, it runs `python tools/work_board_claim.py claim` with its role,
+  work item, every path it will write, and every resource it will consume.
+  It checks `list` first, does not proceed on a conflict, and releases the
+  returned claim ID only after verification. `docs/plan.md` names the relevant
+  resource keys and is an index, never a hand-edited claim registry.
 - Delegate all executable code, file, and terminal work to agents; do not give
   the user commands or files to create.
 - The user handles only logins/2FA/captchas, card entry, final Save/Confirm
