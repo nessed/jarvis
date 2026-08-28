@@ -8,31 +8,29 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `c47d9b4 Cover WhatsAppClient's timeout and non-JSON-error-body paths` on `main`, 9 ahead, 0 behind origin.
+**HEAD** `c6565c0 Add coverage for distill_memory's CLI, start_jarvis's uncovered paths, and request_completion` on `main`, 10 ahead, 0 behind origin.
 
-**Working tree:** 12 changed (plus 40 untracked)
+**Working tree:** 9 changed (plus 40 untracked)
 
 ```
   M bus/main.py
    M bus/status.py
    M docs/plan.md
    M docs/state.md
-  M  tests/executor/test_poller.py
    M tests/router/test_routing.py
    M tests/status/test_live_queue_status.py
    M tests/test_integration.py
-   M tests/tools/test_context_status.py
-  A  tests/tools/test_distill_memory.py
-  M  tests/tools/test_start_jarvis.py
-   M tools/context_status.py
+  M  tests/tools/test_context_status.py
+  M  tools/context_status.py
 ```
 
-**Offline suite:** 480 passed, 4 deselected, 2 warnings in 14.88s _(recorded 2026-08-29)_
+**Offline suite:** 480 passed, 4 deselected, 2 warnings in 16.00s _(recorded 2026-08-29)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `c6565c0` Add coverage for distill_memory's CLI, start_jarvis's uncovered paths, and request_completion  _(2026-08-29)_
 - `c47d9b4` Cover WhatsAppClient's timeout and non-JSON-error-body paths  _(2026-08-29)_
 - `1cb18ed` Close a stale blocker status and fence two unframed sub-model responses  _(2026-08-29)_
 - `ed08e62` Wire flp_sort's write-path guard and diff report, and fix stale docstrings  _(2026-08-29)_
@@ -40,7 +38,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `1672f8c` Add coverage for four tools that had none  _(2026-08-29)_
 - `14629c0` Stop the distill chain's emptiness check from decoding the whole fact table  _(2026-08-29)_
 - `b9458fb` Drain the queue without stalling, and stop wasting retries on dead ends  _(2026-08-29)_
-- `49719b9` Stop the router silently mis-handling three fallback edge cases  _(2026-08-29)_
 
 <!-- END GENERATED -->
 

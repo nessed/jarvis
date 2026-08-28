@@ -232,17 +232,32 @@ def test_main_check_returns_1_when_context_md_is_missing(tmp_path, monkeypatch) 
     assert cs.main() == 1
 
 
-def test_main_check_raises_systemexit_when_markers_are_missing(tmp_path, monkeypatch) -> None:
+def test_main_check_returns_1_through_checks_own_message_when_markers_are_missing(
+    tmp_path, monkeypatch, capsys
+) -> None:
     context_path = tmp_path / "context.md"
     context_path.write_text("no generated block here at all", encoding="utf-8")
     monkeypatch.setattr(cs, "CONTEXT", context_path)
     monkeypatch.setattr(cs.sys, "argv", ["context_status.py", "--check"])
 
-    # splice() runs before the args.check branch is reached in main(), so a
-    # missing marker surfaces as an uncaught SystemExit from splice(), not as
-    # a clean `return 1` through check()'s own "no generated block" branch.
-    # check()'s dedicated message for this case is therefore unreachable via
-    # main() today -- reported to CORE, not fixed here (out of scope).
+    # main() checks args.check before ever calling splice()/build_block(), so
+    # a missing marker on --check now surfaces as check()'s own dedicated
+    # "no generated block" message via a clean return 1, not an uncaught
+    # SystemExit from splice() (fixed 2026-08-28; splice() previously ran
+    # unconditionally before the args.check branch, making this message
+    # unreachable through the CLI).
+    assert cs.main() == 1
+    assert "docs/context.md has no generated block" in capsys.readouterr().err
+
+
+def test_main_write_still_raises_systemexit_when_markers_are_missing(tmp_path, monkeypatch) -> None:
+    context_path = tmp_path / "context.md"
+    context_path.write_text("no generated block here at all", encoding="utf-8")
+    monkeypatch.setattr(cs, "CONTEXT", context_path)
+    monkeypatch.setattr(cs.sys, "argv", ["context_status.py", "--write"])
+
+    # --write has no use for a block it cannot splice into, so it still
+    # surfaces splice()'s own SystemExit -- only --check was rerouted.
     with pytest.raises(SystemExit) as excinfo:
         cs.main()
     assert "no generated block" in str(excinfo.value)

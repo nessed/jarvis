@@ -191,10 +191,11 @@ def main() -> int:
         return 1
 
     current = CONTEXT.read_text(encoding="utf-8")
-    updated = splice(current, build_block())
 
     if args.check:
         return check(current)
+
+    updated = splice(current, build_block())
 
     if args.write:
         if updated != current:
