@@ -28,9 +28,10 @@ Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 | Memory | SQLite facts, sqlite-vec index, loopback Ollama. Two paths: conversation turns embed-and-store inline (fast), and the shared loop in `memory/distill.py` folds them into Mem0 facts as an offline batch |
 | Batch distillation | Job kind `distill_memory` (`executor/handlers/distill.py`), self-re-enqueuing. One turn per job; a yield check for ready non-distill work runs **before** any extraction, so a ripe distill row costs one query rather than 55s when a reply is waiting. `run_after` is a duty-cycle throttle only, never a priority — the queue has no priority column and `claim_next_job` orders by `run_after asc, created_at asc`, so the ordering inversion is real and is absorbed by the yield check, not prevented. The successor write carries a veto evaluated **at the write site**: it refuses if this pass no longer owns its row (the poller re-queues what it claimed on timeout, and the abandoned thread would otherwise enqueue beside it) or if a sibling row is already open. Forks never merge, so each one would permanently double the duty cycle. `assert_timeouts_ordered` runs at executor startup and per row; it had no production caller at all until 27 Aug 2026. The executor seeds the chain at startup (not for `--once`), best-effort. Mechanism chosen adversarially: `docs/consults/2026-08-27-distill-scheduling-mechanism/`. `tools/distill_memory.py` remains as the manual path, still heartbeat-guarded |
 | Batch-tool liveness guards | Both Ollama-driving batch tools refuse while the executor's heartbeat is fresh: `tools/distill_memory.py` and now `tools/run_backfill.py`. Same `--force` override, same message from `executor/heartbeat.py`. `--dry-run` is never blocked |
-| Conversation wiring | Recalled memory is injected as a **user**-role message inside a `<remembered_context>` fence, never as `system`. `remember_turn` stores inbound bodies verbatim, so until 27 Aug 2026 anything a sender said came back wearing the operator's role — a write into the instruction channel for anyone who could get a sentence remembered. Fence markers are stripped from the content so it cannot be closed from inside. `whatsapp_webhook` handler: recall, route, **send**, then store the turn. Reply-first is an authorized amendment to the blueprint's step order. Turns are stored verbatim via `memory/conversation.py` (~0.5s embed), **not** Mem0 extraction. Dedups by Meta's message id. See `docs/history/whatsapp-reply-failures.md` |
+| Conversation wiring | Recalled memory is injected as a **user**-role message inside a `<remembered_context>` fence, never as `system`. `remember_turn` stores inbound bodies verbatim, so until 27 Aug 2026 anything a sender said came back wearing the operator's role — a write into the instruction channel for anyone who could get a sentence remembered. Fence markers are stripped from the content so it cannot be closed from inside. `whatsapp_webhook` handler: recall, route, **send**, then store the turn. Reply-first is an authorized amendment to the blueprint's step order. Turns are stored verbatim via `memory/conversation.py` (~0.5s embed), **not** Mem0 extraction. Dedups by Meta's message id at two points, not one: `bus/webhook_dedup.py`'s `SeenWebhookMessageStore` stops a redelivered webhook from enqueueing a second job at all (added 2026-08-28, after a redelivered webhook was confirmed live on 26 Aug to create duplicate jobs), and `executor/handlers/whatsapp.py`'s `SeenMessageStore` separately stops a duplicate *reply* from sending. See `docs/history/whatsapp-reply-failures.md` |
 | Outbound WhatsApp | `WhatsAppClient.send_text_message()`. A real send through the live Graph API succeeded 26 August 2026 |
 | Process tooling | `tools/consult.py`, `tools/repoint_webhook.py`, `tests/live/`, pre-commit hook. **`consult.py` sends the prompt on stdin, never in argv** — `claude.cmd` runs through `cmd.exe`, where a newline in an argv element terminates the command and the line is capped at 8191 chars, so every consult before 27 Aug 2026 delivered only its first line and got a confidently wrong answer back. No pre-fix verdict exists in `docs/consults/`, so nothing archived is suspect. Sub-model output is framed as untrusted data at every exit — stderr, `response.md`, and the `verdict` field when the reply is not JSON |
+| Work-board claims | Local-only `tools/work_board_claim.py` atomically claims overlapping repository files and named resources. Its ignored `.work-board` state is not an external system; `git-commit` is a CORE-only resource. |
 | `/status` | Reports `retry_health` (dead-letter and retried-job counts) from the live queue, additive to the existing payload |
 | FL Studio sort (`executor/flp/sort.py`) | `flp_backup`, `load`/`save`, `apply_rules`, `diff_report`, `verify`, `build_flp_sort_handler` built and unit-tested against fakes (16 tests). Registered as job kind `flp_sort` in `executor/poller.py`'s `DEFAULT_HANDLERS`, but nothing enqueues it yet. Reordering mixer inserts raises `ReorderNotSupported` rather than silently no-op'ing: PyFLP has no insert-move API. PyFLP itself now works — `.venv311` on CPython 3.11.5 parses and saves real `.flp` files (`tests/flp/test_flp_real.py`, marker `realflp`) — but `sort.py` has still never been run against one, because there are no guinea-pig projects yet. See open blocker 4 |
 | Startup | Passes `--protocol http2` to cloudflared (`JARVIS_TUNNEL_PROTOCOL` overrides). QUIC is UDP 7844 and is unroutable on this network — every dial failed `wsasendto: unreachable network`, the tunnel never registered, and a URL that resolved nowhere was minted while ordinary TCP to the same edge was fine. http2 registered first try, zero errors. `start-jarvis.bat` -> `tools/start_jarvis.py` brings up Ollama check, bus, tunnel, Meta re-point and executor in order, waiting for each to answer before the next. Ctrl+C stops the set together; a child dying reports which and shuts the rest down |
@@ -44,16 +45,45 @@ corpus inputs are gitignored. No personal corpus has been read or ingested.
 
 | Rung | State |
 |---|---|
-| Groq | Working. Rate-limit header capture proven here |
-| Gemini | Working |
-| DeepSeek direct | Working through `https://api.deepseek.com/v1`. No rate-limit headers, so cooldown parsing is unexercised |
-| OpenRouter | Working through `openrouter/free`. No retry headers, cooldown correctly stays empty |
+| Groq | "Working" claim **unverified against the current `.env`** — see note below. Rate-limit header capture proven at some point, but not provably under today's config |
+| Gemini | Same caveat as Groq below |
+| DeepSeek direct | Working through `https://api.deepseek.com/v1`. No rate-limit headers, so cooldown parsing is unexercised. `default_model` is a literal in `router/providers.yaml` (`deepseek-v4-flash`), not env-resolved, so this rung is unaffected by the note below |
+| OpenRouter | Working through `openrouter/free`. No retry headers, cooldown correctly stays empty. Also a `providers.yaml` literal, unaffected |
 | Cerebras | Authenticates, chat returns `402 payment_required`. Do not route work here |
 | Mistral | Integrated, model discovery works, live chat returns `403`. Needs account or workspace resolution |
 | NVIDIA NIM | Deferred. Geo-blocked from Pakistan, and removed from the fact-extraction plan by the blueprint 1.3 amendment |
 | Claude Max | Used through `tools/consult.py`, not as a router target |
 
 DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
+
+**`*_DEFAULT_MODEL` gap, found 2026-08-28 (`verify-configured-model-ids`):**
+none of `GROQ_DEFAULT_MODEL`, `CEREBRAS_DEFAULT_MODEL`, `NVIDIA_DEFAULT_MODEL`,
+`GEMINI_DEFAULT_MODEL`, or `CLAUDE_API_DEFAULT_MODEL` are present as keys in
+the live `.env` (checked key names only, no values read or printed — the file
+itself is access-restricted to this agent by design). `router/providers.yaml`
+resolves each of those five providers' `default_model` via `${VAR}`
+interpolation with no literal fallback, so each currently resolves to
+`None`. `ProviderRouter._configured()` (`router/routing.py:246-257`) does not
+check `default_model` for these providers (its `model_env` guard only covers
+Mistral, the one provider using that field) — a rung passes as "configured"
+purely on `key_env` presence. The failure is caught, not silent: `route()`
+(`routing.py:216-218`) checks `if not provider_model` and records
+`"{provider}: no model configured"` before falling through to the next
+candidate — so this does not crash a request, but it does mean any of these
+five rungs that reach that point today cannot serve one, contradicting a
+"Working" claim made on their behalf. `tests/live/` currently has exactly one
+test (`test_memory_roundtrip.py`) and it does not exercise routing at all, so
+there is no live probe on disk proving current Groq/Gemini behavior either
+way. This is the exact gap `docs/plan.md`'s `router-model-env-validation` job
+already names; this note is the live-environment evidence for it, not a fix —
+`router/routing.py` is claimed by another lane as of this writing.
+Current model IDs, for whoever sets these (verified 2026-08-28, not written
+to `.env` by this agent): Groq's `llama-3.1-8b-instant` is deprecated;
+`openai/gpt-oss-20b` is Groq's current free-tier-friendly general model
+([console.groq.com/docs/models](https://console.groq.com/docs/models)).
+Gemini's `gemini-2.0-flash` shut down 1 June 2026; current free-tier Flash
+models include `gemini-2.5-flash` and `gemini-2.5-flash-lite`
+([ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models)).
 
 ## Open blockers
 

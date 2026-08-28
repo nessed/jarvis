@@ -8,25 +8,22 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `e4f15a7 Make queue_depths and retry_health O(1) queries, add distill-chain liveness` on `main`, 13 ahead, 0 behind origin.
+**HEAD** `77c07e5 Stop a Meta webhook redelivery from enqueueing a second job` on `main`, 14 ahead, 0 behind origin.
 
-**Working tree:** 6 changed (plus 37 untracked)
+**Working tree:** 2 changed (plus 37 untracked)
 
 ```
-  M  bus/main.py
-  A  bus/webhook_dedup.py
-   M docs/plan.md
-   M docs/state.md
-  A  tests/bus/test_webhook_dedup.py
-  M  tests/test_integration.py
+  M  docs/plan.md
+  M  docs/state.md
 ```
 
-**Offline suite:** 480 passed, 4 deselected, 2 warnings in 15.95s _(recorded 2026-08-29)_
+**Offline suite:** 480 passed, 4 deselected, 2 warnings in 16.41s _(recorded 2026-08-29)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `77c07e5` Stop a Meta webhook redelivery from enqueueing a second job  _(2026-08-29)_
 - `e4f15a7` Make queue_depths and retry_health O(1) queries, add distill-chain liveness  _(2026-08-29)_
 - `ae158b9` Cover OpenAIChatClient construction and pin mem0ai's private-API surface  _(2026-08-29)_
 - `a88dd21` Fix context_status --check being unreachable through main()  _(2026-08-29)_
@@ -34,7 +31,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `c47d9b4` Cover WhatsAppClient's timeout and non-JSON-error-body paths  _(2026-08-29)_
 - `1cb18ed` Close a stale blocker status and fence two unframed sub-model responses  _(2026-08-29)_
 - `ed08e62` Wire flp_sort's write-path guard and diff report, and fix stale docstrings  _(2026-08-29)_
-- `36990c6` Add an atomic work board so two orchestrators can share this repo at once  _(2026-08-29)_
 
 <!-- END GENERATED -->
 

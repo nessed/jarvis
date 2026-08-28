@@ -106,6 +106,16 @@ check.
 - Claim `meta-webhook` before `repoint_webhook.py` or any callback/subscription
   change, and claim `cloudflare-tunnel` before restarting or replacing a tunnel.
   These affect the live inbound route; never run either beside a Meta live probe.
+- **Never `git stash` to get an isolated before/after count.** This working
+  tree is shared live by every concurrent lane; a stash pauses *all* of their
+  uncommitted work at once, not just your own file claims, and a pop racing
+  another lane's write is exactly the kind of collision the claim tool exists
+  to prevent. Observed 2026-08-28: a lane stashed/popped to measure its own
+  test-count delta while several other lanes had uncommitted work in the same
+  tree. It happened to pop clean, verified after the fact — but "verified
+  clean after" is not a substitute for never risking it. Measure a delta some
+  other way (a `pytest --collect-only` count, or just report the file(s) you
+  added and let CORE diff them at integration) instead.
 
 ### The hot files
 
@@ -190,27 +200,27 @@ before starting. **This is the block to hand an idle orchestrator.**
 
 | id | what | files |
 |---|---|---|
-| `test-repoint-webhook` | `tools/repoint_webhook.py` has no test file at all — 7.5KB, the whole re-point path uncovered. Also **add the 64-char `META_VERIFY_TOKEN` guard**; the limit is unenforced, not merely untested. | `tools/repoint_webhook.py`, `tests/tools/test_repoint_webhook.py` |
-| `test-context-status` | `tools/context_status.py` has no tests and the pre-commit hook runs it on every commit. A break there breaks every commit. | `tests/tools/test_context_status.py` |
+| ~~`test-repoint-webhook`~~ | **Done** (`1672f8c`). The 64-char guard was correctly **not** added — the lane found no source confirms any Meta verify_token length limit, and this session independently web-searched and found none either (2026-08-28); "64" in this row was an unverified number, not a real constraint. Guessing one would have been fabricating a validation rule. | `tools/repoint_webhook.py`, `tests/tools/test_repoint_webhook.py` |
+| ~~`test-context-status`~~ | **Done** (`1672f8c`). The bug that lane found and correctly left alone (`main()` calling `splice()` before branching on `--check`) is now **also done**, uncommitted, this pass: `--check` now short-circuits before `splice()`, so a missing-markers file reaches `check()`'s own dedicated message via a clean `return 1` instead of an uncaught `SystemExit`. `--write` is unaffected (still needs the spliced block, so it still raises the same way). | `tests/tools/test_context_status.py`, `tools/context_status.py` |
 | ~~`test-distill-memory-cli`~~ | **Done**, uncommitted. 12 new tests mirroring `test_run_backfill.py`'s pattern. | `tests/tools/test_distill_memory.py` |
 | ~~`test-start-jarvis-uncovered-paths`~~ | **Done**, uncommitted. 11 → 28 tests; all four named gaps covered against fakes. | `tests/tools/test_start_jarvis.py` |
-| `consult-untested-paths` | The argv-vs-stdin fix has no regression test — the mock discards its arguments. Nothing tests `screen()`, `REFUSED_NAMES`, `SECRET_SHAPES`, which is the whole mechanism enforcing non-negotiable 1. Synthetic key shapes only. | `tests/tools/test_consult.py` |
-| `test-openai-chat-client` | `OpenAIChatClient` is never constructed by any test — real header casing and SDK-exception mapping unexercised. | `tests/router/test_routing.py` |
-| `poller-invariant-tests` | Nothing asserts the loop calls `touch_heartbeat()`, or that `flp_sort` is registered. Deleting `poller.py:235` breaks no test. | `tests/executor/test_poller.py` |
-| `hooks-path-invariant-test` | The hook only fires if someone ran `git config core.hooksPath`. Its own comment says rules that depend on remembering do not hold. | `tests/tools/test_precommit_hook.py` |
-| ~~`bus-branch-test-gaps`~~ | **Done**, uncommitted. Timeout + non-JSON-error-body tests added; `_default_jobs()` fallback (incl. loud-500-not-silent-drop) covered. | `tests/bus/test_whatsapp_client.py`, `tests/test_integration.py` |
-| `mem0-version-conformance-test` | Six private-API couplings to `mem0ai==2.0.19`; only one fails loudly on a bump. The rest fail mid-extraction on the live path. | `tests/memory/test_mem0_pinning.py` |
+| ~~`consult-untested-paths`~~ | **Done** (`1672f8c`). | `tests/tools/test_consult.py` |
+| ~~`test-openai-chat-client`~~ | **Done** (`ae158b9`). Exercised through its real `__init__`/`AsyncOpenAI` import path, fake swapped in only at `with_raw_response`. | `tests/router/test_routing.py` |
+| ~~`poller-invariant-tests`~~ | **Done** (`b9458fb`, folded into the poller batch that also fixed drain-without-sleep, reseed-in-loop, heartbeat-clear-on-exit, and flp-permanent-failure-no-retry). | `tests/executor/test_poller.py` |
+| ~~`hooks-path-invariant-test`~~ | **Done** (`1672f8c`). | `tests/tools/test_precommit_hook.py` |
+| ~~`bus-branch-test-gaps`~~ | **Done** (`c47d9b4`). Timeout + non-JSON-error-body tests added; `_default_jobs()` fallback (incl. loud-500-not-silent-drop) covered. | `tests/bus/test_whatsapp_client.py`, `tests/test_integration.py` |
+| ~~`mem0-version-conformance-test`~~ | **Done** (`ae158b9`). Six private-API couplings asserted directly against the installed `mem0ai==2.0.19`. | `tests/memory/test_mem0_pinning.py` |
 
 ### Small corrections
 
 | id | what | files |
 |---|---|---|
-| ~~`flp-stale-module-docstrings`~~ | **Done**, uncommitted. Rewritten to state current status: registered as `flp_sort`, works on `.venv311`/3.11.5, blocked only by the new channel-groups `IndexError`. | `executor/flp/sort.py`, `executor/flp/__init__.py` |
-| ~~`status-dead-letter-key`~~ | **Done**, uncommitted. `_QUEUE_STATUSES` now includes `dead_letter`; test updated. | `bus/status.py`, `tests/status/test_live_queue_status.py` |
-| ~~`reframe-archived-consults`~~ | **Done**, uncommitted. Both files wrapped in `frame_untrusted()`'s exact shape (imported the real function, not hand-typed). | `docs/consults/*/response.md` |
-| ~~`injection-blocker-stale-status`~~ | **Done**, uncommitted. Only the embedded "What was found and NOT fixed" sub-finding was stale (the system-role recall bug, fixed in `628b6ea`) — the file's top-level "OPEN. Not reproduced." status is a separate, still-unresolved incident (the fake plan-mode text, H4-H6) and was left alone. | `docs/blockers/tool-result-injection.md` |
-| ~~`poller-dead-request-completion`~~ | **Partially done**, uncommitted: gained 2 tests, still zero live callers. "Wire it or delete it" was a false binary — its docstring ("give executor jobs the provider router's single async entry point") and signature (`urgent: bool = False`) show it's a deliberately-placed hook for a future *batch*-routed job kind, not dead code to remove. Nothing in the repo currently calls `route(..., urgent=False)` at all (checked 2026-08-28: `ProviderRouter` is only instantiated in `bus/main.py`; the only executor caller, `executor/handlers/whatsapp.py:160`, always passes `urgent=True`). Actually wiring it means inventing that caller, which is `router-deepseek-defer-not-skip`'s job, not this one's — see that entry below. | `executor/poller.py` (hot), `tests/executor/test_poller.py` |
-| `verify-configured-model-ids` | Check the four `*_DEFAULT_MODEL` values in `.env` against live catalogues. **If `GROQ_DEFAULT_MODEL` is `llama-3.1-8b-instant` (retired 16 Aug) routable capacity is 3 rungs, not 4.** | `docs/state.md` |
+| ~~`flp-stale-module-docstrings`~~ | **Done** (`ed08e62`). Rewritten to state current status: registered as `flp_sort`, works on `.venv311`/3.11.5, blocked only by the new channel-groups `IndexError`. | `executor/flp/sort.py`, `executor/flp/__init__.py` |
+| ~~`status-dead-letter-key`~~ | **Done** (`e4f15a7`). `_QUEUE_STATUSES` now includes `dead_letter`; test updated. | `bus/status.py`, `tests/status/test_live_queue_status.py` |
+| ~~`reframe-archived-consults`~~ | **Done** (`1cb18ed`). Both files wrapped in `frame_untrusted()`'s exact shape (imported the real function, not hand-typed). | `docs/consults/*/response.md` |
+| ~~`injection-blocker-stale-status`~~ | **Done** (`1cb18ed`). Only the embedded "What was found and NOT fixed" sub-finding was stale (the system-role recall bug, fixed in `628b6ea`) — the file's top-level "OPEN. Not reproduced." status is a separate, still-unresolved incident (the fake plan-mode text, H4-H6) and was left alone. | `docs/blockers/tool-result-injection.md` |
+| ~~`poller-dead-request-completion`~~ | **Done as scoped** (`c6565c0`): gained 2 tests pinning its actual current behavior, still zero live callers. "Wire it or delete it" was a false binary — its docstring ("give executor jobs the provider router's single async entry point") and signature (`urgent: bool = False`) show it's a deliberately-placed hook for a future *batch*-routed job kind, not dead code to remove. Nothing in the repo currently calls `route(..., urgent=False)` at all (checked 2026-08-28: `ProviderRouter` is only instantiated in `bus/main.py`; the only executor caller, `executor/handlers/whatsapp.py:160`, always passes `urgent=True`). Actually wiring it means inventing that caller, which is `router-deepseek-defer-not-skip`'s job, not this one's — see that entry below. | `executor/poller.py` (hot), `tests/executor/test_poller.py` |
+| `verify-configured-model-ids` | **Evidence gathered** (`docs/state.md`'s Provider rungs section, 2026-08-28), fix not applied. Five providers (`GROQ_DEFAULT_MODEL`, `CEREBRAS_DEFAULT_MODEL`, `NVIDIA_DEFAULT_MODEL`, `GEMINI_DEFAULT_MODEL`, `CLAUDE_API_DEFAULT_MODEL`) are absent as *keys* in the live `.env` (checked names only, no values read). Current model IDs researched and cited in `docs/state.md`. Setting the actual values in `.env` is the user's, not an agent's — `.env` is hand-filled per `CLAUDE.md`. | `docs/state.md` |
 
 ### Greenfield — touches no existing file at all
 
@@ -230,15 +240,15 @@ own rot and has produced nothing in four days.
 
 ### `router/routing.py` — five jobs, fixed order
 
-1. `router-deepseek-weekday-gate` *(trivial)* — the gate tests the hour only, so
-   the router refuses DeepSeek for seven hours every Saturday and Sunday, which
-   are its cheapest. **Do this first.**
-2. `router-402-aborts-chain` *(small)* — a Cerebras 402 reaches the bare `raise`
-   and kills the whole cascade with **no cooldown recorded**, so it recurs
-   forever. Any batch job that sees Groq 429 dies at rung 2 and never reaches
-   OpenRouter or DeepSeek.
-3. `router-model-env-validation` *(small)* — a rung with no `*_DEFAULT_MODEL`
-   passes `_configured()`, enters the candidate list, then silently no-ops.
+1. ~~`router-deepseek-weekday-gate`~~ *(trivial)* — **done** (`49719b9`). DeepSeek
+   dropped weekend peak pricing 23 Aug 2026 (confirmed via Bloomberg); weekend
+   UTC now skips the gate entirely rather than gating on a weekday check.
+2. ~~`router-402-aborts-chain`~~ *(small)* — **done** (`49719b9`). 402 now cools
+   down and falls through like 429/5xx instead of hitting the bare `raise`.
+3. ~~`router-model-env-validation`~~ *(small)* — **done** (`49719b9`).
+   `_configured()` now excludes a `model_env`-requiring provider with no
+   fallback and no env var set, instead of letting it no-op through
+   `_model_for()`.
 4. `router-deepseek-defer-not-skip` *(large, cross-area)* — the gate skips the
    rung instead of deferring the job via `run_after`, which the queue already
    supports. Writes three hot files. Dispatch as its own lane.
@@ -258,40 +268,37 @@ own rot and has produced nothing in four days.
 
 ### `executor/poller.py` — six jobs
 
-`distill-chain-reseed-in-loop`, `poller-drain-without-idle-sleep` and
-`heartbeat-clear-on-exit` all edit the same eight lines of `main()`'s loop.
-**Batch them into one lane** — strictly cheaper than three dispatches.
+~~`distill-chain-reseed-in-loop`~~, ~~`poller-drain-without-idle-sleep`~~ and
+~~`heartbeat-clear-on-exit`~~ **all done, batched into one lane** (`b9458fb`).
 
-- `distill-chain-reseed-in-loop` — three consecutive extraction failures end
-  distillation permanently until someone restarts the executor. `seed_distill_chain()`
-  is already idempotent; it just never runs inside the loop.
-- `poller-drain-without-idle-sleep` — the loop sleeps a full interval after every
-  job, so a backlog drains one job per interval. One of the four terms in the
-  ~25 messages/hour distill ceiling, and the only one that is free to fix.
-- `heartbeat-clear-on-exit` — the executor never removes `.executor-heartbeat`,
-  so batch tools refuse for up to 600s after a clean shutdown. Must stay
-  fail-open.
-- `flp-permanent-failure-no-retry` *(solo)* — rewrites `poll_once`'s exception
-  handling. `ReorderNotSupported` and `FileNotFoundError` are permanent and get
-  retried three times anyway.
+- ~~`distill-chain-reseed-in-loop`~~ — fixed: `_seed_distill_chain()` now also
+  runs once per idle cycle inside the loop, not just once before it.
+- ~~`poller-drain-without-idle-sleep`~~ — fixed: the loop only sleeps when
+  `poll_once` returned `None`; a non-idle result loops straight back in.
+- ~~`heartbeat-clear-on-exit`~~ — fixed: new `heartbeat.clear()`, called only
+  from the `KeyboardInterrupt` handler, stays fail-open on a crash.
+- ~~`flp-permanent-failure-no-retry`~~ *(solo)* — **done**, same commit.
+  `ReorderNotSupported`/`FileNotFoundError` now route straight to `fail()`
+  instead of burning the retry/backoff budget.
 
 ### `memory/store.py` — three jobs
 
-1. `undistilled-turns-indexed-query` *(medium)* — `undistilled_turns()` loads and
-   JSON-decodes **every row** on every call, including the `limit=1` emptiness
-   check the distill chain runs each tick.
-2. `mem0-search-overfetch` *(small)* — every Mem0 search materialises the whole
-   fact table just to take `len()` of it, then asks sqlite-vec for that many.
-   Becomes a one-line consumer of job 1.
-3. `sqlite-wal-and-busy-timeout` *(small)* — no connection sets `journal_mode` or
-   `busy_timeout`, while three connections to one `memory.db` exist across two
-   processes. A concurrent write raises "database is locked" immediately.
+**All done** (`14629c0`).
+
+1. ~~`undistilled-turns-indexed-query`~~ *(medium)* — an indexed `distilled`
+   column (tri-state, mirrors `metadata["distilled"]`) plus a partial index
+   replace the full-table JSON-decode-and-filter; the `limit=1` emptiness
+   check is now a single indexed lookup.
+2. ~~`mem0-search-overfetch`~~ *(small)* — `mem0_wrapper.py`'s search now calls
+   `store.count()` (one `SELECT COUNT(*)`) instead of `list_facts()`.
+3. ~~`sqlite-wal-and-busy-timeout`~~ *(small)* — `journal_mode=WAL` and
+   `busy_timeout=5000` set on connection open.
 
 ### `.env.example` — one writer, three contributors
 
-18 variables the code reads are absent, and `SUPABASE_KEY` is present but read
-by nothing. **`SUPABASE_SECRET_KEY` is required and missing.** `README.md` tells
-a new setup to copy this file, so a fresh clone cannot reach the queue.
+**Done** (`608dfd7`). All 18 variables added, each grep-confirmed against a
+real reader; `SUPABASE_KEY` confirmed dead (only remaining reference is a test
+asserting it is *not* used) and removed.
 
 - bus/db: `SUPABASE_SECRET_KEY`, `SUPABASE_QUEUE_TIMEOUT_SECONDS`
 - router: `GROQ_DEFAULT_MODEL`, `CEREBRAS_DEFAULT_MODEL`, `NVIDIA_DEFAULT_MODEL`,
@@ -308,12 +315,41 @@ in the comment.
 
 ### Other single-file contention
 
-- `bus/main.py` — `status-distill-chain-liveness`, `status-provider-health-source`,
-  `voice-command-ingress`, `webhook-message-dedup`, `enqueue-classifier`,
-  `bus-offbox-packaging`. One at a time, and `enqueue-classifier` blocks most of
-  Phase 4 by itself.
-- `bus/status.py` — ~~`status-dead-letter-key`~~ (done), `status-count-queries`,
-  `status-distill-chain-liveness`. Do as one pass.
+- `bus/main.py` — ~~`webhook-message-dedup`~~ **done**, uncommitted (see below).
+  `status-provider-health-source`, `voice-command-ingress`, `enqueue-classifier`
+  are Class C (see Decisions). `bus-offbox-packaging` is Phase 4, not started,
+  gated behind `enqueue-classifier` — not buildable yet, don't invent scope for
+  it. ~~`status-distill-chain-liveness`~~ done — see the `bus/status.py` row
+  below for the full note; its one-line wire-in here is also done.
+
+  `webhook-message-dedup`, done 2026-08-28: new `bus/webhook_dedup.py`
+  (`SeenWebhookMessageStore`, sqlite, mirrors `SeenMessageStore`'s pattern
+  exactly), wired into `receive_webhook`. Duplicate response:
+  `{"accepted": True, "duplicate": True}`, no `job_id`. Env var
+  `JARVIS_WEBHOOK_DEDUP_DB_PATH`, defaults to `webhook.seen-messages.db`
+  (already covered by the existing `*.seen-messages.db` gitignore glob, no
+  `.gitignore` edit needed). Did not touch `db/jobs.py`/`JobRepository`, no
+  live schema change, no import from `executor.handlers.whatsapp` (would have
+  been circular). 11 new tests. `docs/state.md`'s "Dedups by Meta's message
+  id" line should be corrected to say it now dedups at both enqueue and send,
+  not send only — not yet done, small, whoever integrates this can fold it in.
+- `bus/status.py` — ~~`status-dead-letter-key`~~, ~~`status-count-queries`~~,
+  ~~`status-distill-chain-liveness`~~ **all done**, uncommitted (2026-08-28).
+  `queue_depths()`/`retry_health()` now issue count-only PostgREST queries
+  (`count="exact", head=True`) instead of fetching every row — verified
+  against the actually-pinned `postgrest` 1.1.1 (via `supabase==2.18.1`),
+  which has no GROUP-BY-shaped aggregate, so this is 5 + 2 count queries, not
+  one. New `QueueStatusReader.distill_chain_health()`: 3 count queries
+  scoped to `kind="distill_memory"`, returns `{"alive": bool,
+  "dead_letter_count": int, "has_ever_run": bool}` — `has_ever_run`
+  distinguishes never-seeded from died, both otherwise reporting
+  `alive=False`. Wired into `status_payload`/`create_status_handler`
+  additively, and a matching one-line `distill_chain_health` param + wiring
+  was added to `bus/main.py`'s `create_app()` (done separately, after
+  `webhook-message-dedup` landed on that same file, to avoid the collision
+  the dispatch brief flagged). `tests/status/test_live_queue_status.py`'s
+  fake client was rewritten to model real filter/count semantics instead of
+  canned per-field responses; 4 → 9 tests.
 - `executor/flp/sort.py` — `flp-real-mixer-convention` (blocked on Ali) is all
   that's left. ~~`flp-write-path-guard`~~, ~~`flp-diff-report-emission`~~,
   ~~`flp-stale-module-docstrings`~~ all done.
