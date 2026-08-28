@@ -190,7 +190,14 @@ mode-transition is a stretch. For it: no byte of the text exists anywhere.
   escape attempt, casing and spacing variants, the four parse paths, and that
   `response.md`, stdout and the failure-path stderr are each framed.
 
-## What was found and NOT fixed (files this lane does not own)
+## What was found and then fixed in `628b6ea`
+
+The system-role recall escalation described below (`executor/handlers/whatsapp.py:190`)
+is fixed. Recalled memory is now injected as a **user**-role message inside a
+`<remembered_context>` fence, never as `system`; fence markers are stripped so
+the content cannot close the fence from inside. See `docs/state.md`'s
+"Conversation wiring" row. The analysis is kept as-written below because the
+reasoning — not just the conclusion — is the value of this record.
 
 Inbound WhatsApp bodies do **not** currently reach agent-visible output. That
 is by construction, and is worth naming so it is not undone:
