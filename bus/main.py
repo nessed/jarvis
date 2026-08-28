@@ -11,6 +11,11 @@ from fastapi import FastAPI, HTTPException, Request
 from bus.logging import RequestIDMiddleware, get_logger, redact_verify_token_from_access_log
 from bus.security import BearerAuthMiddleware, enforce_meta_signature, meta_webhook_handshake
 from bus.status import QueueStatusReader, create_status_handler
+from bus.webhook_dedup import (
+    SeenWebhookMessageStore,
+    extract_message_ids,
+    open_default_seen_webhook_message_store,
+)
 from db.jobs import JobRepository, SupabaseJobsRepository, enqueue
 from router import ProviderRouter
 
@@ -66,11 +71,14 @@ def create_app(
     queue_depths: Callable[[], Any] | None = None,
     last_job: Callable[[], Any] | None = None,
     retry_health: Callable[[], Any] | None = None,
+    distill_chain_health: Callable[[], Any] | None = None,
+    open_webhook_dedup: Callable[[], SeenWebhookMessageStore] | None = None,
 ) -> FastAPI:
     """Build an injectable app; a webhook performs no work beyond enqueueing."""
     redact_verify_token_from_access_log()
     app = FastAPI(title="JARVIS bus")
     logger = get_logger()
+    open_dedup_store = open_webhook_dedup or open_default_seen_webhook_message_store
     active_jobs = jobs if jobs is not None else _default_jobs()
     status_reader = _queue_status_reader(active_jobs)
     app.state.jobs = active_jobs
@@ -93,8 +101,21 @@ def create_app(
             payload = await request.json()
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="webhook body must be JSON") from exc
+
+        message_ids = extract_message_ids(payload)
+        if message_ids:
+            with open_dedup_store() as seen:
+                if all(seen.has_seen(message_id) for message_id in message_ids):
+                    return {"accepted": True, "duplicate": True}
+
         repository = request.app.state.jobs
         job = enqueue("whatsapp_webhook", payload, repository=repository)
+
+        if message_ids:
+            with open_dedup_store() as seen:
+                for message_id in message_ids:
+                    seen.mark_seen(message_id)
+
         return {"accepted": True, "job_id": job.id}
 
     app.add_api_route(
@@ -109,6 +130,9 @@ def create_app(
             provider_health=lambda: _provider_health(app.state.provider_router),
             retry_health=retry_health or (
                 status_reader.retry_health if status_reader is not None else None
+            ),
+            distill_chain_health=distill_chain_health or (
+                status_reader.distill_chain_health if status_reader is not None else None
             ),
         ),
         methods=["GET"],
