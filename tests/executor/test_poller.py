@@ -8,6 +8,7 @@ import pytest
 
 from db.jobs import Job
 from executor import poller
+from executor.flp.sort import ReorderNotSupported
 from executor.poller import HandlerRegistration, poll_once
 
 
@@ -364,3 +365,216 @@ def test_the_distill_kind_is_registered_with_a_timeout_above_the_extraction_time
 
     registration = poller.DEFAULT_HANDLERS[DISTILL_JOB_KIND]
     assert registration.timeout_seconds > extraction_timeout_seconds({})
+
+
+# --- fix 4: ReorderNotSupported / FileNotFoundError dead-letter on first occurrence ---
+
+
+def test_poll_once_fails_a_reorder_not_supported_error_without_retrying():
+    repository = FakeJobs(_job(attempts=1, max_attempts=5))
+
+    def broken_handler(job: Job) -> None:
+        raise ReorderNotSupported("rule wants a position PyFLP can't move to")
+
+    result = poll_once(repository=repository, handler=broken_handler)
+
+    # Attempts (1) are nowhere near max_attempts (5) -- a generic exception
+    # here would come back "queued" (see the RuntimeError test above). This
+    # must be terminal on the very first occurrence instead.
+    assert result is not None and result.status == "failed"
+    assert result.checkpoint["phase"] == "executor_started"
+    assert result.checkpoint["error"] == {
+        "message": "executor handler failed permanently (ReorderNotSupported)"
+    }
+    assert repository.calls[-1] == (
+        "fail",
+        "executor handler failed permanently (ReorderNotSupported)",
+    )
+    assert all(call[0] != "retry_or_dead_letter" for call in repository.calls)
+
+
+def test_poll_once_fails_a_missing_file_error_without_retrying():
+    repository = FakeJobs(_job(attempts=1, max_attempts=5))
+
+    def broken_handler(job: Job) -> None:
+        raise FileNotFoundError("song.flp no longer exists")
+
+    result = poll_once(repository=repository, handler=broken_handler)
+
+    assert result is not None and result.status == "failed"
+    assert result.checkpoint["error"] == {
+        "message": "executor handler failed permanently (FileNotFoundError)"
+    }
+    assert all(call[0] != "retry_or_dead_letter" for call in repository.calls)
+
+
+def test_poll_once_still_retries_a_generic_exception_and_not_the_permanent_path():
+    # Guards against the new except clause swallowing everything: a plain
+    # RuntimeError must still take the existing retry/backoff path, not the
+    # new permanent-failure one.
+    repository = FakeJobs(_job(attempts=1, max_attempts=5))
+
+    result = poll_once(
+        repository=repository,
+        handler=lambda job: (_ for _ in ()).throw(RuntimeError("transient")),
+    )
+
+    assert result is not None and result.status == "queued"
+    assert repository.calls[-1][0] == "retry_or_dead_letter"
+
+
+# --- fix 2: drain a backlog back-to-back instead of one job per --interval ---
+
+
+def test_cli_drains_a_backlog_without_sleeping_between_jobs(monkeypatch):
+    sleeps: list[float] = []
+    polls = 0
+
+    def fake_poll_once(**kwargs):
+        nonlocal polls
+        polls += 1
+        if polls >= 3:
+            raise KeyboardInterrupt
+        return _job()  # non-None: a real job was just completed
+
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "poll_once", fake_poll_once)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: False)
+    monkeypatch.setattr(poller.time, "sleep", sleeps.append)
+
+    assert poller.main(["--interval", "9"]) == 0
+    assert polls == 3
+    assert sleeps == []
+
+
+def test_cli_still_sleeps_the_full_interval_once_the_queue_goes_idle(monkeypatch):
+    sleeps: list[float] = []
+    polls = 0
+
+    def fake_poll_once(**kwargs):
+        nonlocal polls
+        polls += 1
+        if polls >= 2:
+            raise KeyboardInterrupt
+        return None  # idle
+
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "poll_once", fake_poll_once)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: False)
+    monkeypatch.setattr(poller.time, "sleep", sleeps.append)
+
+    assert poller.main(["--interval", "9"]) == 0
+    assert sleeps == [9]
+
+
+# --- fix 1: reseed the distill chain again once the queue goes idle ---
+
+
+def test_cli_reseeds_the_distill_chain_after_an_idle_poll(monkeypatch):
+    seeded: list[bool] = []
+    polls = 0
+
+    def fake_poll_once(**kwargs):
+        nonlocal polls
+        polls += 1
+        if polls >= 2:
+            raise KeyboardInterrupt
+        return None  # idle
+
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "poll_once", fake_poll_once)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: seeded.append(True) or True)
+    monkeypatch.setattr(poller.time, "sleep", lambda _: None)
+
+    assert poller.main([]) == 0
+    # Once unconditionally before the loop starts, then once more after the
+    # queue was observed idle -- a chain that failed to seed at startup gets
+    # another chance without waiting for a restart.
+    assert seeded == [True, True]
+
+
+def test_cli_does_not_reseed_the_distill_chain_while_a_backlog_is_draining(monkeypatch):
+    seeded: list[bool] = []
+    polls = 0
+
+    def fake_poll_once(**kwargs):
+        nonlocal polls
+        polls += 1
+        if polls >= 3:
+            raise KeyboardInterrupt
+        return _job()  # backlog: never idle
+
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "poll_once", fake_poll_once)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: seeded.append(True) or True)
+    monkeypatch.setattr(poller.time, "sleep", lambda _: None)
+
+    assert poller.main([]) == 0
+    # Only the one unconditional call before the loop -- the loop itself
+    # never observed an idle poll, so it must not hit Supabase again.
+    assert seeded == [True]
+
+
+# --- fix 3: clear the heartbeat marker on a clean, deliberate stop ---
+
+
+def test_cli_clears_the_heartbeat_on_a_clean_keyboard_interrupt(monkeypatch):
+    cleared: list[bool] = []
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: False)
+    monkeypatch.setattr(
+        poller, "poll_once", lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt)
+    )
+    monkeypatch.setattr(poller, "clear_heartbeat", lambda: cleared.append(True))
+
+    assert poller.main([]) == 0
+    assert cleared == [True]
+
+
+def test_cli_does_not_clear_the_heartbeat_on_a_crash(monkeypatch):
+    # Fail-open by design (see executor/heartbeat.py): a crash must leave the
+    # marker in place to go stale on its own, never be cleared, so a genuine
+    # crash never masquerades as "cleanly stopped".
+    cleared: list[bool] = []
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "clear_heartbeat", lambda: cleared.append(True))
+    monkeypatch.setattr(
+        poller,
+        "poll_once",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("test-only crash")),
+    )
+
+    with pytest.raises(RuntimeError, match="test-only crash"):
+        poller.main(["--once"])
+
+    assert cleared == []
+
+
+# --- invariant tests: the loop still touches the heartbeat and flp_sort stays registered ---
+
+
+def test_cli_touches_the_heartbeat_every_loop_iteration(monkeypatch):
+    touches: list[bool] = []
+    polls = 0
+
+    def fake_poll_once(**kwargs):
+        nonlocal polls
+        polls += 1
+        if polls >= 3:
+            raise KeyboardInterrupt
+        return None
+
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "touch_heartbeat", lambda: touches.append(True))
+    monkeypatch.setattr(poller, "poll_once", fake_poll_once)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: False)
+    monkeypatch.setattr(poller.time, "sleep", lambda _: None)
+
+    assert poller.main([]) == 0
+    assert len(touches) == polls == 3
+
+
+def test_flp_sort_is_registered_in_the_default_handlers():
+    assert "flp_sort" in poller.DEFAULT_HANDLERS
+    assert isinstance(poller.DEFAULT_HANDLERS["flp_sort"], HandlerRegistration)
+    assert callable(poller.DEFAULT_HANDLERS["flp_sort"].handler)

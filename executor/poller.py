@@ -24,10 +24,11 @@ from db.jobs import (
     checkpoint,
     claim_next,
     complete,
+    fail,
     retry_or_dead_letter,
     set_timeout,
 )
-from executor.flp.sort import build_flp_sort_handler
+from executor.flp.sort import ReorderNotSupported, build_flp_sort_handler
 from executor.handlers.distill import (
     DISTILL_JOB_KIND,
     HANDLER_TIMEOUT_SECONDS as DISTILL_TIMEOUT_SECONDS,
@@ -36,7 +37,7 @@ from executor.handlers.distill import (
     seed_distill_chain,
 )
 from executor.handlers.whatsapp import build_whatsapp_webhook_handler
-from executor.heartbeat import touch as touch_heartbeat
+from executor.heartbeat import clear as clear_heartbeat, touch as touch_heartbeat
 from router import RoutedResult, route
 
 
@@ -144,6 +145,22 @@ def poll_once(
             backoff_seconds(job.attempts),
             repository=repository,
         )
+    except (ReorderNotSupported, FileNotFoundError) as exc:
+        # Both are permanent, not transient: a mixer-reorder rule PyFLP can
+        # never satisfy, or a target .flp path that is simply gone. Retrying
+        # either three times through backoff cannot change the outcome, so
+        # skip straight to a terminal, non-retried failure instead of
+        # spending the backoff window on a foregone conclusion.
+        logger.warning(
+            "job handler failed permanently, not retrying (%s, job=%s)",
+            type(exc).__name__,
+            job.id,
+        )
+        return fail(
+            job.id,
+            f"executor handler failed permanently ({type(exc).__name__})",
+            repository=repository,
+        )
     except Exception as exc:
         return retry_or_dead_letter(
             job.id,
@@ -233,16 +250,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             # refuse to compete for the single local Ollama. See
             # executor/heartbeat.py.
             touch_heartbeat()
+            idle = True
             try:
-                poll_once(handlers=DEFAULT_HANDLERS)
+                idle = poll_once(handlers=DEFAULT_HANDLERS) is None
             except Exception as exc:
                 if args.once:
                     raise
                 logger.warning("executor poll failed (%s)", type(exc).__name__)
             if args.once:
                 return 0
-            time.sleep(args.interval)
+            if idle:
+                # A stalled distill chain only reveals itself once the queue
+                # goes quiet (see _seed_distill_chain's docstring for why a
+                # failed seed is otherwise silent forever). Retrying the
+                # idempotent seed here, once per idle cycle, gives it another
+                # chance without hitting Supabase on every busy iteration.
+                _seed_distill_chain()
+                time.sleep(args.interval)
+            # else: poll_once just finished real work and there may be more
+            # queued -- loop straight back into another poll_once instead of
+            # sleeping, so a backlog drains back-to-back rather than at most
+            # one job per --interval.
     except KeyboardInterrupt:
+        # A deliberate, clean stop: clear the marker so batch tools don't
+        # wait out up to DEFAULT_MAX_AGE_SECONDS of a stale-but-true guard
+        # for no reason. A crash must NOT reach this branch -- see
+        # executor/heartbeat.py's clear() docstring.
+        clear_heartbeat()
         return 0
 
 

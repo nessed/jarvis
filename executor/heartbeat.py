@@ -43,6 +43,25 @@ def touch(path: Path | None = None) -> None:
         pass
 
 
+def clear(path: Path | None = None) -> None:
+    """Remove the heartbeat marker on a deliberate, clean stop. Never raises.
+
+    Only call this from a clean-exit path (a caught ``KeyboardInterrupt``).
+    A crash must leave the marker in place to go stale on its own -- that
+    fail-open staleness, not an always-cleared marker, is what lets a killed
+    executor never leave a lock that blocks a future batch run past
+    ``max_age_seconds``. Mirrors :func:`touch`'s error handling: an ``OSError``
+    (e.g. the file is already gone) is silently swallowed rather than raised.
+    """
+    target = path or heartbeat_path()
+    try:
+        target.unlink()
+    except OSError:
+        # Already gone, or some other filesystem hiccup -- either way this
+        # must never take down a clean shutdown.
+        pass
+
+
 def seconds_since_heartbeat(path: Path | None = None) -> float | None:
     """Age of the marker in seconds, or ``None`` if there isn't a readable one."""
     target = path or heartbeat_path()

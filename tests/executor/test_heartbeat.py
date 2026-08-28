@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 
 from executor.heartbeat import (
+    clear,
     executor_is_live,
     heartbeat_path,
     refuse_if_executor_is_live,
@@ -49,6 +50,30 @@ class TestHeartbeat:
 
     def test_heartbeat_path_honours_the_environment(self) -> None:
         assert heartbeat_path({"JARVIS_EXECUTOR_HEARTBEAT": "custom/path"}).as_posix() == "custom/path"
+
+    def test_clear_removes_a_touched_marker(self, tmp_path) -> None:
+        marker = tmp_path / "hb"
+        touch(marker)
+        assert marker.exists()
+
+        clear(marker)
+
+        assert not marker.exists()
+        # A cleared marker must read exactly like an executor that never
+        # started -- no stale-but-present file left behind.
+        assert seconds_since_heartbeat(marker) is None
+        assert executor_is_live(marker) is False
+
+    def test_clear_never_raises_when_there_is_nothing_to_clear(self, tmp_path) -> None:
+        # A missing heartbeat only costs a batch tool its guard; clear() must
+        # never take down a clean shutdown over an already-absent file.
+        clear(tmp_path / "absent")
+
+    def test_clear_never_raises_on_an_unremovable_path(self, tmp_path) -> None:
+        unremovable = tmp_path / "hb"
+        unremovable.mkdir()  # a directory can't be unlink()'d -- OSError
+
+        clear(unremovable)
 
 
 class TestRefusal:
