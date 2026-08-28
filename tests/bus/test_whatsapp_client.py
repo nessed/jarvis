@@ -96,3 +96,33 @@ def test_malformed_success_response_raises_a_clear_error():
 
     with pytest.raises(WhatsAppSendError, match="unexpected response shape"):
         client.send_text_message(to="15550001111", text="hello")
+
+
+def test_timeout_is_actionable_and_non_secret():
+    def handler(request):
+        raise httpx.TimeoutException("timed out", request=request)
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    client = WhatsAppClient(config, transport=fake_transport(handler))
+
+    with pytest.raises(WhatsAppSendError, match="timed out") as exc_info:
+        client.send_text_message(to="15550001111", text="hello")
+
+    assert "a-generic-test-token" not in str(exc_info.value)
+
+
+def test_non_json_error_body_surfaces_the_status_code_without_the_raw_body():
+    def handler(request):
+        return httpx.Response(500, content=b"<html>upstream error, not JSON</html>")
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    client = WhatsAppClient(config, transport=fake_transport(handler))
+
+    with pytest.raises(WhatsAppSendError) as exc_info:
+        client.send_text_message(to="15550001111", text="hello")
+
+    message = str(exc_info.value)
+    assert "HTTP 500" in message
+    assert "non-JSON error body" in message
+    assert "upstream error" not in message
+    assert "a-generic-test-token" not in message
