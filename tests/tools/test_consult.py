@@ -136,3 +136,167 @@ def test_a_failing_cli_does_not_hand_back_unframed_stderr(monkeypatch, tmp_path,
     assert code == 1
     assert consult.UNTRUSTED_OPEN in err
     assert consult.UNTRUSTED_NOTICE in err
+
+
+# --- screen(): CLAUDE.md non-negotiable #1 -------------------------------
+#
+# Secrets are never printed, echoed, logged, committed, or requested.
+# ``screen()`` is the mechanism that enforces that for everything consult.py
+# sends off-machine. Every value used below is a fabricated, synthetic
+# string matching a secret *shape* -- never a real-looking production key,
+# and never anything read out of this repo's actual .env.
+
+
+def test_screen_redacts_a_known_env_value_by_variable_name() -> None:
+    env_values = {"SOME_API_KEY": "not-a-real-value-just-long-enough"}
+    text = "the config carries not-a-real-value-just-long-enough inline"
+
+    redacted, findings = consult.screen(text, env_values)
+
+    assert "not-a-real-value-just-long-enough" not in redacted
+    assert "<redacted:SOME_API_KEY>" in redacted
+    assert findings == ["SOME_API_KEY"]
+
+
+def test_load_env_values_ignores_short_values_that_would_false_positive(tmp_path, monkeypatch) -> None:
+    # screen() redacts whatever is in env_values with no length check of its
+    # own -- the false-positive guard ("true", "1", a port number) lives in
+    # load_env_values(), which drops anything under 12 chars before screen()
+    # ever sees it. This is a synthetic .env under tmp_path, not the repo's.
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "DEBUG=true\nPORT=8080\nSOME_TOKEN=not-a-real-value-just-long-enough\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(consult, "REPO_ROOT", tmp_path)
+
+    values = consult.load_env_values()
+
+    assert "DEBUG" not in values
+    assert "PORT" not in values
+    assert values == {"SOME_TOKEN": "not-a-real-value-just-long-enough"}
+
+
+_SYNTHETIC_SECRET_SHAPES = {
+    "openai-style": "sk-" + "0" * 20,
+    "groq-style": "gsk_" + "0" * 20,
+    "meta-graph": "EAA" + "0" * 45,
+    "jwt": "eyJ" + "0" * 25 + "." + "0" * 15 + "." + "0" * 15,
+    "slack": "xoxb-" + "0" * 15,
+    "google-api": "AIza" + "0" * 35,
+}
+
+
+@pytest.mark.parametrize("label", [label for label, _ in consult.SECRET_SHAPES])
+def test_screen_catches_every_declared_secret_shape(label: str) -> None:
+    assert label in _SYNTHETIC_SECRET_SHAPES, (
+        "add a synthetic fixture above for the new SECRET_SHAPES entry " + label
+    )
+    fabricated = _SYNTHETIC_SECRET_SHAPES[label]
+    text = "leaked in a log line: " + fabricated + " (end)"
+
+    redacted, findings = consult.screen(text, {})
+
+    assert fabricated not in redacted
+    assert "<redacted:" + label + ">" in redacted
+    assert "shape/" + label in findings
+
+
+def test_screen_declares_no_shapes_beyond_the_ones_this_test_covers() -> None:
+    """A new entry appended to SECRET_SHAPES without a matching fixture above
+    would silently ship unscreened in production and untested here; this
+    keeps the two lists honest against each other."""
+    declared = {label for label, _ in consult.SECRET_SHAPES}
+    assert declared == set(_SYNTHETIC_SECRET_SHAPES)
+
+
+def test_screen_leaves_ordinary_text_completely_untouched() -> None:
+    text = "nothing secret here, just a normal log line about a 200 response"
+
+    redacted, findings = consult.screen(text, {})
+
+    assert redacted == text
+    assert findings == []
+
+
+# --- REFUSED_NAMES: .env is never attachable, by name alone ---------------
+
+
+@pytest.mark.parametrize("refused_name", sorted(consult.REFUSED_NAMES))
+def test_read_attachment_refuses_every_refused_name_regardless_of_content(
+    tmp_path, refused_name, capsys
+) -> None:
+    path = tmp_path / refused_name
+    # Deliberately innocuous content: proves the refusal is name-based, not
+    # a content scan that happens to catch this file.
+    path.write_text("hello world, nothing secret in here", encoding="utf-8")
+
+    result = consult.read_attachment(str(path), "file", {})
+
+    assert result is None
+    assert "refusing to attach " + refused_name in capsys.readouterr().err
+
+
+def test_read_attachment_screens_content_of_a_permitted_file(tmp_path) -> None:
+    path = tmp_path / "notes.log"
+    fabricated_key = "sk-" + "0" * 20
+    path.write_text("request failed, key was " + fabricated_key, encoding="utf-8")
+
+    result = consult.read_attachment(str(path), "file", {})
+
+    assert result is not None
+    body, findings = result
+    assert fabricated_key not in body
+    assert "shape/openai-style" in findings
+
+
+# --- The argv-vs-stdin fix (docs/consults/2026-08-27-path-smoke-test/) ---
+#
+# The bug this guards: on Windows the CLI is claude.cmd, run through cmd.exe,
+# which re-parses the command line. A newline in an argv element silently
+# truncated the prompt to its first line, and cmd.exe's ~8191-char command
+# line cap was exceeded by any consult carrying attachments. The fix moves
+# the prompt onto subprocess.run's `input=` (stdin) and keeps argv to fixed,
+# short, single-line flags. The pre-existing mock in `_run_consult` above
+# replaces subprocess.run with `lambda *a, **k: _Completed()`, which discards
+# every argument it's called with -- it cannot regress-test this fix because
+# it never looks at what main() actually passed. This test does.
+
+
+def test_the_prompt_travels_on_stdin_not_in_argv(monkeypatch, tmp_path) -> None:
+    captured: dict = {}
+
+    def _capturing_run(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+        class _Completed:
+            returncode = 0
+            stdout = '{"result": "{}"}'
+            stderr = ""
+
+        return _Completed()
+
+    multiline_question = "first line\nsecond line that would truncate the old way"
+
+    monkeypatch.setattr(consult, "CONSULT_ROOT", tmp_path)
+    monkeypatch.setattr(consult, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(consult.shutil, "which", lambda _name: "claude.cmd")
+    monkeypatch.setattr(consult.subprocess, "run", _capturing_run)
+    monkeypatch.setattr(consult, "load_env_values", dict)
+    monkeypatch.setattr(
+        consult.sys, "argv", ["consult.py", multiline_question, "--slug", "stdin-check"]
+    )
+
+    code = consult.main()
+
+    assert code == 0
+    argv_list = captured["args"][0]
+    assert isinstance(argv_list, list)
+    # argv carries only the fixed CLI flags -- no newline, no question text.
+    assert all("\n" not in part for part in argv_list)
+    assert not any(multiline_question in part for part in argv_list)
+    # The full prompt -- including the multi-line question -- goes in on
+    # stdin via the `input=` kwarg instead.
+    assert "input" in captured["kwargs"]
+    assert multiline_question in captured["kwargs"]["input"]
