@@ -8,9 +8,9 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `49719b9 Stop the router silently mis-handling three fallback edge cases` on `main`, 2 ahead, 0 behind origin.
+**HEAD** `b9458fb Drain the queue without stalling, and stop wasting retries on dead ends` on `main`, 3 ahead, 0 behind origin.
 
-**Working tree:** 20 changed (plus 28 untracked)
+**Working tree:** 20 changed (plus 32 untracked)
 
 ```
   M .gitignore
@@ -23,17 +23,18 @@ the facts in it have stopped being temporary and belong somewhere else.
    M docs/state.md
    M executor/flp/__init__.py
    M executor/flp/sort.py
-  M  executor/heartbeat.py
-  M  executor/poller.py
+  M  memory/conversation.py
+  M  memory/mem0_wrapper.py
   ...and 8 more
 ```
 
-**Offline suite:** 335 passed, 4 deselected in 11.22s _(recorded 2026-08-29)_
+**Offline suite:** 374 passed, 4 deselected in 8.33s _(recorded 2026-08-29)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `b9458fb` Drain the queue without stalling, and stop wasting retries on dead ends  _(2026-08-29)_
 - `49719b9` Stop the router silently mis-handling three fallback edge cases  _(2026-08-29)_
 - `608dfd7` Fill 18 missing .env.example variables and drop the dead SUPABASE_KEY  _(2026-08-29)_
 - `f4c5acb` Log a second, distinct PyFLP failure on a real project  _(2026-08-27)_
@@ -41,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `628b6ea` Close two injection channels, unfork the distill chain, unblock PyFLP  _(2026-08-27)_
 - `d3094ad` Make a second stack impossible and run distillation on the queue  _(2026-08-27)_
 - `1527ee9` Gitignore test_projects/ before real .flp guinea pigs land  _(2026-08-27)_
-- `09363de` Record the duplicate start_jarvis.py incident in context.md  _(2026-08-27)_
 
 <!-- END GENERATED -->
 

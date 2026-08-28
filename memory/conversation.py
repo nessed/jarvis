@@ -82,14 +82,20 @@ class ConversationMemory:
         return kept[:limit]
 
     def undistilled_turns(self, *, limit: int | None = None) -> list[Fact]:
-        """Turns not yet folded into Mem0 facts, oldest first."""
-        facts = [
-            fact
-            for fact in self.runtime.store.list_facts()
-            if is_conversation_turn(fact) and not fact.metadata.get("distilled")
-        ]
-        facts.sort(key=lambda f: f.created_at)
-        return facts if limit is None else facts[:limit]
+        """Turns not yet folded into Mem0 facts, oldest first.
+
+        Filters on the store's indexed ``distilled`` column so the emptiness
+        check the distill chain runs on every tick (``limit=1``) is a single
+        indexed lookup, not a full-table JSON-decode-and-filter. Only
+        ``remember_turn``/``mark_distilled`` ever set the ``distilled``
+        metadata key today, so the SQL filter already selects exactly this
+        conversation's/every conversation's turns; ``is_conversation_turn`` is
+        kept as a cheap defense-in-depth check on the small matched set, not
+        as the thing doing the real filtering.
+        """
+        candidates = self.runtime.store.list_facts(distilled=False, limit=limit, oldest_first=True)
+        turns = [fact for fact in candidates if is_conversation_turn(fact)]
+        return turns
 
     def mark_distilled(self, fact: Fact) -> None:
         """Record that a turn has been through fact extraction."""

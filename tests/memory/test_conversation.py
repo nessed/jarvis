@@ -37,8 +37,13 @@ class FakeStore:
     def delete(self, fact_id):
         return self.facts.pop(fact_id, None) is not None
 
-    def list_facts(self, *, source=None, limit=None):
+    def list_facts(self, *, source=None, distilled=None, limit=None, oldest_first=False):
         rows = [f for f in self.facts.values() if source is None or f.source == source]
+        if distilled is not None:
+            # Mirror SQLiteFactStore's tri-state: a fact that never set a
+            # "distilled" metadata key matches neither True nor False.
+            rows = [f for f in rows if "distilled" in f.metadata and bool(f.metadata["distilled"]) == distilled]
+        rows.sort(key=lambda f: f.created_at, reverse=not oldest_first)
         return rows if limit is None else rows[:limit]
 
     def update(self, fact_id, *, text=None, source=None, metadata=None, embedding_model=None):

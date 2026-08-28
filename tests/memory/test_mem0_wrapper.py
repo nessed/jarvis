@@ -43,6 +43,32 @@ def test_mem0_provider_delegates_insert_search_update_and_delete_to_local_sqlite
     provider.close()
 
 
+def test_mem0_search_sizes_its_overfetch_with_count_not_a_materialized_list(tmp_path, monkeypatch):
+    # search()'s over-fetch bound used to call len(self.store.list_facts()),
+    # materializing and JSON-decoding every row in the facts table on every
+    # search just to learn its size. store.count() answers the same question
+    # with a single SELECT COUNT(*). Patching list_facts to fail proves the
+    # fixed search() path never calls it.
+    provider = SQLiteVecMem0Store(
+        collection_name="jarvis_memories",
+        embedding_model_dims=2,
+        database_path=str(tmp_path / "memory.db"),
+        embedding_model="nomic-embed-text",
+    )
+    provider.insert([[1.0, 0.0]], payloads=[{"data": "fact one"}], ids=["one"])
+    provider.insert([[0.0, 1.0]], payloads=[{"data": "fact two"}], ids=["two"])
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("search() must size its over-fetch with store.count(), not store.list_facts()")
+
+    monkeypatch.setattr(provider.store, "list_facts", fail_if_called)
+
+    found = provider.search("fact", [1.0, 0.0], top_k=5)
+
+    assert {row.id for row in found} == {"one", "two"}
+    provider.close()
+
+
 def test_mem0_provider_keeps_logical_collections_separate(tmp_path):
     database_path = str(tmp_path / "memory.db")
     primary = SQLiteVecMem0Store("jarvis_memories", 2, database_path, "nomic-embed-text")

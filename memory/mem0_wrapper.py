@@ -179,8 +179,10 @@ class SQLiteVecMem0Store(VectorStoreBase):
         if top_k <= 0:
             return []
         # Over-fetch because entity collections share sqlite-vec but are segregated
-        # by local metadata; no remote/vector backend is involved.
-        candidates = self.index.search(vectors, limit=max(top_k, len(self.store.list_facts())))
+        # by local metadata; no remote/vector backend is involved. store.count()
+        # is a single SELECT COUNT(*) -- unlike list_facts(), it never
+        # materializes or JSON-decodes a row just to size this bound.
+        candidates = self.index.search(vectors, limit=max(top_k, self.store.count()))
         rows: list[VectorRecord] = []
         for fact_id, distance in candidates:
             fact = self.store.get(fact_id)
