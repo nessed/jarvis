@@ -8,21 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `77c07e5 Stop a Meta webhook redelivery from enqueueing a second job` on `main`, 14 ahead, 0 behind origin.
+**HEAD** `50233bc Record the model-ID gap, dual message-id dedup, and a full board pass` on `main`, 15 ahead, 0 behind origin.
 
-**Working tree:** 2 changed (plus 37 untracked)
+**Working tree:** 16 changed (plus 23 untracked)
 
 ```
-  M  docs/plan.md
-  M  docs/state.md
+  A  docs/blockers/consult-cli-no-response.md
+  A  docs/consults/2026-08-27-class-b-review-verdict-a-309/prompt.md
+  A  docs/consults/2026-08-27-review-work-board-retry/prompt.md
+  A  docs/consults/2026-08-29-laptop-hp-next-action/prompt.md
+  A  docs/consults/2026-08-29-laptop-hp-next-action/response.md
+  A  docs/consults/2026-08-29-laptop-hp-next-action/verdict.json
+  A  docs/tasks/env-example-batch-1.md
+  A  docs/tasks/flp-write-path-and-diff-report.md
+  A  docs/tasks/mem0-and-openai-client-tests.md
+  A  docs/tasks/memory-batch-1.md
+  A  docs/tasks/poller-batch-1.md
+  A  docs/tasks/router-batch-1.md
+  ...and 4 more
 ```
 
-**Offline suite:** 480 passed, 4 deselected, 2 warnings in 16.41s _(recorded 2026-08-29)_
+**Offline suite:** 480 passed, 4 deselected, 2 warnings in 16.28s _(recorded 2026-08-29)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `50233bc` Record the model-ID gap, dual message-id dedup, and a full board pass  _(2026-08-29)_
 - `77c07e5` Stop a Meta webhook redelivery from enqueueing a second job  _(2026-08-29)_
 - `e4f15a7` Make queue_depths and retry_health O(1) queries, add distill-chain liveness  _(2026-08-29)_
 - `ae158b9` Cover OpenAIChatClient construction and pin mem0ai's private-API surface  _(2026-08-29)_
@@ -30,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `c6565c0` Add coverage for distill_memory's CLI, start_jarvis's uncovered paths, and request_completion  _(2026-08-29)_
 - `c47d9b4` Cover WhatsAppClient's timeout and non-JSON-error-body paths  _(2026-08-29)_
 - `1cb18ed` Close a stale blocker status and fence two unframed sub-model responses  _(2026-08-29)_
-- `ed08e62` Wire flp_sort's write-path guard and diff report, and fix stale docstrings  _(2026-08-29)_
 
 <!-- END GENERATED -->
 
