@@ -8,21 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `d08cea3 Let a lane repair a mandated tool it doesn't own` on `main`, in sync with origin.
+**HEAD** `f4c5acb Log a second, distinct PyFLP failure on a real project` on `main`, in sync with origin.
 
-**Working tree:** 2 changed (plus 5 untracked)
+**Working tree:** 14 changed (plus 23 untracked)
 
 ```
-  A  docs/blockers/pyflp-channel-groups-indexerror.md
-  M  docs/state.md
+  M  .env.example
+   M .gitignore
+   M CLAUDE.md
+   M agents.md
+   M bus/status.py
+   M docs/blockers/tool-result-injection.md
+   M docs/state.md
+   M executor/flp/__init__.py
+   M executor/flp/sort.py
+   M executor/heartbeat.py
+   M executor/poller.py
+   M router/routing.py
+  ...and 2 more
 ```
 
-**Offline suite:** 291 passed, 4 deselected in 6.62s _(recorded 2026-08-27)_
+**Offline suite:** 302 passed, 4 deselected in 6.19s _(recorded 2026-08-29)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `f4c5acb` Log a second, distinct PyFLP failure on a real project  _(2026-08-27)_
 - `d08cea3` Let a lane repair a mandated tool it doesn't own  _(2026-08-27)_
 - `628b6ea` Close two injection channels, unfork the distill chain, unblock PyFLP  _(2026-08-27)_
 - `d3094ad` Make a second stack impossible and run distillation on the queue  _(2026-08-27)_
@@ -30,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `09363de` Record the duplicate start_jarvis.py incident in context.md  _(2026-08-27)_
 - `a7a2030` Reconcile the context docs with what actually landed tonight  _(2026-08-27)_
 - `0de7c89` Add one-command startup so the whole stack comes up together  _(2026-08-27)_
-- `607bde1` Add PyFLP proof-of-concept scaffolding for Phase 2  _(2026-08-27)_
 
 <!-- END GENERATED -->
 
