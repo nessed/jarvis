@@ -8,27 +8,26 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `a88dd21 Fix context_status --check being unreachable through main()` on `main`, 11 ahead, 0 behind origin.
+**HEAD** `ae158b9 Cover OpenAIChatClient construction and pin mem0ai's private-API surface` on `main`, 12 ahead, 0 behind origin.
 
-**Working tree:** 8 changed (plus 39 untracked)
+**Working tree:** 6 changed (plus 39 untracked)
 
 ```
   M bus/main.py
-   M bus/status.py
+  M  bus/status.py
    M docs/plan.md
    M docs/state.md
-  A  tests/memory/test_mem0_pinning.py
-  M  tests/router/test_routing.py
-   M tests/status/test_live_queue_status.py
+  M  tests/status/test_live_queue_status.py
    M tests/test_integration.py
 ```
 
-**Offline suite:** 480 passed, 4 deselected, 2 warnings in 16.02s _(recorded 2026-08-29)_
+**Offline suite:** 480 passed, 4 deselected, 2 warnings in 15.36s _(recorded 2026-08-29)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `ae158b9` Cover OpenAIChatClient construction and pin mem0ai's private-API surface  _(2026-08-29)_
 - `a88dd21` Fix context_status --check being unreachable through main()  _(2026-08-29)_
 - `c6565c0` Add coverage for distill_memory's CLI, start_jarvis's uncovered paths, and request_completion  _(2026-08-29)_
 - `c47d9b4` Cover WhatsAppClient's timeout and non-JSON-error-body paths  _(2026-08-29)_
@@ -36,7 +35,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `ed08e62` Wire flp_sort's write-path guard and diff report, and fix stale docstrings  _(2026-08-29)_
 - `36990c6` Add an atomic work board so two orchestrators can share this repo at once  _(2026-08-29)_
 - `1672f8c` Add coverage for four tools that had none  _(2026-08-29)_
-- `14629c0` Stop the distill chain's emptiness check from decoding the whole fact table  _(2026-08-29)_
 
 <!-- END GENERATED -->
 
