@@ -269,11 +269,12 @@ def test_profiles_prefer_suitable_rungs_without_losing_priority_order():
 
 
 def test_deepseek_waits_during_peak_unless_urgent():
+    # 24 Aug 2026 is a Monday: a weekday peak window applies.
     configured = [
         Provider("deepseek", "https://deepseek", "DEEPSEEK_API_KEY", 1, "deepseek-v4-flash", ("reasoning",)),
         Provider("spare", "https://spare", "SPARE_KEY", 2, "spare-model", ("reasoning",)),
     ]
-    now = lambda: datetime(2026, 8, 23, 1, 30, tzinfo=UTC)
+    now = lambda: datetime(2026, 8, 24, 1, 30, tzinfo=UTC)
     router = ProviderRouter(
         configured,
         environ={"DEEPSEEK_API_KEY": "x", "SPARE_KEY": "x"},
@@ -286,16 +287,40 @@ def test_deepseek_waits_during_peak_unless_urgent():
 
 
 def test_deepseek_peak_gate_defers_route_to_spare_without_calling_deepseek():
+    # 24 Aug 2026 is a Monday: a weekday peak window applies.
     router, calls = router_for(
         ["deepseek", "spare"],
         {},
-        now=lambda: datetime(2026, 8, 23, 6, 30, tzinfo=UTC),
+        now=lambda: datetime(2026, 8, 24, 6, 30, tzinfo=UTC),
     )
 
     result = asyncio.run(router.route("reasoning", [{"role": "user", "content": "hi"}]))
 
     assert result.provider == "spare"
     assert calls == [("spare", "spare-configured-model")]
+
+
+def test_deepseek_weekend_utc_skips_peak_gate_even_without_urgent():
+    # router-deepseek-weekday-gate: DeepSeek dropped the peak/off-peak split
+    # for Saturday/Sunday UTC (effective 23 Aug 2026) — weekend traffic bills
+    # at the off-peak rate all day, so the peak-avoidance gate must not apply
+    # on those two days regardless of hour.
+    configured = [
+        Provider("deepseek", "https://deepseek", "DEEPSEEK_API_KEY", 1, "deepseek-v4-flash", ("reasoning",)),
+        Provider("spare", "https://spare", "SPARE_KEY", 2, "spare-model", ("reasoning",)),
+    ]
+    saturday_peak_hour = datetime(2026, 8, 22, 1, 30, tzinfo=UTC)
+    sunday_peak_hour = datetime(2026, 8, 23, 6, 30, tzinfo=UTC)
+
+    for weekend_now in (saturday_peak_hour, sunday_peak_hour):
+        router = ProviderRouter(
+            configured,
+            environ={"DEEPSEEK_API_KEY": "x", "SPARE_KEY": "x"},
+            client_factory=lambda *_: None,
+            now=lambda moment=weekend_now: moment,
+        )
+
+        assert [provider.name for provider in router.ordered_providers("reasoning")] == ["deepseek", "spare"]
 
 
 def test_successful_response_records_live_style_rate_limit_headers():
@@ -342,6 +367,82 @@ def test_deepseek_openrouter_fallback_preserves_rung_position():
     assert result.provider == "deepseek"
     assert result.model == "paid-deepseek-model"
     assert calls == [("https://openrouter.ai/api/v1", "test-key")]
+
+
+def test_402_cools_down_and_falls_through_instead_of_aborting_chain():
+    # router-402-aborts-chain: a plan/key that cannot serve this rung at all
+    # (e.g. Cerebras' PaymentRequired) must not kill the whole fallback
+    # cascade, and must not go unrecorded so the next call repeats it.
+    router, calls = router_for(
+        ["first", "second"],
+        {"first": ProviderRequestError("payment required", 402, {"Retry-After": "30"})},
+    )
+
+    result = asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert result.provider == "second"
+    assert calls == [("first", "first-configured-model"), ("second", "second-configured-model")]
+    health = router.health["first"]
+    assert health.last_status == 402
+    assert health.cooldown_until > 0
+
+
+def test_401_still_propagates_for_non_mistral_providers():
+    # The 402 fix must not widen into swallowing genuine auth failures for
+    # providers other than the existing Mistral workspace-denial case.
+    router, calls = router_for(
+        ["first", "second"],
+        {"first": ProviderRequestError("invalid api key", 401, {})},
+    )
+
+    with pytest.raises(ProviderRequestError, match="invalid api key"):
+        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert calls == [("first", "first-configured-model")]
+    assert router.health["first"].cooldown_until == 0.0
+
+
+def test_model_env_requiring_provider_without_env_var_is_not_configured():
+    # router-model-env-validation: a provider whose model_env is unset, and
+    # which has no discover_chat_model or default_model fallback, cannot
+    # resolve a model at request time. It must be excluded from the
+    # candidate list, not enter and silently no-op through _model_for().
+    needs_env = Provider(
+        "needs-env",
+        "https://needs-env.example/v1",
+        "NEEDS_ENV_KEY",
+        1,
+        None,
+        ("batch",),
+        model_env="NEEDS_ENV_MODEL",
+    )
+    spare = Provider("spare", "https://spare.example/v1", "SPARE_KEY", 2, "spare-model", ("batch",))
+    router = ProviderRouter(
+        [needs_env, spare],
+        environ={"NEEDS_ENV_KEY": "test-key", "SPARE_KEY": "test-key"},
+        client_factory=lambda *_: None,
+    )
+
+    assert [provider.name for provider in router.ordered_providers("batch")] == ["spare"]
+
+
+def test_model_env_requiring_provider_with_env_var_set_is_configured():
+    needs_env = Provider(
+        "needs-env",
+        "https://needs-env.example/v1",
+        "NEEDS_ENV_KEY",
+        1,
+        None,
+        ("batch",),
+        model_env="NEEDS_ENV_MODEL",
+    )
+    router = ProviderRouter(
+        [needs_env],
+        environ={"NEEDS_ENV_KEY": "test-key", "NEEDS_ENV_MODEL": "configured-model"},
+        client_factory=lambda *_: None,
+    )
+
+    assert [provider.name for provider in router.ordered_providers("batch")] == ["needs-env"]
 
 
 def test_no_eligible_provider_has_no_secret_details():

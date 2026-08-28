@@ -224,7 +224,12 @@ class ProviderRouter:
                 return RoutedResult(provider=provider.name, model=provider_model, response=response)
             except Exception as exc:  # SDK exception types intentionally vary by provider.
                 status, headers = _response_metadata(exc)
-                if status == 429 or (status is not None and 500 <= status <= 599):
+                if status == 429 or status == 402 or (status is not None and 500 <= status <= 599):
+                    # 402 (e.g. Cerebras' PaymentRequired for a key/plan with no
+                    # free tier) means this rung cannot serve the request at
+                    # all, not that the request was malformed. Cool it down and
+                    # keep falling through, same as 429/5xx, instead of
+                    # aborting the whole cascade with a bare raise.
                     self._record_cooldown(provider, status, headers)
                     failures.append(f"{provider.name}: HTTP {status}")
                     continue
@@ -241,7 +246,15 @@ class ProviderRouter:
     def _configured(self, provider: Provider) -> bool:
         if provider.name == "deepseek" and self._environ.get("DEEPSEEK_VIA_OPENROUTER", "").lower() == "true":
             return bool(provider.endpoint and self._environ.get("OPENROUTER_API_KEY"))
-        return bool(provider.endpoint and provider.key_env and self._environ.get(provider.key_env))
+        if not (provider.endpoint and provider.key_env and self._environ.get(provider.key_env)):
+            return False
+        # A provider that names a model_env with no discover_chat_model or
+        # default_model fallback has no way to resolve a model at request
+        # time if that env var is unset. Keep it out of the candidate list
+        # rather than letting it enter and no-op through _model_for().
+        if provider.model_env and not provider.discover_chat_model and not provider.default_model:
+            return bool(self._environ.get(provider.model_env))
+        return True
 
     def _key_for(self, provider: Provider) -> str:
         if provider.name == "deepseek" and self._environ.get("DEEPSEEK_VIA_OPENROUTER", "").lower() == "true":
@@ -283,8 +296,13 @@ class ProviderRouter:
     def _deepseek_allowed(self, provider: Provider, *, urgent: bool) -> bool:
         if provider.name != "deepseek" or urgent:
             return True
-        hour = self._now().astimezone(UTC).hour
-        return not any(start <= hour < end for start, end in PEAK_DEEPSEEK_WINDOWS_UTC)
+        now = self._now().astimezone(UTC)
+        # DeepSeek dropped the peak/off-peak split for Saturday/Sunday UTC
+        # (effective 23 Aug 2026): weekend usage bills at the off-peak rate
+        # all day, so the peak-avoidance gate has nothing to avoid then.
+        if now.weekday() >= 5:
+            return True
+        return not any(start <= now.hour < end for start, end in PEAK_DEEPSEEK_WINDOWS_UTC)
 
     def _record_cooldown(self, provider: Provider, status: int | None, headers: Mapping[str, str]) -> None:
         normalized = {key.lower(): value for key, value in headers.items()}
