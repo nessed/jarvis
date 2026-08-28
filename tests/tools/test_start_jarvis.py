@@ -195,3 +195,250 @@ def test_pid_discovery_returns_none_when_netstat_fails(
     _fake_netstat(monkeypatch, "", returncode=1)
 
     assert start_jarvis.pid_holding_port(8765) is None
+
+
+# --- tunnel_protocol -------------------------------------------------------
+#
+# http2 is forced by default because QUIC (UDP 7844) is unroutable on this
+# network -- see the module docstring's "cloudflared prefers QUIC" comment.
+
+
+def test_tunnel_protocol_defaults_to_http2(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(start_jarvis.TUNNEL_PROTOCOL_ENV, raising=False)
+
+    assert start_jarvis.tunnel_protocol() == "http2"
+
+
+def test_tunnel_protocol_honours_the_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(start_jarvis.TUNNEL_PROTOCOL_ENV, "quic")
+
+    assert start_jarvis.tunnel_protocol() == "quic"
+
+
+def test_tunnel_protocol_strips_whitespace_from_the_override() -> None:
+    settings = {start_jarvis.TUNNEL_PROTOCOL_ENV: "  quic  "}
+
+    assert start_jarvis.tunnel_protocol(settings) == "quic"
+
+
+def test_tunnel_protocol_falls_back_to_default_when_the_override_is_blank() -> None:
+    settings = {start_jarvis.TUNNEL_PROTOCOL_ENV: "   "}
+
+    assert start_jarvis.tunnel_protocol(settings) == start_jarvis.DEFAULT_TUNNEL_PROTOCOL
+
+
+def test_tunnel_protocol_reads_an_explicit_environ_rather_than_os_environ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(start_jarvis.TUNNEL_PROTOCOL_ENV, "quic")
+
+    # An explicit (empty) environ must win over the real process environment,
+    # or a caller could never test the default in isolation.
+    assert start_jarvis.tunnel_protocol({}) == "http2"
+
+
+# --- resolves_on_public_dns -------------------------------------------------
+#
+# The ISP resolver on this machine lags on freshly-minted Quick Tunnel
+# hostnames; this check asks 1.1.1.1 and 8.8.8.8 instead, because Meta does
+# its own resolution and a tunnel this machine can't look up may still be
+# reachable from the internet.
+
+_HOST = "abc-def-123.trycloudflare.com"
+_URL = f"https://{_HOST}"
+
+
+def _fake_nslookup(monkeypatch: pytest.MonkeyPatch, responses: dict) -> list:
+    """``responses`` maps resolver -> stdout string, or an exception instance to raise."""
+    calls: list[tuple[str, str]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert args[0] == "nslookup"
+        host, resolver = args[1], args[2]
+        calls.append((host, resolver))
+        outcome = responses[resolver]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return subprocess.CompletedProcess(args, 0, outcome, "")
+
+    monkeypatch.setattr(start_jarvis.subprocess, "run", fake_run)
+    return calls
+
+
+def test_resolves_on_public_dns_true_when_the_first_resolver_finds_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stdout = f"Server: one.one.one.one\nAddress: 1.1.1.1\n\nName: {_HOST}\nAddress: 1.2.3.4\n"
+    calls = _fake_nslookup(monkeypatch, {"1.1.1.1": stdout})
+
+    assert start_jarvis.resolves_on_public_dns(_URL) is True
+    # Short-circuits: the second resolver is never tried once the first answers.
+    assert calls == [(_HOST, "1.1.1.1")]
+
+
+def test_resolves_on_public_dns_falls_through_to_the_second_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stdout = f"Server: dns.google\nAddress: 8.8.8.8\n\nName: {_HOST}\nAddress: 1.2.3.4\n"
+    calls = _fake_nslookup(monkeypatch, {"1.1.1.1": OSError("unreachable"), "8.8.8.8": stdout})
+
+    assert start_jarvis.resolves_on_public_dns(_URL) is True
+    assert calls == [(_HOST, "1.1.1.1"), (_HOST, "8.8.8.8")]
+
+
+def test_resolves_on_public_dns_false_when_neither_resolver_finds_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nxdomain = f"Server: one.one.one.one\n** server can't find {_HOST}: NXDOMAIN\n"
+    calls = _fake_nslookup(monkeypatch, {"1.1.1.1": nxdomain, "8.8.8.8": nxdomain})
+
+    assert start_jarvis.resolves_on_public_dns(_URL) is False
+    assert calls == [(_HOST, "1.1.1.1"), (_HOST, "8.8.8.8")]
+
+
+def test_resolves_on_public_dns_false_when_both_resolvers_are_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_nslookup(
+        monkeypatch,
+        {"1.1.1.1": subprocess.TimeoutExpired(cmd="nslookup", timeout=15), "8.8.8.8": OSError("boom")},
+    )
+
+    assert start_jarvis.resolves_on_public_dns(_URL) is False
+
+
+# --- wait_for_tunnel_url -----------------------------------------------------
+#
+# The polling loop that waits for cloudflared to mint a URL in its log file.
+
+
+def test_wait_for_tunnel_url_finds_a_url_already_present(tmp_path) -> None:
+    log = tmp_path / "cloudflared.log"
+    log.write_text("some preamble\nhttps://foo-bar.trycloudflare.com\nmore\n", encoding="utf-8")
+
+    assert start_jarvis.wait_for_tunnel_url(log) == "https://foo-bar.trycloudflare.com"
+
+
+def test_wait_for_tunnel_url_polls_until_the_url_is_written(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / "cloudflared.log"
+    log.write_text("", encoding="utf-8")
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        log.write_text("https://foo-bar.trycloudflare.com\n", encoding="utf-8")
+
+    monkeypatch.setattr(start_jarvis.time, "sleep", fake_sleep)
+
+    result = start_jarvis.wait_for_tunnel_url(log, timeout=5)
+
+    assert result == "https://foo-bar.trycloudflare.com"
+    assert len(sleeps) == 1
+
+
+def test_wait_for_tunnel_url_returns_none_without_sleeping_past_an_exhausted_deadline(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def forbidden(seconds: float) -> None:
+        raise AssertionError("must not sleep once the deadline has already passed")
+
+    monkeypatch.setattr(start_jarvis.time, "sleep", forbidden)
+
+    assert start_jarvis.wait_for_tunnel_url(tmp_path / "never-created.log", timeout=0) is None
+
+
+def test_wait_for_tunnel_url_gives_up_when_no_match_appears_before_the_timeout(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / "cloudflared.log"
+    log.write_text("cloudflared starting, no url yet\n", encoding="utf-8")
+    # Two in-loop checks that stay under the deadline, then one that exceeds it.
+    clock = iter([0.0, 0.1, 0.2, 100.0])
+    monkeypatch.setattr(start_jarvis.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(start_jarvis.time, "sleep", lambda seconds: None)
+
+    assert start_jarvis.wait_for_tunnel_url(log, timeout=1) is None
+
+
+# --- Supervisor.shutdown -----------------------------------------------------
+#
+# The Ctrl+C / child-death handling: terminate every live child, wait up to a
+# shared 10s deadline, and kill anything still alive when it passes. Nothing
+# here spawns a real process.
+
+
+class FakeProcess:
+    def __init__(self, *, already_dead: bool = False, hangs: bool = False) -> None:
+        self._already_dead = already_dead
+        self.hangs = hangs
+        self.terminated = False
+        self.killed = False
+        self.wait_calls: list[float] = []
+
+    def poll(self):
+        return 0 if self._already_dead else None
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: float) -> None:
+        self.wait_calls.append(timeout)
+        if self.hangs:
+            raise subprocess.TimeoutExpired(cmd="fake", timeout=timeout)
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+def test_shutdown_terminates_a_live_child_and_waits_for_it(capsys: pytest.CaptureFixture[str]) -> None:
+    supervisor = start_jarvis.Supervisor()
+    process = FakeProcess()
+    supervisor.children.append(("bus", process))
+
+    supervisor.shutdown()
+
+    assert process.terminated is True
+    assert process.wait_calls
+    assert process.killed is False
+    assert "stopping bus" in capsys.readouterr().out
+
+
+def test_shutdown_kills_a_child_that_does_not_die_within_the_deadline() -> None:
+    supervisor = start_jarvis.Supervisor()
+    process = FakeProcess(hangs=True)
+    supervisor.children.append(("tunnel", process))
+
+    supervisor.shutdown()
+
+    assert process.terminated is True
+    assert process.killed is True
+
+
+def test_shutdown_does_not_terminate_a_child_that_already_died(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    supervisor = start_jarvis.Supervisor()
+    process = FakeProcess(already_dead=True)
+    supervisor.children.append(("executor", process))
+
+    supervisor.shutdown()
+
+    assert process.terminated is False
+    # The wait loop is unconditional -- an already-dead child is still waited on.
+    assert process.wait_calls
+    assert process.killed is False
+    assert "stopping executor" not in capsys.readouterr().out
+
+
+def test_shutdown_stops_children_in_reverse_spawn_order(capsys: pytest.CaptureFixture[str]) -> None:
+    supervisor = start_jarvis.Supervisor()
+    supervisor.children.append(("bus", FakeProcess()))
+    supervisor.children.append(("tunnel", FakeProcess()))
+    supervisor.children.append(("executor", FakeProcess()))
+
+    supervisor.shutdown()
+
+    output = capsys.readouterr().out
+    assert output.index("stopping executor") < output.index("stopping tunnel") < output.index("stopping bus")

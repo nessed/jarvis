@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -10,6 +11,7 @@ from db.jobs import Job
 from executor import poller
 from executor.flp.sort import ReorderNotSupported
 from executor.poller import HandlerRegistration, poll_once
+from router import RoutedResult
 
 
 def _job(*, checkpoint: dict[str, object] | None = None, attempts: int = 1, max_attempts: int = 5) -> Job:
@@ -578,3 +580,37 @@ def test_flp_sort_is_registered_in_the_default_handlers():
     assert "flp_sort" in poller.DEFAULT_HANDLERS
     assert isinstance(poller.DEFAULT_HANDLERS["flp_sort"], HandlerRegistration)
     assert callable(poller.DEFAULT_HANDLERS["flp_sort"].handler)
+
+
+# --- request_completion: executor jobs' single async entry point into the router ---
+
+
+def test_request_completion_delegates_to_router_route_with_matching_arguments(monkeypatch):
+    calls: list[dict[str, object]] = []
+    sentinel = RoutedResult(provider="deepseek", model="deepseek-v4-flash", response={"ok": True})
+
+    async def fake_route(task_profile, messages, *, urgent=False):
+        calls.append({"task_profile": task_profile, "messages": messages, "urgent": urgent})
+        return sentinel
+
+    monkeypatch.setattr(poller, "route", fake_route)
+
+    messages = [{"role": "user", "content": "sort this flp"}]
+    result = asyncio.run(poller.request_completion("batch", messages))
+
+    assert result is sentinel
+    assert calls == [{"task_profile": "batch", "messages": messages, "urgent": False}]
+
+
+def test_request_completion_passes_urgent_through(monkeypatch):
+    calls: list[bool] = []
+
+    async def fake_route(task_profile, messages, *, urgent=False):
+        calls.append(urgent)
+        return RoutedResult(provider="groq", model="openai/gpt-oss-20b", response={})
+
+    monkeypatch.setattr(poller, "route", fake_route)
+
+    asyncio.run(poller.request_completion("latency", [], urgent=True))
+
+    assert calls == [True]
