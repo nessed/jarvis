@@ -12,6 +12,7 @@ surface this module touches).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -235,11 +236,12 @@ class _FakeJob:
     payload: dict
 
 
-def test_flp_sort_handler_runs_backup_then_load_apply_save_verify_in_order() -> None:
+def test_flp_sort_handler_runs_backup_then_load_apply_save_verify_in_order(tmp_path: Path) -> None:
     calls: list[str] = []
     project = _project("Kick")
+    target = tmp_path / "song.flp"
 
-    def backup(path):
+    def backup(path, *, now=None):
         calls.append(f"backup:{path}")
         return Path(str(path) + ".bak")
 
@@ -256,24 +258,242 @@ def test_flp_sort_handler_runs_backup_then_load_apply_save_verify_in_order() -> 
         assert diff.as_dict() == {"Kick": "01 - Kick"}
         return True
 
-    handler = sort.build_flp_sort_handler(backup=backup, loader=loader, saver=saver, verifier=verifier)
-    job = _FakeJob(payload={"path": "song.flp", "ruleset": {"rules": [{"match": "Kick", "rename_to": "01 - Kick"}]}})
+    report_calls: list[tuple[Path, sort.MixerDiff]] = []
+
+    def report_writer(path, diff):
+        calls.append("report")
+        report_calls.append((path, diff))
+
+    handler = sort.build_flp_sort_handler(
+        backup=backup,
+        loader=loader,
+        saver=saver,
+        verifier=verifier,
+        report_writer=report_writer,
+        safe_root=tmp_path,
+    )
+    job = _FakeJob(
+        payload={"path": str(target), "ruleset": {"rules": [{"match": "Kick", "rename_to": "01 - Kick"}]}}
+    )
 
     handler(job)
 
-    assert calls == ["backup:song.flp", "load:song.flp", "save:song.flp", "verify:song.flp"]
+    assert calls == [
+        f"backup:{target}",
+        f"load:{target}",
+        f"save:{target}",
+        "report",
+        f"verify:{target}",
+    ]
     assert project.mixer[0].name == "01 - Kick"
+    assert len(report_calls) == 1
+    report_path, report_diff = report_calls[0]
+    assert report_path.parent == target.parent
+    assert report_path.name.startswith("song.") and report_path.name.endswith(".diff.json")
+    assert report_diff.as_dict() == {"Kick": "01 - Kick"}
 
 
-def test_flp_sort_handler_raises_when_verify_fails() -> None:
+def test_flp_sort_handler_raises_when_verify_fails(tmp_path: Path) -> None:
     project = _project("Kick")
+    target = tmp_path / "song.flp"
     handler = sort.build_flp_sort_handler(
-        backup=lambda path: Path(str(path)),
+        backup=lambda path, **_kwargs: Path(str(path)),
         loader=lambda path: project,
         saver=lambda proj, path: None,
         verifier=lambda path, diff, *, loader: False,
+        report_writer=lambda path, diff: None,
+        safe_root=tmp_path,
     )
-    job = _FakeJob(payload={"path": "song.flp", "ruleset": {"rules": [{"match": "Kick", "rename_to": "x"}]}})
+    job = _FakeJob(payload={"path": str(target), "ruleset": {"rules": [{"match": "Kick", "rename_to": "x"}]}})
 
     with pytest.raises(sort.FlpSortVerificationFailed):
         handler(job)
+
+
+# ---------------------------------------------------------------------------
+# flp_sort_root
+# ---------------------------------------------------------------------------
+
+
+def test_flp_sort_root_defaults_to_test_projects_under_the_repo_root() -> None:
+    root = sort.flp_sort_root({})
+
+    assert root.name == "test_projects"
+    assert root.is_absolute()
+    # sort.py lives at executor/flp/sort.py -- three parents up is the repo root.
+    assert root.parent == Path(sort.__file__).resolve().parent.parent.parent
+
+
+def test_flp_sort_root_honours_the_env_override(tmp_path: Path) -> None:
+    custom = tmp_path / "wherever"
+
+    root = sort.flp_sort_root({"JARVIS_FLP_SORT_ROOT": str(custom)})
+
+    assert root == custom.resolve()
+
+
+# ---------------------------------------------------------------------------
+# safe-root write-path guard
+# ---------------------------------------------------------------------------
+
+
+def _handler_with_root(root: Path, *, calls: list[str] | None = None) -> tuple[object, list[str]]:
+    calls = calls if calls is not None else []
+    project = _project("Kick")
+
+    def backup(path, *, now=None):
+        calls.append(f"backup:{path}")
+        return Path(str(path) + ".bak")
+
+    def loader(path):
+        calls.append(f"load:{path}")
+        return project
+
+    def saver(proj, path):
+        calls.append(f"save:{path}")
+
+    def verifier(path, diff, *, loader):
+        calls.append(f"verify:{path}")
+        return True
+
+    handler = sort.build_flp_sort_handler(
+        backup=backup,
+        loader=loader,
+        saver=saver,
+        verifier=verifier,
+        report_writer=lambda path, diff: calls.append("report"),
+        safe_root=root,
+    )
+    return handler, calls
+
+
+def test_path_inside_the_safe_root_proceeds_normally(tmp_path: Path) -> None:
+    target = tmp_path / "song.flp"
+    handler, calls = _handler_with_root(tmp_path)
+    job = _FakeJob(payload={"path": str(target), "ruleset": {}})
+
+    handler(job)
+
+    assert calls == [f"backup:{target}", f"load:{target}", f"save:{target}", f"verify:{target}"]
+
+
+def test_path_outside_the_safe_root_is_rejected_before_any_side_effect(tmp_path: Path) -> None:
+    root = tmp_path / "test_projects"
+    root.mkdir()
+    outside = tmp_path / "elsewhere" / "song.flp"
+    handler, calls = _handler_with_root(root)
+    job = _FakeJob(payload={"path": str(outside), "ruleset": {}})
+
+    with pytest.raises(sort.FlpSortPathOutsideRoot):
+        handler(job)
+
+    assert calls == []
+
+
+def test_a_sibling_directory_sharing_the_root_name_as_a_string_prefix_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "test_projects"
+    root.mkdir()
+    lookalike = tmp_path / "test_projects_evil" / "song.flp"
+    handler, calls = _handler_with_root(root)
+    job = _FakeJob(payload={"path": str(lookalike), "ruleset": {}})
+
+    with pytest.raises(sort.FlpSortPathOutsideRoot):
+        handler(job)
+
+    assert calls == []
+
+
+def test_ensure_path_within_root_accepts_the_root_itself(tmp_path: Path) -> None:
+    resolved = sort._ensure_path_within_root(tmp_path, tmp_path)
+
+    assert resolved == tmp_path.resolve()
+
+
+# ---------------------------------------------------------------------------
+# diff-report emission
+# ---------------------------------------------------------------------------
+
+
+def test_diff_report_path_matches_flp_backups_naming_convention() -> None:
+    when = datetime(2026, 8, 27, 12, 0, 0, tzinfo=UTC)
+
+    report_path = sort.diff_report_path("song.flp", now=lambda: when)
+
+    assert report_path.name == "song.2026-08-27T120000.diff.json"
+
+
+def test_write_diff_report_writes_before_after_json_to_disk(tmp_path: Path) -> None:
+    diff = sort.diff_report({1: "Kick"}, {1: "01 DRUMS - Kick"})
+    path = tmp_path / "song.2026-08-27T120000.diff.json"
+
+    sort.write_diff_report(path, diff)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"Kick": "01 DRUMS - Kick"}
+
+
+def test_handler_writes_a_report_when_renames_occurred(tmp_path: Path) -> None:
+    project = _project("Kick")
+    target = tmp_path / "song.flp"
+    handler = sort.build_flp_sort_handler(
+        backup=lambda path, **_kwargs: Path(str(path) + ".bak"),
+        loader=lambda path: project,
+        saver=lambda proj, path: None,
+        verifier=lambda path, diff, *, loader: True,
+        safe_root=tmp_path,
+    )
+    job = _FakeJob(
+        payload={"path": str(target), "ruleset": {"rules": [{"match": "Kick", "rename_to": "01 - Kick"}]}}
+    )
+
+    handler(job)
+
+    reports = list(tmp_path.glob("song.*.diff.json"))
+    assert len(reports) == 1
+    assert json.loads(reports[0].read_text(encoding="utf-8")) == {"Kick": "01 - Kick"}
+
+
+def test_handler_skips_the_report_when_nothing_changed(tmp_path: Path) -> None:
+    project = _project("Untouched")
+    target = tmp_path / "song.flp"
+    handler = sort.build_flp_sort_handler(
+        backup=lambda path, **_kwargs: Path(str(path) + ".bak"),
+        loader=lambda path: project,
+        saver=lambda proj, path: None,
+        verifier=lambda path, diff, *, loader: True,
+        safe_root=tmp_path,
+    )
+    job = _FakeJob(payload={"path": str(target), "ruleset": {"rules": [{"match": "Nonexistent", "rename_to": "x"}]}})
+
+    handler(job)
+
+    assert list(tmp_path.glob("song.*.diff.json")) == []
+
+
+def test_handler_shares_one_timestamp_between_backup_and_its_diff_report(tmp_path: Path) -> None:
+    project = _project("Kick")
+    target = tmp_path / "song.flp"
+    backup_calls: list[object] = []
+
+    def backup(path, *, now):
+        backup_calls.append(now())
+        return Path(str(path) + ".bak")
+
+    report_calls: list[Path] = []
+
+    handler = sort.build_flp_sort_handler(
+        backup=backup,
+        loader=lambda path: project,
+        saver=lambda proj, path: None,
+        verifier=lambda path, diff, *, loader: True,
+        report_writer=lambda path, diff: report_calls.append(path),
+        safe_root=tmp_path,
+        now=lambda: datetime(2026, 8, 27, 12, 0, 0, tzinfo=UTC),
+    )
+    job = _FakeJob(
+        payload={"path": str(target), "ruleset": {"rules": [{"match": "Kick", "rename_to": "01 - Kick"}]}}
+    )
+
+    handler(job)
+
+    assert backup_calls == [datetime(2026, 8, 27, 12, 0, 0, tzinfo=UTC)]
+    assert report_calls == [target.with_name("song.2026-08-27T120000.diff.json")]

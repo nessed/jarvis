@@ -1,52 +1,43 @@
-"""Blueprint 2.2: PyFLP proof-of-concept for the "sort out this FLP" job.
+"""Blueprint 2.2: the "sort out this FLP" job.
 
-Pipeline a future ``flp_sort`` job handler will run: ``flp_backup`` the
-original, ``load`` it, ``apply_rules`` against a ruleset, ``save`` it back,
-then ``verify`` by re-parsing the saved file and confirming the renames
-actually landed on disk (not just that the write call returned).
+Pipeline the ``flp_sort`` job handler runs: ``flp_backup`` the original,
+``load`` it, ``apply_rules`` against a ruleset, ``save`` it back, then
+``verify`` by re-parsing the saved file and confirming the renames actually
+landed on disk (not just that the write call returned). Registered as job
+kind ``flp_sort`` in ``executor/poller.py``'s ``DEFAULT_HANDLERS``.
 
-Known environment blocker -- read before wiring this into a live job
---------------------------------------------------------------------
+Interpreter blocker -- resolved
+--------------------------------
 ``load()``/``save()`` are thin wrappers around ``pyflp.parse()``/
-``pyflp.save()`` and nothing else in this module talks to PyFLP directly.
-That wrapper currently cannot be exercised end-to-end: PyFLP 2.2.1 (the
-latest release on PyPI as of this writing) raises unconditionally
+``pyflp.save()``. PyFLP 2.2.1 raises unconditionally on Python 3.12 (and
+3.11.6+, which backported the same guard) from inside ``pyflp.parse()``:
 
     TypeError: <enum 'EventEnum'> has no members; specify `names=()`
     if you meant to create a new, empty, enum
 
-from inside ``pyflp.parse()`` on Python 3.12 (this venv is 3.12.10; PyPI
-classifiers for pyflp only list 3.8-3.11). The cause: PyFLP's ``EventEnum``
-is a deliberately empty base ``enum.Enum`` that individual event-id enums
-(``InsertID``, ``ChannelID``, ...) subclass, and ``parse()`` looks up raw
-byte values against the *base* class so unregistered subclass members fall
-through to ``EventEnum._missing_``. Python 3.12's ``enum.py`` added a guard
-(``EnumType.__call__``, checked via ``cls._member_map_``) that special-cases
-any Enum with zero *direct* members as "functional API" construction and
-raises before ``_missing_`` ever runs -- a real, upstream, unpatched
-incompatibility, not a bug in this module. Reproduced with both an in-memory
-empty ``Project`` and a full real ``.flp`` (PyFLP's own bundled test-suite
-fixture); reordering the input never reaches the enum call, so no input can
-route around it. No pyflp release newer than 2.2.1 exists on PyPI to fix
-this.
+The fix is environmental, not code: run this module under ``.venv311``,
+pinned to CPython **3.11.5** exactly. That interpreter parses and saves real
+``.flp`` files -- proved against PyFLP's own ``FL 20.8.4.flp`` fixture with a
+rename that survived a save-and-re-parse round trip
+(``tests/flp/test_flp_real.py``, marker ``realflp``).
 
-Practically: this rules out generating a synthetic ``.flp`` via PyFLP alone
-(scope item 3) two ways over, not one -- ``pyflp.save()`` on a from-scratch
-in-memory ``Project`` also fails, separately, with ``NoModelsFound`` (an
-empty ``ChannelRack`` has no channels), meaning PyFLP has no from-scratch
-authoring path at all; it only round-trips files it already parsed. And
-since ``parse()`` itself doesn't run under this interpreter, there is
-currently no way to round-trip *any* ``.flp`` -- real or synthetic -- in
-this venv. Everything below is written and unit-tested against fakes/stubs
-so the logic is provably correct in isolation; ``load``/``save`` themselves
-are only exercised here via monkeypatched stand-ins for ``pyflp.parse``/
-``pyflp.save``, and need a real run once the interpreter or PyFLP version
-changes to close this gap.
+Known gap on real projects -- open, see docs/blockers/pyflp-channel-groups-indexerror.md
+------------------------------------------------------------------------------------------
+The interpreter fix is necessary but not sufficient. Parsing a real
+user project with channel groups raises inside PyFLP's own
+``channel.py`` (``IndexError`` indexing its ``groups`` list), independent of
+the interpreter issue above. Fixtures without channel groups (like PyFLP's
+own bundled test fixture) parse clean. This module's own logic is unit-tested
+against fakes/stubs and is provably correct in isolation; ``load``/``save``
+themselves still need PyFLP to clear this gap before they can be exercised
+against an arbitrary real project.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import shutil
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -256,12 +247,103 @@ class FlpSortVerificationFailed(Exception):
     """
 
 
+class FlpSortPathOutsideRoot(Exception):
+    """Raised when an ``flp_sort`` job names a path outside its safe root.
+
+    Blueprint 2.1: "Originals never get touched." :func:`flp_backup` copies
+    the target before any write, but the path a job names could be
+    anything, including a real project living outside the safe root -- so
+    the only thing that actually keeps an original untouched is refusing to
+    treat it as a legal write target in the first place. Raised by
+    :func:`build_flp_sort_handler`'s handler before ``backup()`` or
+    ``loader()`` ever run, matching :class:`ReorderNotSupported`'s
+    fail-loudly-and-up-front approach -- a type-only diagnostic for
+    ``executor.poller``'s existing retry/dead-letter path, not something a
+    caller is expected to catch and route around.
+    """
+
+
+def flp_sort_root(environ: Mapping[str, str] | None = None) -> Path:
+    """The only directory an ``flp_sort`` job may write inside.
+
+    Reads ``JARVIS_FLP_SORT_ROOT`` at call time, following
+    ``executor.heartbeat.heartbeat_path``'s pattern for env-configured paths
+    in this codebase (and ``tests/flp/test_flp_real.py``'s
+    ``JARVIS_FLP_FIXTURE`` for the equivalent test-side convention).
+    Defaults to ``test_projects/`` resolved from the repository root --
+    this file lives at ``executor/flp/sort.py``, three parents up from the
+    root -- matching blueprint 2.1's guinea-pig directory.
+    """
+    settings = os.environ if environ is None else environ
+    raw = settings.get("JARVIS_FLP_SORT_ROOT")
+    if raw:
+        return Path(raw).resolve()
+    repository_root = Path(__file__).resolve().parent.parent.parent
+    return (repository_root / "test_projects").resolve()
+
+
+def _ensure_path_within_root(path: str | Path, root: Path) -> Path:
+    """Resolve ``path`` and confirm it is ``root`` or a true descendant of it.
+
+    Raises :class:`FlpSortPathOutsideRoot` otherwise. Uses ``Path.resolve()``
+    (so ``..`` segments and symlinks can't smuggle a path out) plus
+    ``Path.relative_to()`` (so containment is checked by path *parts*, not
+    text) -- a naive string-prefix check would wrongly let
+    ``test_projects_evil/song.flp`` past a ``test_projects/`` root, since
+    the string ``"test_projects"`` really is a prefix of
+    ``"test_projects_evil"``.
+    """
+    resolved = Path(path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise FlpSortPathOutsideRoot(
+            f"flp_sort job path {str(path)!r} resolves to {resolved}, which is "
+            f"outside the configured safe root {root} -- refusing to write"
+        ) from None
+    return resolved
+
+
+def diff_report_path(target: str | Path, *, now: Callable[[], datetime] | None = None) -> Path:
+    """Where :func:`build_flp_sort_handler` writes ``target``'s diff report.
+
+    Same directory and timestamp format as :func:`flp_backup`'s backup file:
+    ``<stem>.<UTC compact ISO>.diff.json``. ``now`` is injectable for the
+    same reason ``flp_backup``'s is -- deterministic tests -- and
+    :func:`build_flp_sort_handler` passes the *same* captured instant to
+    both, so a run's backup and its diff report share one timestamp and are
+    trivially pairable by it.
+    """
+    target_path = Path(target)
+    stamp = (now or (lambda: datetime.now(UTC)))().strftime("%Y-%m-%dT%H%M%S")
+    return target_path.with_name(f"{target_path.stem}.{stamp}.diff.json")
+
+
+def write_diff_report(path: str | Path, diff: MixerDiff) -> None:
+    """The real default ``report_writer``: write ``diff`` to ``path`` as JSON.
+
+    Writes ``diff.as_dict()`` (``{before: after}``) rather than the raw
+    :class:`InsertRename` tuples: blueprint 2.3 has the user comparing this
+    file against FL Studio's mixer by eye, and old-name -> new-name pairs
+    are what is directly comparable there. The ``iid`` on each
+    ``InsertRename`` is an internal identity :func:`verify` needs to re-check
+    by insert rather than list position -- not something visible in FL
+    Studio's UI, and not useful noise in a report a human is skimming.
+    """
+    Path(path).write_text(
+        json.dumps(diff.as_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def build_flp_sort_handler(
     *,
-    backup: Callable[[str | Path], Path] = flp_backup,
+    backup: Callable[..., Path] = flp_backup,
     loader: Callable[[str | Path], ProjectLike] = load,
     saver: Callable[[ProjectLike, str | Path], None] = save,
     verifier: Callable[..., bool] = verify,
+    safe_root: Path | None = None,
+    report_writer: Callable[[Path, MixerDiff], None] = write_diff_report,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> Callable[[Any], None]:
     """Build the ``flp_sort`` job handler: backup -> load -> apply_rules -> save -> verify.
 
@@ -270,18 +352,33 @@ def build_flp_sort_handler(
     payload: path + ruleset)"). Every dependency is injectable, matching
     ``executor.handlers.whatsapp.build_whatsapp_webhook_handler``'s pattern,
     so this can be unit-tested without a working PyFLP install -- see the
-    module docstring for why that matters right now. Not registered into
-    ``executor.poller.DEFAULT_HANDLERS`` by this lane; see the lane report
-    for the exact line to add.
+    module docstring for why that matters right now.
+
+    ``safe_root`` defaults to :func:`flp_sort_root` (resolved once, at
+    build time, per blueprint 2.1) but is overridable for tests. The
+    resolved job path is checked against it -- raising
+    :class:`FlpSortPathOutsideRoot` -- before ``backup()`` or ``loader()``
+    run. ``now`` is captured once per job so ``backup()`` and the diff
+    report it triggers share one timestamp (see :func:`diff_report_path`).
+    A report is only written when ``apply_rules`` actually changed
+    something (``MixerDiff.__bool__``); an empty report on every no-op run
+    would just be noise for the blueprint 2.3 verification loop to skip
+    past.
     """
+    root = (safe_root if safe_root is not None else flp_sort_root()).resolve()
 
     def _handle(job: Any) -> None:
         path = job.payload["path"]
         ruleset = job.payload.get("ruleset", {})
-        backup(path)
+        _ensure_path_within_root(path, root)
+
+        moment = now()
+        backup(path, now=lambda: moment)
         project = loader(path)
         diff = apply_rules(project, ruleset)
         saver(project, path)
+        if diff:
+            report_writer(diff_report_path(path, now=lambda: moment), diff)
         if not verifier(path, diff, loader=loader):
             raise FlpSortVerificationFailed(f"verify() failed after saving {path}")
 
