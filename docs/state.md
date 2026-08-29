@@ -10,12 +10,15 @@ find yourself writing a date and a story, you are in the wrong file.
 ## Phase position
 
 Phase 0 complete and verified. Phase 1 underway. Phase 2 scaffolding started
-in parallel (blueprint-authorized). Its interpreter blocker is cleared; it now
-waits on the user for real `.flp` files and a sorting convention — see open
+in parallel (blueprint-authorized). Its interpreter blocker is cleared and
+`sort.py`'s full pipeline is now proved against a real `.flp`; it waits on the
+user for one remaining thing, the dictated mixer-sorting convention — see open
 blocker 4.
 
 Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
-5 vision fallback. Phases 3 to 5 have not started.
+5 vision fallback. Phase 3's two build lanes (`voice-deps-and-tooling`,
+`whisper-npu-build`) were briefed 29 Aug 2026; nothing from Phase 3 has landed
+yet. Phases 4 and 5 have not started.
 
 ## Built and working
 
@@ -33,7 +36,7 @@ Phase order: 0 bus, 1 memory, 2 FL Studio, 3 voice, 4 VPS/laptop split,
 | Process tooling | `tools/consult.py`, `tools/repoint_webhook.py`, `tests/live/`, pre-commit hook. **`consult.py` sends the prompt on stdin, never in argv** — `claude.cmd` runs through `cmd.exe`, where a newline in an argv element terminates the command and the line is capped at 8191 chars, so every consult before 27 Aug 2026 delivered only its first line and got a confidently wrong answer back. No pre-fix verdict exists in `docs/consults/`, so nothing archived is suspect. Sub-model output is framed as untrusted data at every exit — stderr, `response.md`, and the `verdict` field when the reply is not JSON |
 | Work-board claims | Local-only `tools/work_board_claim.py` atomically claims overlapping repository files and named resources. Its ignored `.work-board` state is not an external system; `git-commit` is a CORE-only resource. |
 | `/status` | Reports `retry_health` (dead-letter and retried-job counts) from the live queue, additive to the existing payload |
-| FL Studio sort (`executor/flp/sort.py`) | `flp_backup`, `load`/`save`, `apply_rules`, `diff_report`, `verify`, `build_flp_sort_handler` built and unit-tested against fakes (16 tests). Registered as job kind `flp_sort` in `executor/poller.py`'s `DEFAULT_HANDLERS`, but nothing enqueues it yet. Reordering mixer inserts raises `ReorderNotSupported` rather than silently no-op'ing: PyFLP has no insert-move API. PyFLP itself now works — `.venv311` on CPython 3.11.5 parses and saves real `.flp` files (`tests/flp/test_flp_real.py`, marker `realflp`) — but `sort.py` has still never been run against one, because there are no guinea-pig projects yet. See open blocker 4 |
+| FL Studio sort (`executor/flp/sort.py`) | `flp_backup`, `load`/`save`, `apply_rules`, `diff_report`, `verify`, `build_flp_sort_handler` built and unit-tested against fakes (27 tests). Registered as job kind `flp_sort` in `executor/poller.py`'s `DEFAULT_HANDLERS`, but nothing enqueues it yet. Reordering mixer inserts raises `ReorderNotSupported` rather than silently no-op'ing: PyFLP has no insert-move API. Writes are confined to `flp_sort_root()` (env `JARVIS_FLP_SORT_ROOT`, default `test_projects/`) via `FlpSortPathOutsideRoot`; a diff report is written alongside the backup on any real change. **`sort.py`'s full pipeline has now been run against a real `.flp`**, not just unit-tested against fakes: `tests/flp/test_flp_real.py` (marker `realflp`, `.venv311`/3.11.5) exercises `build_flp_sort_handler` end to end against PyFLP's own downloaded fixture (`test_projects/FL 20.8.4.flp`) — a real mixer insert renamed, saved, and the rename confirmed by a from-scratch re-parse, plus the backup and diff report both confirmed on disk. Still open: a real user project with channel groups still hits PyFLP's own `IndexError` (open blocker 4, separate from this), and the dictated mixer-sorting convention is still the user's |
 | Startup | Passes `--protocol http2` to cloudflared (`JARVIS_TUNNEL_PROTOCOL` overrides). QUIC is UDP 7844 and is unroutable on this network — every dial failed `wsasendto: unreachable network`, the tunnel never registered, and a URL that resolved nowhere was minted while ordinary TCP to the same edge was fine. http2 registered first try, zero errors. `start-jarvis.bat` -> `tools/start_jarvis.py` brings up Ollama check, bus, tunnel, Meta re-point and executor in order, waiting for each to answer before the next. Ctrl+C stops the set together; a child dying reports which and shuts the rest down |
 | Single-instance guard | The launcher binds `127.0.0.1:8765` exclusively (`JARVIS_SINGLETON_PORT` overrides) as `main`'s first side effect, before the Ollama probe and before any child. A second copy refuses, names the holding PID via `netstat -ano`, exits nonzero, and mints no tunnel and re-points nothing. `SO_REUSEADDR` is deliberately never set. Fails open like `executor/heartbeat.py`: the OS releases the bind however the process dies, so no stale lock can wedge a future launch. The refusal never kills anything — it says Ctrl+C in the owning window. Loopback health probes could not catch a duplicate: an HTTP 200 on `127.0.0.1:8000` does not say whose process answered |
 | Bus logging | uvicorn's access log redacts the verify token, matching **both** `hub.verify_token` and `hub_verify_token`. A live Meta handshake carried both spellings and only the dotted one was caught, so the value reached `tools/bus.out.log` in plaintext. Logs are gitignored, so it was never committed. `hub[._]challenge` is deliberately left alone: a public nonce, not a credential |
@@ -96,11 +99,11 @@ models include `gemini-2.5-flash` and `gemini-2.5-flash-lite`
    re-points Meta automatically on each run, so this is no longer a manual
    step — but nothing receives messages while the laptop is off. A named
    tunnel, and moving the bus off the laptop, are both Phase 4.
-4. **Phase 2 needs two things from the user.** The interpreter half is done:
+4. **Phase 2 needs one thing from the user.** The interpreter half is done:
    `.venv311` on CPython **3.11.5** parses and saves real `.flp` files, proved
    against PyFLP's own `FL 20.8.4.flp` fixture with a rename that survived a
    save-and-re-parse round trip. What is still missing is blueprint 2.1, and
-   both halves are the user's:
+   it is the user's:
    - ~~Real guinea-pig `.flp` files.~~ **Done.** A real project is now in
      `test_projects/` (gitignored, copy only). Parsing it exposed a second,
      independent PyFLP failure — see the note below.

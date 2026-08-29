@@ -10,9 +10,14 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
+import logging
 from pathlib import Path
 import re
 from typing import Iterable
+
+from ingest.noise import ExclusionPattern, filter_chunks, load_patterns
+
+logger = logging.getLogger(__name__)
 
 
 SUPPORTED_SUFFIXES = frozenset({".txt", ".md", ".markdown"})
@@ -110,8 +115,21 @@ def build_manifest(path: Path, *, intake_dir: Path) -> IngestManifest:
     )
 
 
-def chunk_file(path: Path, manifest: IngestManifest, *, max_tokens: int = 500) -> list[Chunk]:
-    """Normalize and deterministically chunk one manifest-matched local file."""
+def chunk_file(
+    path: Path,
+    manifest: IngestManifest,
+    *,
+    max_tokens: int = 500,
+    noise_patterns: list[ExclusionPattern] | None = None,
+) -> list[Chunk]:
+    """Normalize and deterministically chunk one manifest-matched local file.
+
+    ``noise_patterns`` defaults to whatever is currently configured in
+    ``ingest/noise_patterns.txt`` (empty until Ali names a pattern, per
+    blueprint 1.4). A chunk matching a pattern is dropped here, before it is
+    ever stored, and the count is logged per pattern rather than silently
+    dropped -- pass an explicit list (e.g. ``[]``) to bypass file loading.
+    """
     if max_tokens < 1:
         raise ValueError("max_tokens must be positive")
     raw = path.read_bytes()
@@ -119,8 +137,15 @@ def chunk_file(path: Path, manifest: IngestManifest, *, max_tokens: int = 500) -
         raise ValueError("source changed since manifest creation")
     text = _normalize(raw.decode("utf-8-sig", errors="replace"))
     if manifest.source_type == "whatsapp_export":
-        return _whatsapp_chunks(text, manifest)
-    return _note_chunks(text, manifest, max_tokens)
+        chunks = _whatsapp_chunks(text, manifest)
+    else:
+        chunks = _note_chunks(text, manifest, max_tokens)
+
+    patterns = load_patterns() if noise_patterns is None else noise_patterns
+    outcome = filter_chunks(chunks, patterns)
+    for key, count in outcome.excluded_by_pattern.items():
+        logger.info("excluded %d chunk(s) from %s by pattern %s", count, manifest.path, key)
+    return outcome.kept
 
 
 def _source_type(path: Path, raw: bytes) -> str:

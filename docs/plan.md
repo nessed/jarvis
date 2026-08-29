@@ -234,6 +234,27 @@ Several are file-safe but **run-exclusive** — see Rules. Several are blocked o
 Ali — see below. `facts-check-job` is the blueprint's only defence against its
 own rot and has produced nothing in four days.
 
+**Three of these are briefed as of 29 Aug 2026. Read the brief before
+dispatching any of them — two are already in flight and re-dispatching one
+collides head-on.**
+
+| brief | covers | state |
+|---|---|---|
+| `docs/tasks/voice-deps-and-tooling.md` | `voice-runtime-deps`, `wakeword-recorder`, the agent half of `stt-benchmark` | **in flight** |
+| `docs/tasks/fact-review-and-noise-filter.md` | `fact-review-and-forget-api`, `ingest-noise-filter` — two of the three gates on `1.4-review-loop` | **in flight** |
+| `docs/tasks/whisper-npu-build.md` | `whisper-npu-build` | **blocked**, see below |
+
+`whisper-npu-build` may not start while `laptop-power-lag-live-capture` holds a
+claim: a from-source C++ build during a battery-transition power capture
+poisons the capture, and that capture's numbers are what Ali is asked to judge.
+It also needs AC power — this laptop has a recorded `108 C` ACPI thermal event.
+Check `work_board_claim.py list` before starting it.
+
+It does **not** collide with `voice-deps-and-tooling` on files: that lane owns
+`voice/benchmark_stt.py`, this one owns `voice/whisper/local_backend.py`, and
+the interface between them is coordinated by report, not by cross-lane editing.
+Disjoint ownership working as designed is not a conflict.
+
 ---
 
 ## Available now — serialize on a named file
@@ -331,8 +352,8 @@ in the comment.
   `.gitignore` edit needed). Did not touch `db/jobs.py`/`JobRepository`, no
   live schema change, no import from `executor.handlers.whatsapp` (would have
   been circular). 11 new tests. `docs/state.md`'s "Dedups by Meta's message
-  id" line should be corrected to say it now dedups at both enqueue and send,
-  not send only — not yet done, small, whoever integrates this can fold it in.
+  id" line has since been corrected to say it dedups at both enqueue and send;
+  that follow-up is done.
 - `bus/status.py` — ~~`status-dead-letter-key`~~, ~~`status-count-queries`~~,
   ~~`status-distill-chain-liveness`~~ **all done**, uncommitted (2026-08-28).
   `queue_depths()`/`retry_health()` now issue count-only PostgREST queries
@@ -361,12 +382,22 @@ in the comment.
 **Correction worth keeping:** Ali's `.flp` copies are **not** blocking all
 Phase 2 work.
 
-- `flp-sort-real-flp-end-to-end` **can run today.** PyFLP ships its own upstream
-  fixture (`FL 20.8.4.flp`), and `JARVIS_FLP_FIXTURE` already points anywhere.
-  Nothing has ever executed `sort.py`'s PyFLP calls — every proof on disk is of
-  PyFLP itself. Run it under `.venv311` (**pinned 3.11.5**; 3.11.6 backported the
-  empty-enum guard) and name the directory in the command, or a bare `-m realflp`
-  collects the whole tree and dies on `ModuleNotFoundError: httpx`.
+- ~~`flp-sort-real-flp-end-to-end`~~ **Done**, uncommitted (2026-08-28).
+  Downloaded PyFLP's own upstream fixture into `test_projects/FL 20.8.4.flp`
+  (public, from `demberto/PyFLP`'s repo — see `docs/blockers/pyflp-python-312.md`
+  for the same URL a prior lane already used). New
+  `test_flp_sort_handler_runs_the_full_pipeline_against_a_real_flp` in
+  `tests/flp/test_flp_real.py` runs `build_flp_sort_handler`'s **actual**
+  backup → load → apply_rules → save → verify → diff-report pipeline against
+  it (`safe_root` pointed at `tmp_path`, never touching the tree outside the
+  test) — a real mixer insert (`"Master"`) renamed, saved, re-parsed from
+  scratch to confirm the rename stuck, backup file confirmed present, diff
+  report confirmed present and correct. This is the first proof on disk that
+  `sort.py` itself (not just PyFLP) works end to end — every prior proof was
+  either fakes/stubs or PyFLP's raw `parse`/`save` alone. Verified:
+  `.venv311\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp-flp -m realflp tests/flp/` →
+  `4 passed`. Main suite unaffected (`480 passed, 5 deselected` — one more
+  deselected than before, correctly, since the new test is `realflp`-marked).
 - ~~`flp-write-path-guard`~~ **Done**, uncommitted. `flp_sort_root()` (env
   `JARVIS_FLP_SORT_ROOT`, defaults to `test_projects/`) + a
   `resolve()`/`relative_to()` guard in `build_flp_sort_handler`, raising

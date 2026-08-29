@@ -1,0 +1,83 @@
+# Voice runtime dependencies - blueprint 3.1, lane `voice-deps-and-tooling`.
+#
+# For CORE to integrate into requirements.txt. No subagent edits that file
+# (agents.md, "Parallelism where it pays"), so this is the handoff.
+#
+# All versions below are what actually resolved and imported in `.venv`
+# (Python 3.12.10) on 2026-08-29, taken from `pip freeze`, not from a
+# changelog. `.venv311` was not touched.
+#
+# Proof of import, one command:
+#   .venv/Scripts/python.exe -c "import openwakeword, silero_vad, kokoro,
+#       pipecat, sounddevice, soundfile"
+# Output is in docs/tasks/voice-deps-and-tooling-report.md.
+
+# --- direct, blueprint-specified ------------------------------------------
+
+# openWakeWord: the "Hey JARVIS" wake-word engine (blueprint §2, 3.1).
+# Also ships a pretrained hey_jarvis_v0.1 model, downloaded separately into
+# the venv via openwakeword.utils.download_models() - not a pip artifact.
+openwakeword==0.6.0
+
+# Kokoro-82M: TTS (blueprint §2, 3.1 "Kokoro (+ voices)").
+kokoro==0.9.4
+
+# Pipecat: the interruptible voice loop (blueprint §2, 3.3).
+pipecat-ai==1.8.1
+
+# Silero VAD: voice activity detection for barge-in (blueprint §2).
+# The pip package ships the weights inside the wheel
+# (silero_vad/data/silero_vad.jit + .onnx), so no torch.hub download and no
+# network call at load time. Verified by loading it offline.
+silero-vad==6.2.1
+
+# Audio capture on Windows for voice/record_wakeword.py. sounddevice was
+# chosen over pyaudio because it installs as a pure wheel with PortAudio
+# bundled and enumerated 27 real input devices on this machine, while pyaudio
+# needs a C toolchain on Windows/3.12. Nothing was substituted: the blueprint
+# does not name an audio I/O library.
+sounddevice==0.5.6
+
+# WAV read/write at 16 kHz mono PCM_16, the format openWakeWord trains on.
+soundfile==0.14.0
+
+# --- transitive, but load-bearing enough to pin ---------------------------
+
+# onnxruntime: the inference backend openWakeWord runs its models on.
+# pipecat-ai pins `onnxruntime~=1.24.3`, which *downgraded* it from the 1.29.0
+# that `pip install openwakeword` alone had picked. openWakeWord's own range is
+# `>=1.10,<2`, so 1.24.4 satisfies both - but an unpinned reinstall will drift
+# back to 1.29 and then break pipecat. Pin it.
+onnxruntime==1.24.4
+
+# torch / torchaudio: pulled in by silero-vad and kokoro. CPU wheels.
+# See the report: torchaudio 2.11 made silero_vad.read_audio() require
+# torchcodec. That affects only silero's file-reading convenience helper, not
+# the VAD itself, and it is an open call for the voice-loop lane.
+torch==2.13.0
+torchaudio==2.11.0
+
+# misaki / espeakng-loader: Kokoro's grapheme-to-phoneme front end.
+misaki==0.9.4
+espeakng-loader==0.2.4
+
+# en_core_web_sm: misaki's English G2P needs this spaCy model. It is not on
+# PyPI - misaki shells out to `pip install` against a GitHub release URL the
+# first time KPipeline(lang_code='a') runs, which is how it landed here. If
+# requirements.txt should be installable offline / reproducibly, CORE needs
+# the URL form rather than a bare name:
+#   en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+# Leaving it out is also defensible - it self-installs on first use - but then
+# the first Kokoro call needs network. Flagging, not deciding.
+
+# --- deliberately absent ---------------------------------------------------
+#
+# No Groq STT client. `docs/plan.md` records `stt-backends` as an open Class C
+# decision - whether voice owns its own audio client or router/routing.py
+# grows an audio lane. Adding a dependency for it would settle that.
+#
+# No whisper.cpp anything. That is the `whisper-npu-build` lane's from-source
+# C++ build, not a pip package.
+#
+# numpy stayed at the already-pinned 2.5.2. Nothing above moved an existing
+# requirements.txt version.

@@ -1,0 +1,15 @@
+# Exclusion patterns for ingest.noise -- what should never become a stored fact.
+#
+# One rule per line: <kind>:<value>
+#   substring:<text>   -- excludes a chunk whose text contains <text> (case-insensitive)
+#   regex:<pattern>    -- excludes a chunk whose text matches <pattern> (re.search, case-sensitive)
+#   source:<path>      -- excludes every chunk from one source file or chat export,
+#                          matched against the manifest-relative path (e.g. a WhatsApp
+#                          export's filename under ingest/data)
+#
+# Lines starting with # and blank lines are ignored. This file ships empty:
+# naming what counts as noise is Ali's call, not this tool's -- see docs/blueprint.md
+# section 1.4. Uncomment or add lines below once he has named a pattern.
+#
+# Example (commented out, not active):
+# substring:Forwarded many times

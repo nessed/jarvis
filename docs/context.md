@@ -8,32 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `50233bc Record the model-ID gap, dual message-id dedup, and a full board pass` on `main`, 15 ahead, 0 behind origin.
+**HEAD** `221ce33 Record this session's lane briefs and consult exchanges` on `main`, 16 ahead, 0 behind origin.
 
-**Working tree:** 16 changed (plus 23 untracked)
+**Working tree:** 40 changed
 
 ```
-  A  docs/blockers/consult-cli-no-response.md
-  A  docs/consults/2026-08-27-class-b-review-verdict-a-309/prompt.md
-  A  docs/consults/2026-08-27-review-work-board-retry/prompt.md
-  A  docs/consults/2026-08-29-laptop-hp-next-action/prompt.md
-  A  docs/consults/2026-08-29-laptop-hp-next-action/response.md
-  A  docs/consults/2026-08-29-laptop-hp-next-action/verdict.json
-  A  docs/tasks/env-example-batch-1.md
-  A  docs/tasks/flp-write-path-and-diff-report.md
-  A  docs/tasks/mem0-and-openai-client-tests.md
-  A  docs/tasks/memory-batch-1.md
-  A  docs/tasks/poller-batch-1.md
-  A  docs/tasks/router-batch-1.md
-  ...and 4 more
+  M  .gitignore
+  A  docs/consults/2026-08-29-laptop-power-lag-repair-decision/prompt.md
+  M  docs/plan.md
+  M  docs/state.md
+  A  docs/tasks/deps-fact-review.txt
+  A  docs/tasks/deps-voice-runtime.txt
+  A  docs/tasks/fact-review-and-noise-filter-report.md
+  A  docs/tasks/fact-review-and-noise-filter.md
+  A  docs/tasks/laptop-power-lag-driver-fix.md
+  A  docs/tasks/laptop-power-lag-hp-resolution-report.md
+  A  docs/tasks/laptop-power-lag-hp-resolution.md
+  A  docs/tasks/laptop-power-lag-hp-uefi-test-report.md
+  ...and 28 more
 ```
 
-**Offline suite:** 480 passed, 4 deselected, 2 warnings in 16.28s _(recorded 2026-08-29)_
+**Offline suite:** 595 passed, 5 deselected, 2 warnings in 31.38s _(recorded 2026-08-29)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `221ce33` Record this session's lane briefs and consult exchanges  _(2026-08-29)_
 - `50233bc` Record the model-ID gap, dual message-id dedup, and a full board pass  _(2026-08-29)_
 - `77c07e5` Stop a Meta webhook redelivery from enqueueing a second job  _(2026-08-29)_
 - `e4f15a7` Make queue_depths and retry_health O(1) queries, add distill-chain liveness  _(2026-08-29)_
@@ -41,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `a88dd21` Fix context_status --check being unreachable through main()  _(2026-08-29)_
 - `c6565c0` Add coverage for distill_memory's CLI, start_jarvis's uncovered paths, and request_completion  _(2026-08-29)_
 - `c47d9b4` Cover WhatsAppClient's timeout and non-JSON-error-body paths  _(2026-08-29)_
-- `1cb18ed` Close a stale blocker status and fence two unframed sub-model responses  _(2026-08-29)_
 
 <!-- END GENERATED -->
 

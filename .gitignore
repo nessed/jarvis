@@ -13,8 +13,19 @@ memory.db-*
 *.seen-messages.db
 
 .pytest-basetemp/
+.pytest-basetemp-*/
 .pytest_cache/
 .context-status.json
 .executor-heartbeat
 test_projects/
 .work-board/
+
+# Wake-word recordings of Ali's voice (voice/record_wakeword.py). Personal data:
+# never committed, never uploaded.
+voice/wakeword_clips/
+
+# Host-troubleshooting artifacts. Driver backups, OEM installers and energy
+# reports: multi-MB vendor binaries with no place in this repo's history.
+# The written findings under docs/tasks/ are tracked; the payloads are not.
+diagnostics/
+docs/tasks/laptop-power-lag-hp-downloads/

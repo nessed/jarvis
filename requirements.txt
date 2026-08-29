@@ -9,3 +9,17 @@ sqlite-vec==0.1.9
 mem0ai==2.0.19
 ollama==0.6.2
 pyflp==2.2.1
+
+# --- voice, blueprint 3.1 (lane: voice-deps-and-tooling) -------------------
+# Rationale and proof-of-import for each line: docs/tasks/deps-voice-runtime.txt
+# onnxruntime is pinned deliberately: pipecat-ai caps it at ~=1.24.3 while an
+# unpinned openwakeword install drifts to 1.29 and breaks pipecat.
+openwakeword==0.6.0
+kokoro==0.9.4
+pipecat-ai==1.8.1
+silero-vad==6.2.1
+sounddevice==0.5.6
+soundfile==0.14.0
+onnxruntime==1.24.4
+torch==2.13.0
+torchaudio==2.11.0

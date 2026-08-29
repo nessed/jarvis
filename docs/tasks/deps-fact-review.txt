@@ -1,0 +1,4 @@
+# fact-review-and-noise-filter lane
+# No new dependencies. Every module uses only the standard library plus
+# packages already pinned in requirements.txt (sqlite-vec, already required
+# by memory/vector_index.py).
