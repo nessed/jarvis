@@ -224,25 +224,29 @@ before starting. **This is the block to hand an idle orchestrator.**
 
 ### Greenfield — touches no existing file at all
 
-`uia-tree-dump` · `whisper-npu-build` · `voice-runtime-deps` · `stt-backends` ·
-`stt-benchmark` · `wakeword-recorder` · `wakeword-train` · `kokoro-tts` ·
+`whisper-npu-build` · `stt-backends` ·
+`stt-benchmark` · `wakeword-train` · `kokoro-tts` ·
 `voice-loop` · `voice-acceptance` · `oracle-provision` · `vps-harden-deploy` ·
-`vps-web-ui` · `powercfg-profile` · `cloud-routine-trigger` ·
+`vps-web-ui` · `cloud-routine-trigger` ·
 `phase4-acceptance` · `uitars-install` · `facts-check-job`
+
+`voice-runtime-deps`, `wakeword-recorder`, and the agent half of
+`stt-benchmark` landed in `4f39697` (see `docs/tasks/voice-deps-and-tooling-
+report.md`). `uia-tree-dump` and `powercfg-profile` are subsumed into the two
+newly briefed lanes below, not separate work.
 
 Several are file-safe but **run-exclusive** — see Rules. Several are blocked on
 Ali — see below. `facts-check-job` is the blueprint's only defence against its
 own rot and has produced nothing in four days.
 
-**Three of these are briefed as of 29 Aug 2026. Read the brief before
-dispatching any of them — two are already in flight and re-dispatching one
-collides head-on.**
+**Briefed as of 29 Aug 2026. Read the brief before dispatching any of these —
+some are already in flight and re-dispatching one collides head-on.**
 
 | brief | covers | state |
 |---|---|---|
-| `docs/tasks/voice-deps-and-tooling.md` | `voice-runtime-deps`, `wakeword-recorder`, the agent half of `stt-benchmark` | **in flight** |
-| `docs/tasks/fact-review-and-noise-filter.md` | `fact-review-and-forget-api`, `ingest-noise-filter` — two of the three gates on `1.4-review-loop` | **in flight** |
-| `docs/tasks/whisper-npu-build.md` | `whisper-npu-build` | **blocked**, see below |
+| `docs/tasks/whisper-npu-build.md` | `whisper-npu-build` | **blocked on AC power**, see below |
+| `docs/tasks/laptop-system-control.md` | Power/wifi/bluetooth/display, scheduled tasks, printing, file ops, process-kill — CLI/API only, no UIA | **in flight** |
+| `docs/tasks/pywinauto-zoom-whatsapp.md` | Zoom's native-dialog join tail, WhatsApp Desktop send-as-personal-number — the real UIA targets from blueprint 2.4 | **in flight** |
 
 `whisper-npu-build` may not start while `laptop-power-lag-live-capture` holds a
 claim: a from-source C++ build during a battery-transition power capture
@@ -424,7 +428,7 @@ Batch these into one sitting where possible.
 | id | what he has to do |
 |---|---|
 | `flp-real-mixer-convention` | 2–3 real `.flp` copies into `test_projects/`, and dictate what "sorted" means — order, prefixes, colours, routing groups. Colours and routing are not implemented at all today; only renames. |
-| `pywinauto-app-handlers` / `uia-app-scripts` | Name the 2–3 apps and the end state per app in plain words. Nothing starts without the list. |
+| ~~`pywinauto-app-handlers` / `uia-app-scripts`~~ | **Answered 2026-08-29**, via a personal-context agent of Ali's. Apps and end states now live in `docs/tasks/laptop-system-control.md` (power/wifi/bluetooth/display, scheduled tasks, printing, files, process-kill — CLI/API, no UIA) and `docs/tasks/pywinauto-zoom-whatsapp.md` (Zoom's native-dialog join tail, WhatsApp Desktop send-as-personal-number — the actual UIA targets). Both briefed and in flight. |
 | `queue-sleep-wake-probe` | Send a message with the lid closed, wake, confirm. **The one Phase 0 criterion with no evidence anywhere.** |
 | `finish-1.3-backfill-run` | Confirm `ingest/data/` is the intended final ingest list, and give a window where he expects no replies. The run monopolises Ollama. |
 | `1.4-review-loop` | Ask it ten things, delete what is wrong, name exclusion patterns. **Phase 1's actual acceptance gate.** Needs three jobs landed first: `finish-1.3-backfill-run`, `fact-review-and-forget-api`, `ingest-noise-filter`. |
@@ -452,7 +456,10 @@ defect. All Class C.
   §3.2. Is raw-turn recall *the* Phase 1 product, with Mem0 demoted to
   opportunistic? If yes, `distill-starvation-floor` is deleted rather than built.
   Deleting a raw turn after extraction is irreversible; accepting the duplication
-  amends the blueprint's Mem0 commitment.
+  amends the blueprint's Mem0 commitment. **Deferred by Ali, 2026-08-29:** keep
+  both paths exactly as they are for now; revisit once a "final version" of
+  memory exists to optimize against. Not a yes/no on the question above — do not
+  build either side of it until he actually answers.
 - **`backfill-checkpoint-identity-drift`** — blueprint 1.3 says "checkpoint = file
   + offset"; the code keys on content hash. Amend the blueprint or conform the
   code. Must be settled **before** `finish-1.3-backfill-run`.

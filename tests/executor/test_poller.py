@@ -104,6 +104,19 @@ def test_poll_once_claims_checkpoints_and_completes_one_job():
     ]
 
 
+def test_poll_once_claims_only_the_requested_job_kind():
+    repository = FakeJobs(_job())
+
+    result = poll_once(
+        repository=repository,
+        handlers={"whatsapp_webhook": lambda job: None},
+        kind_filter="whatsapp_webhook",
+    )
+
+    assert result is not None and result.status == "done"
+    assert repository.calls[0] == ("claim_next", "whatsapp_webhook")
+
+
 def test_poll_once_dispatches_registered_handler_for_known_job_kind():
     repository = FakeJobs(_job(checkpoint={"source": "meta"}))
     handled: list[str] = []
@@ -282,6 +295,40 @@ def test_cli_consults_the_startup_handler_registry_by_kind():
         assert poller.main([]) == 0
 
     assert calls == [poller.DEFAULT_HANDLERS]
+
+
+def test_cli_limits_a_kind_filtered_worker_to_its_own_handler(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    def fake_poll_once(**kwargs):
+        calls.append(kwargs)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "poll_once", fake_poll_once)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: pytest.fail("should not seed"))
+
+    assert poller.main(["--kind", "whatsapp_webhook", "--no-heartbeat"]) == 0
+    assert calls == [
+        {
+            "handlers": {"whatsapp_webhook": poller.DEFAULT_HANDLERS["whatsapp_webhook"]},
+            "kind_filter": "whatsapp_webhook",
+        }
+    ]
+
+
+def test_cli_only_the_background_worker_seeds_the_distill_chain(monkeypatch):
+    seeded: list[bool] = []
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: seeded.append(True) or True)
+    monkeypatch.setattr(
+        poller,
+        "poll_once",
+        lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    assert poller.main(["--kind", poller.DISTILL_JOB_KIND]) == 0
+    assert seeded == [True]
 
 
 def test_cli_logs_transient_errors_by_type_then_keeps_polling(monkeypatch, caplog):

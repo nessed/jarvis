@@ -187,7 +187,34 @@ class WhisperCppBackend:
             stderr = (completed.stderr or "").strip().splitlines()
             tail = stderr[-1] if stderr else "no stderr"
             raise RuntimeError(f"whisper.cpp exited {completed.returncode}: {tail}")
-        return (completed.stdout or "").strip()
+        return _spoken_text(completed.stdout or "")
+
+
+# The amd/whisper.cpp fork logs NPU progress to **stdout**, not stderr
+# (whisper-vitisai-encoder.cpp:197), so raw stdout is not a transcript: without
+# this the benchmark's transcript column showed
+# "whisper_vitisai_encode: Vitis AI model inference completed." instead of speech.
+# Reported by the whisper-npu-build lane 29 Aug 2026.
+_LOG_LINE_PREFIXES = (
+    "whisper_",
+    "system_info:",
+    "main:",
+    "ggml_",
+    "XRT",
+    "Vitis",
+    "register_backend",
+    "load_backend",
+)
+
+
+def _spoken_text(stdout: str) -> str:
+    """Keep the transcribed speech, drop the runtime's own log lines."""
+    kept = [
+        line.strip()
+        for line in stdout.splitlines()
+        if line.strip() and not line.lstrip().startswith(_LOG_LINE_PREFIXES)
+    ]
+    return " ".join(kept).strip()
 
 
 def default_backends() -> list[SttBackend]:

@@ -1,10 +1,10 @@
 """Start everything JARVIS needs, in order, from one command.
 
-Three processes have to be up for a WhatsApp message to get a reply:
+Four processes have to be up for a WhatsApp message to get a reply:
 
-    phone -> Meta -> tunnel -> bus -> Supabase queue -> executor -> reply
+    phone -> Meta -> tunnel -> bus -> Supabase queue -> WhatsApp worker -> reply
 
-Starting them by hand means four steps in the right order, plus re-pointing
+Starting them by hand means five steps in the right order, plus re-pointing
 Meta's callback every time the Cloudflare Quick Tunnel mints a new URL. This
 does all of it, waits for each piece to actually answer before starting the
 next, and shuts the whole set down together on Ctrl+C.
@@ -61,7 +61,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-TUNNEL_URL_PATTERN = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+# A minted Quick Tunnel name is a hyphenated random label (for example,
+# ``injured-drew-wells-partner``).  Requiring that separator keeps the
+# provisioning endpoint ``api.trycloudflare.com`` in a cloudflared error line
+# from being mistaken for the tunnel that endpoint was meant to create.
+TUNNEL_URL_PATTERN = re.compile(r"https://[a-z0-9]+(?:-[a-z0-9]+)+\.trycloudflare\.com\b")
 LOG_DIR = ROOT / "tools"
 BUS_HOST = "127.0.0.1"
 BUS_PORT = 8000
@@ -390,13 +394,35 @@ def main(argv: list[str] | None = None) -> int:
                     say(f"  {line}")
                 say("replies will not arrive until this is fixed")
 
-        step("[4/4] Worker")
+        step("[4/4] Workers")
         supervisor.spawn(
-            "executor",
-            [python, "-m", "executor.poller", "--interval", str(args.interval)],
-            LOG_DIR / "executor.out.log",
+            "whatsapp-worker",
+            [
+                python,
+                "-m",
+                "executor.poller",
+                "--kind",
+                "whatsapp_webhook",
+                "--no-heartbeat",
+                "--interval",
+                str(args.interval),
+            ],
+            LOG_DIR / "whatsapp-worker.out.log",
         )
-        say(f"polling every {args.interval}s")
+        supervisor.spawn(
+            "background-worker",
+            [
+                python,
+                "-m",
+                "executor.poller",
+                "--kind",
+                "distill_memory",
+                "--interval",
+                str(args.interval),
+            ],
+            LOG_DIR / "background-worker.out.log",
+        )
+        say(f"WhatsApp and background workers polling every {args.interval}s")
 
         print("\n" + "-" * 58, flush=True)
         print("  JARVIS is running. Message it on WhatsApp.", flush=True)

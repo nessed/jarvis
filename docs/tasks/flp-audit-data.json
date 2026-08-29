@@ -1,0 +1,950 @@
+{
+ "FL 20.8.4": {
+  "file": "FL 20.8.4.flp",
+  "kb": 185,
+  "events": 3829,
+  "time_spent": "2:31:59",
+  "named_lanes": [
+   [
+    1,
+    "Enabled"
+   ],
+   [
+    2,
+    "Disabled"
+   ],
+   [
+    3,
+    "Locked"
+   ],
+   [
+    4,
+    "Red"
+   ],
+   [
+    5,
+    "Iconified"
+   ],
+   [
+    6,
+    "Grouped"
+   ],
+   [
+    7,
+    "Audio track"
+   ],
+   [
+    8,
+    "Instrument track"
+   ],
+   [
+    9,
+    "MIDI"
+   ],
+   [
+    10,
+    "Cut pattern"
+   ],
+   [
+    11,
+    "Automation"
+   ],
+   [
+    12,
+    "Locked to content"
+   ],
+   [
+    13,
+    "Locked to size"
+   ],
+   [
+    14,
+    "Min Size"
+   ],
+   [
+    15,
+    "Max Size"
+   ],
+   [
+    16,
+    "Latched"
+   ],
+   [
+    17,
+    "Random Motion"
+   ],
+   [
+    18,
+    "Trigger Sync OFF"
+   ],
+   [
+    19,
+    "Position Sync AUTO"
+   ],
+   [
+    20,
+    "Queued"
+   ],
+   [
+    21,
+    "Intolerant"
+   ]
+  ],
+  "insert_names": [
+   "Master",
+   "Audio track",
+   "Instrument track",
+   "Colored",
+   "Zero Volume",
+   "No routes",
+   "100% L",
+   "100% R",
+   "Separator",
+   "Locked",
+   "Disabled",
+   "Iconified",
+   "100% mono",
+   "100% separated",
+   "Swap LR",
+   "Invert Polarity",
+   "Docked left",
+   "Docked right",
+   "Bypassed",
+   "Plugin Test",
+   "Effect slots",
+   "50ms track latency",
+   "Armed",
+   "Post EQ",
+   "50ms input latency"
+  ],
+  "takes": 0,
+  "samples": 1,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {}
+ },
+ "outroagain_2": {
+  "file": "outroagain_2.flp",
+  "kb": 168,
+  "events": 4309,
+  "time_spent": null,
+  "named_lanes": [
+   [
+    0,
+    "DRUMS"
+   ],
+   [
+    1,
+    "BASS"
+   ],
+   [
+    2,
+    "INSTRUMENTS"
+   ],
+   [
+    3,
+    "CHOPS1"
+   ],
+   [
+    4,
+    "CHOPS2"
+   ],
+   [
+    5,
+    "DRUMCHOPS"
+   ],
+   [
+    7,
+    "PATTERNS"
+   ],
+   [
+    11,
+    "VOX1"
+   ],
+   [
+    12,
+    "VOX2"
+   ],
+   [
+    13,
+    "VOXMAIN"
+   ],
+   [
+    14,
+    "VOX3"
+   ],
+   [
+    15,
+    "VOX4"
+   ],
+   [
+    16,
+    "VOX5"
+   ],
+   [
+    17,
+    "VOX6"
+   ],
+   [
+    18,
+    "VOX7"
+   ],
+   [
+    19,
+    "VOX8"
+   ],
+   [
+    21,
+    "Drums"
+   ],
+   [
+    22,
+    "Bass"
+   ]
+  ],
+  "insert_names": [
+   "verse",
+   "singing part verse"
+  ],
+  "takes": 42,
+  "samples": 56,
+  "playlist_readable": false,
+  "status": "PARTIAL",
+  "sessions": {
+   "2026-08-20": [
+    10
+   ],
+   "2026-08-21": [
+    13
+   ],
+   "2026-08-22": [
+    13,
+    14
+   ],
+   "2026-08-23": [
+    16
+   ],
+   "2026-08-26": [
+    16
+   ]
+  }
+ },
+ "babydon'tgetsomad-20260509": {
+  "file": "babydon'tgetsomad-20260509__babydon_tgetsomad_3.flp",
+  "kb": 260,
+  "events": 6898,
+  "time_spent": "4:48:43",
+  "named_lanes": [
+   [
+    4,
+    "Insert 6"
+   ],
+   [
+    5,
+    "Insert 7"
+   ],
+   [
+    6,
+    "Insert 8"
+   ],
+   [
+    7,
+    "Insert 9"
+   ],
+   [
+    8,
+    "Insert 10"
+   ],
+   [
+    9,
+    "Insert 11"
+   ],
+   [
+    10,
+    "Insert 12"
+   ],
+   [
+    11,
+    "Insert 13"
+   ],
+   [
+    12,
+    "Insert 14"
+   ],
+   [
+    13,
+    "Insert 16"
+   ],
+   [
+    14,
+    "Insert 16"
+   ],
+   [
+    15,
+    "Insert 16"
+   ],
+   [
+    16,
+    "Insert 16"
+   ],
+   [
+    17,
+    "Insert 16"
+   ],
+   [
+    18,
+    "Insert 16"
+   ]
+  ],
+  "insert_names": [
+   "Insert 6",
+   "Insert 7",
+   "Insert 8",
+   "Insert 9",
+   "Insert 10",
+   "Insert 11",
+   "Insert 12",
+   "Insert 13",
+   "Insert 14",
+   "Black Smurf x Xavier Wulf type beatsmoking by the cherry blossom",
+   "Insert 16",
+   "babydon'tgetsomad_2_2026-03-07 06-36-42_Insert 21",
+   "babydon'tgetsomad_2 #2",
+   "roblox drinkingsound"
+  ],
+  "takes": 59,
+  "samples": 69,
+  "playlist_readable": false,
+  "status": "PARTIAL",
+  "sessions": {
+   "2026-02-07": [
+    6
+   ],
+   "2026-02-08": [
+    10,
+    11,
+    12,
+    13,
+    9
+   ],
+   "2026-02-15": [
+    16
+   ],
+   "2026-03-07": [
+    21
+   ],
+   "2026-05-10": [
+    "roblox drinkingsound"
+   ]
+  }
+ },
+ "babydon'tgetsomad": {
+  "file": "babydon'tgetsomad__babydon'tgetsomad_8.flp",
+  "kb": 736,
+  "events": 15380,
+  "time_spent": "16:05:25",
+  "named_lanes": [
+   [
+    6,
+    "Insert 6"
+   ],
+   [
+    7,
+    "Insert 7"
+   ],
+   [
+    8,
+    "Insert 8"
+   ],
+   [
+    9,
+    "Insert 9"
+   ],
+   [
+    10,
+    "Insert 10"
+   ],
+   [
+    11,
+    "Insert 11"
+   ],
+   [
+    12,
+    "Insert 12"
+   ],
+   [
+    13,
+    "Insert 13"
+   ],
+   [
+    14,
+    "Insert 14"
+   ]
+  ],
+  "insert_names": [
+   "main verse",
+   "main link",
+   "doubles",
+   "adlibs 1st part",
+   "make believe hook",
+   "adlibs 2nd part",
+   "switch libs",
+   "reminiscin",
+   "switch",
+   "Black Smurf x Xavier Wulf type beatsmoking by the cherry blossom",
+   "Insert 6",
+   "Insert 7",
+   "Insert 8",
+   "Insert 9",
+   "Insert 10",
+   "Insert 11",
+   "Insert 12",
+   "Insert 13",
+   "Insert 14"
+  ],
+  "takes": 227,
+  "samples": 245,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {
+   "2026-02-07": [
+    6
+   ],
+   "2026-02-08": [
+    10,
+    11,
+    12,
+    13,
+    9
+   ],
+   "2026-05-03": [
+    11
+   ],
+   "2026-05-10": [
+    5,
+    7
+   ],
+   "2026-05-19": [
+    10
+   ],
+   "2026-05-20": [
+    10,
+    12
+   ]
+  }
+ },
+ "babytakemeback": {
+  "file": "babytakemeback__babytakemeback.flp",
+  "kb": 53,
+  "events": 1677,
+  "time_spent": null,
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 0,
+  "samples": 5,
+  "playlist_readable": false,
+  "status": "PARTIAL",
+  "sessions": {}
+ },
+ "birds": {
+  "file": "birds__birds_5.flp",
+  "kb": 2577,
+  "events": 11115,
+  "time_spent": "11:38:24",
+  "named_lanes": [
+   [
+    11,
+    "Bass"
+   ],
+   [
+    12,
+    "Instruments"
+   ],
+   [
+    35,
+    "Bass"
+   ],
+   [
+    36,
+    "Instruments"
+   ],
+   [
+    40,
+    "Bass"
+   ],
+   [
+    41,
+    "Instruments"
+   ],
+   [
+    42,
+    "Vocals"
+   ]
+  ],
+  "insert_names": [
+   "hook light voice",
+   "hook more mids in voice",
+   "verse main",
+   "main layer",
+   "percs",
+   "perc link",
+   "adlibs",
+   "beat",
+   "birds_4_2026-07-22 04-41-01_Insert 12",
+   "birds_4_2026-07-22 04-40-34_Insert 12"
+  ],
+  "takes": 178,
+  "samples": 199,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {
+   "2026-06-23": [
+    12
+   ],
+   "2026-07-04": [
+    12
+   ],
+   "2026-07-05": [
+    12
+   ],
+   "2026-07-17": [
+    12
+   ],
+   "2026-07-18": [
+    12
+   ],
+   "2026-07-19": [
+    12
+   ],
+   "2026-07-22": [
+    12
+   ]
+  }
+ },
+ "childyoubettergetondown": {
+  "file": "childyoubettergetondown__childyoubettergetondown.flp",
+  "kb": 782,
+  "events": 2913,
+  "time_spent": "2:36:42",
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 7,
+  "samples": 23,
+  "playlist_readable": false,
+  "status": "PARTIAL",
+  "sessions": {
+   "2026-06-26": [
+    12
+   ]
+  }
+ },
+ "dreamon": {
+  "file": "dreamon__dreamon.flp",
+  "kb": 84,
+  "events": 2316,
+  "time_spent": "0:41:44",
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 2,
+  "samples": 16,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {
+   "2026-05-28": [
+    15
+   ]
+  }
+ },
+ "edm": {
+  "file": "edm__edm.flp",
+  "kb": 782,
+  "events": 2233,
+  "time_spent": "1:03:24",
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 0,
+  "samples": 9,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {}
+ },
+ "forthisdance": {
+  "file": "forthisdance__forthisdance_2.flp",
+  "kb": 134,
+  "events": 2799,
+  "time_spent": "0:58:30",
+  "named_lanes": [
+   [
+    0,
+    "melody 1"
+   ],
+   [
+    1,
+    "melody 2"
+   ],
+   [
+    2,
+    "drums"
+   ]
+  ],
+  "insert_names": [],
+  "takes": 15,
+  "samples": 25,
+  "playlist_readable": false,
+  "status": "PARTIAL",
+  "sessions": {
+   "2026-06-23": [
+    10
+   ]
+  }
+ },
+ "games": {
+  "file": "games__games_3.flp",
+  "kb": 189,
+  "events": 53,
+  "time_spent": null,
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 0,
+  "samples": 0,
+  "arr_error": "NoModelsFound",
+  "playlist_readable": false,
+  "status": "PARTIAL",
+  "sessions": {}
+ },
+ "heavencanwait": {
+  "file": "heavencanwait__heavencanwait.flp",
+  "kb": 61,
+  "events": 1799,
+  "time_spent": "0:28:05",
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 0,
+  "samples": 6,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {}
+ },
+ "hollis": {
+  "file": "hollis__hollis.flp",
+  "kb": 218,
+  "events": 2403,
+  "time_spent": "1:14:38",
+  "named_lanes": [],
+  "insert_names": [
+   "synth"
+  ],
+  "takes": 0,
+  "samples": 9,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {}
+ },
+ "IOK": {
+  "file": "IOK__IOK.flp",
+  "kb": 82,
+  "events": 1941,
+  "time_spent": "14:11:12",
+  "named_lanes": [
+   [
+    1,
+    "Bass"
+   ],
+   [
+    2,
+    "Instruments"
+   ]
+  ],
+  "insert_names": [],
+  "takes": 0,
+  "samples": 10,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {}
+ },
+ "outro": {
+  "file": "outro__outro.flp",
+  "kb": 61,
+  "events": 2072,
+  "time_spent": "0:37:38",
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 8,
+  "samples": 13,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {
+   "2026-08-15": [
+    11,
+    13
+   ]
+  }
+ },
+ "outroagain": {
+  "file": "outroagain__outroagain_2.flp",
+  "kb": 168,
+  "events": 4309,
+  "time_spent": null,
+  "named_lanes": [
+   [
+    0,
+    "DRUMS"
+   ],
+   [
+    1,
+    "BASS"
+   ],
+   [
+    2,
+    "INSTRUMENTS"
+   ],
+   [
+    3,
+    "CHOPS1"
+   ],
+   [
+    4,
+    "CHOPS2"
+   ],
+   [
+    5,
+    "DRUMCHOPS"
+   ],
+   [
+    7,
+    "PATTERNS"
+   ],
+   [
+    11,
+    "VOX1"
+   ],
+   [
+    12,
+    "VOX2"
+   ],
+   [
+    13,
+    "VOXMAIN"
+   ],
+   [
+    14,
+    "VOX3"
+   ],
+   [
+    15,
+    "VOX4"
+   ],
+   [
+    16,
+    "VOX5"
+   ],
+   [
+    17,
+    "VOX6"
+   ],
+   [
+    18,
+    "VOX7"
+   ],
+   [
+    19,
+    "VOX8"
+   ],
+   [
+    21,
+    "Drums"
+   ],
+   [
+    22,
+    "Bass"
+   ]
+  ],
+  "insert_names": [
+   "verse",
+   "singing part verse"
+  ],
+  "takes": 42,
+  "samples": 56,
+  "playlist_readable": false,
+  "status": "PARTIAL",
+  "sessions": {
+   "2026-08-20": [
+    10
+   ],
+   "2026-08-21": [
+    13
+   ],
+   "2026-08-22": [
+    13,
+    14
+   ],
+   "2026-08-23": [
+    16
+   ],
+   "2026-08-26": [
+    16
+   ]
+  }
+ },
+ "outroforest": {
+  "file": "outroforest__outroforest.flp",
+  "kb": 182,
+  "status": "PARSE_FAIL",
+  "error": "UnicodeDecodeError"
+ },
+ "prayon": {
+  "file": "prayon__prayon.flp",
+  "kb": 66,
+  "status": "PARSE_FAIL",
+  "error": "StringError"
+ },
+ "rage": {
+  "file": "rage__rage.flp",
+  "kb": 121,
+  "events": 1812,
+  "time_spent": "0:14:26",
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 0,
+  "samples": 4,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {}
+ },
+ "SKIN": {
+  "file": "SKIN__SKIN.flp",
+  "kb": 317,
+  "events": 1933,
+  "time_spent": "1:04:37",
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 0,
+  "samples": 5,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {}
+ },
+ "SOGHETTO": {
+  "file": "SOGHETTO__SOGHETTO_4.flp",
+  "kb": 108,
+  "events": 2432,
+  "time_spent": null,
+  "named_lanes": [],
+  "insert_names": [
+   "SOGHETTO_2026-05-23 17-04-17_Insert 8"
+  ],
+  "takes": 15,
+  "samples": 20,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {
+   "2026-06-03": [
+    8
+   ],
+   "2026-07-22": [
+    8
+   ]
+  }
+ },
+ "spaceship demo": {
+  "file": "spaceship demo.flp",
+  "kb": 107,
+  "events": 2513,
+  "time_spent": null,
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 17,
+  "samples": 22,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {
+   "2026-07-13": [
+    8
+   ]
+  }
+ },
+ "uke,ele": {
+  "file": "uke,ele__uke,ele.flp",
+  "kb": 87,
+  "events": 2786,
+  "time_spent": "0:30:38",
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 20,
+  "samples": 28,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {
+   "2026-05-19": [
+    10
+   ]
+  }
+ },
+ "vallacy": {
+  "file": "vallacy__vallacy.flp",
+  "kb": 61,
+  "events": 1856,
+  "time_spent": "0:50:04",
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 0,
+  "samples": 5,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {}
+ },
+ "vineyard": {
+  "file": "vineyard__vineyard.flp",
+  "kb": 75,
+  "events": 1793,
+  "time_spent": "0:19:08",
+  "named_lanes": [],
+  "insert_names": [],
+  "takes": 0,
+  "samples": 5,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {}
+ },
+ "wehurt": {
+  "file": "wehurt__wehurt_3.flp",
+  "kb": 265,
+  "events": 3142,
+  "time_spent": "5:27:56",
+  "named_lanes": [
+   [
+    0,
+    "1ST SAMPLE CHOP"
+   ],
+   [
+    2,
+    "HOOK SAMPLE CHOP"
+   ],
+   [
+    3,
+    "bg sample hook"
+   ],
+   [
+    4,
+    "bass"
+   ],
+   [
+    7,
+    "drums 1"
+   ]
+  ],
+  "insert_names": [
+   "SAMPLE MAIN BUS",
+   "REVERB LINK",
+   "REVERBY PART",
+   "Sub bass",
+   "DRUMS",
+   "KDOT DRUMS"
+  ],
+  "takes": 0,
+  "samples": 27,
+  "playlist_readable": true,
+  "status": "OK",
+  "sessions": {}
+ }
+}

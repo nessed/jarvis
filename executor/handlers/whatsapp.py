@@ -1,4 +1,4 @@
-"""Blueprint step 1.4: recall -> route -> send -> remember for one inbound message.
+"""Blueprint step 1.4: cue -> recall -> route -> send -> remember for one inbound message.
 
 Turns a claimed ``whatsapp_webhook`` job's raw Meta payload into a routed LLM
 reply, sent back over the same client used everywhere else outbound
@@ -115,6 +115,7 @@ MemoryOpener = Callable[[], ConversationMemory]
 SeenStoreOpener = Callable[[], SeenMessageStore]
 Completion = Callable[[str, Sequence[Mapping[str, Any]]], RoutedResult]
 Sender = Callable[..., str]
+TypingIndicator = Callable[..., None]
 
 
 def memory_writes_enabled(environ: Mapping[str, str] | None = None) -> bool:
@@ -139,9 +140,10 @@ def build_whatsapp_webhook_handler(
     open_seen_messages: SeenStoreOpener = open_default_seen_message_store,
     complete: Completion | None = None,
     send_text_message: Sender | None = None,
+    show_typing_indicator: TypingIndicator | None = None,
     write_memory: bool | None = None,
 ) -> Callable[[Job], None]:
-    """Return a plain ``JobHandler`` closure wiring recall -> route -> send -> remember.
+    """Return a plain ``JobHandler`` closure wiring cue -> recall -> route -> send -> remember.
 
     Any raised exception (recall, routing, or send failure) propagates
     unchanged to the poller, which already retries/backs off/dead-letters it
@@ -163,8 +165,13 @@ def build_whatsapp_webhook_handler(
         client = WhatsAppClient(WhatsAppClientConfig.from_environ())
         return client.send_text_message(to=to, text=text)
 
+    def _default_show_typing_indicator(*, message_id: str) -> None:
+        client = WhatsAppClient(WhatsAppClientConfig.from_environ())
+        client.show_typing_indicator(message_id=message_id)
+
     completion = complete or _default_complete
     sender = send_text_message or _default_send
+    typing_indicator = show_typing_indicator or _default_show_typing_indicator
     write_memory = memory_writes_enabled() if write_memory is None else write_memory
 
     def handle(job: Job) -> None:
@@ -181,6 +188,17 @@ def build_whatsapp_webhook_handler(
                     inbound.message_id,
                 )
                 return
+
+        # Send the cosmetic cue before any local-memory work.  Recall can wait
+        # on Ollama, and postponing this call until after it leaves the user in
+        # silence even though the executor has already claimed their message.
+        # It remains best-effort: a Graph API failure must never delay a reply.
+        try:
+            typing_indicator(message_id=inbound.message_id)
+        except Exception as exc:
+            logger.warning("whatsapp typing indicator failed (job=%s, %s)", job.id, type(exc).__name__)
+        else:
+            logger.info("whatsapp typing indicator sent (job=%s, message_id=%s)", job.id, inbound.message_id)
 
         with open_memory() as memory:
             recalled = memory.recall(inbound.text, user_id=inbound.sender)

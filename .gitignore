@@ -29,3 +29,27 @@ voice/wakeword_clips/
 # The written findings under docs/tasks/ are tracked; the payloads are not.
 diagnostics/
 docs/tasks/laptop-power-lag-hp-downloads/
+
+# The cloned amd/whisper.cpp tree, its CMake build output, the FlexML runtime and
+# the Whisper large-v3 weights: ~3.9 GB of build artifacts, never committed.
+# The lane's own code under voice/whisper/ IS tracked; only these are not.
+voice/whisper/src/
+voice/whisper/flexmlrt/
+voice/whisper/models/
+voice/whisper/*.zip
+
+# XRT / Vitis AI drop profiling dumps beside the binary on every NPU run.
+# Regenerated each inference, so they would churn on every transcription.
+voice/whisper/*.json
+voice/whisper/*.csv
+voice/whisper/xrt.run_summary
+
+# Same XRT/Vitis AI profiling dumps, but written to the repo root instead of
+# voice/whisper/ when the NPU benchmark is invoked from cwd. Regenerated each
+# run; never committed.
+/cpu_inference_summary_vaiml_par_*.json
+/inference_summary_vaiml_par_*.json
+/record_timer_subgraph_cpu_ts.json
+/record_timer_ts.json
+/summary.csv
+/xrt.run_summary

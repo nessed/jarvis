@@ -23,3 +23,11 @@ soundfile==0.14.0
 onnxruntime==1.24.4
 torch==2.13.0
 torchaudio==2.11.0
+
+# --- desktop automation, blueprint 2.4 -------------------------------------
+# laptop-system-control: psutil for guarded process listing/killing.
+psutil==7.2.2
+# pywinauto-zoom-whatsapp: UIA automation for Zoom's join-dialog tail and
+# WhatsApp Desktop send. comtypes is pywinauto's own UIA backend dependency.
+pywinauto==0.6.9
+comtypes==1.4.16

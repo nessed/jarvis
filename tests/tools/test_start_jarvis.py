@@ -312,6 +312,27 @@ def test_resolves_on_public_dns_false_when_both_resolvers_are_unreachable(
 # The polling loop that waits for cloudflared to mint a URL in its log file.
 
 
+def test_tunnel_url_pattern_ignores_the_quick_tunnel_provisioning_api() -> None:
+    failed_provisioning = (
+        'failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": '
+        "dial tcp [2606:4700::6810:e684]:443: connectex"
+    )
+
+    assert start_jarvis.TUNNEL_URL_PATTERN.search(failed_provisioning) is None
+
+
+def test_tunnel_url_pattern_finds_a_minted_url_after_a_provisioning_error() -> None:
+    log = (
+        'failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel"\n'
+        "INF Your quick Tunnel has been created! https://foo-bar.trycloudflare.com\n"
+    )
+
+    found = start_jarvis.TUNNEL_URL_PATTERN.search(log)
+
+    assert found is not None
+    assert found.group(0) == "https://foo-bar.trycloudflare.com"
+
+
 def test_wait_for_tunnel_url_finds_a_url_already_present(tmp_path) -> None:
     log = tmp_path / "cloudflared.log"
     log.write_text("some preamble\nhttps://foo-bar.trycloudflare.com\nmore\n", encoding="utf-8")

@@ -1,0 +1,41 @@
+# Lane: whisper-npu-build. Dependencies for CORE to integrate.
+#
+# NO PYTHON PACKAGES.
+#
+# voice/whisper/local_backend.py imports only the standard library
+# (argparse, os, subprocess, sys, time, dataclasses, pathlib, typing) plus
+# voice.config, which the voice-deps-and-tooling lane already landed.
+# Nothing needs to be appended to requirements.txt for this lane.
+#
+# ---------------------------------------------------------------------------
+# What this lane DID install, which requirements.txt cannot express
+# ---------------------------------------------------------------------------
+# These are machine-level build tools, not Python packages. Recorded here so
+# the fact that they are now on this laptop is written down somewhere.
+#
+#   Kitware.CMake                       4.4.3
+#     winget install --id Kitware.CMake
+#     Installs to C:\Program Files\CMake.
+#     Note: CMake 4.x rejects `cmake_minimum_required(VERSION 3.5)`, which is
+#     what amd/whisper.cpp declares, so the configure step needs
+#     -DCMAKE_POLICY_VERSION_MINIMUM=3.5. Installing CMake 3.31 instead would
+#     also work and is what the upstream CI uses (3.28.1).
+#
+#   Microsoft.VisualStudio.2022.BuildTools
+#     workload Microsoft.VisualStudio.Workload.VCTools
+#     MSVC toolset 14.44.35207, Windows SDK 10.0.26100.0
+#     Installs to
+#     C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
+#
+# ---------------------------------------------------------------------------
+# Downloaded, untracked runtime artifacts (all under voice/whisper/)
+# ---------------------------------------------------------------------------
+# These are data, not dependencies, and must never be committed. See the
+# .gitignore lines in docs/tasks/whisper-npu-build-report.md.
+#
+#   voice/whisper/src/                            amd/whisper.cpp @ b40e6c8
+#   voice/whisper/flexmlrt/                       FlexML runtime 1.7.0 (Windows)
+#   voice/whisper/flexmlrt-1.7.0-win.zip          the archive it came from
+#   voice/whisper/models/ggml-large-v3.bin        Whisper large-v3 weights
+#   voice/whisper/models/ggml-large-v3-encoder-vitisai.rai
+#                                                 AMD's precompiled NPU encoder

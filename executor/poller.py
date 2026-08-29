@@ -28,6 +28,11 @@ from db.jobs import (
     retry_or_dead_letter,
     set_timeout,
 )
+from executor.app_automation.handler import (
+    WHATSAPP_DESKTOP_SEND_MESSAGE_JOB_KIND,
+    ZOOM_JOIN_MEETING_JOB_KIND,
+    build_app_automation_handler,
+)
 from executor.flp.sort import ReorderNotSupported, build_flp_sort_handler
 from executor.handlers.distill import (
     DISTILL_JOB_KIND,
@@ -38,6 +43,7 @@ from executor.handlers.distill import (
 )
 from executor.handlers.whatsapp import build_whatsapp_webhook_handler
 from executor.heartbeat import clear as clear_heartbeat, touch as touch_heartbeat
+from executor.system_control.handler import build_system_control_handler
 from router import RoutedResult, route
 
 
@@ -66,6 +72,7 @@ class HandlerRegistration:
 
 
 JobHandlers = Mapping[str, "HandlerRegistration | JobHandler"]
+WHATSAPP_JOB_KIND = "whatsapp_webhook"
 
 # The handler registry the executor consults at startup, by job kind.
 # ``memory_extract`` has no registered handler yet — nothing enqueues that
@@ -78,9 +85,18 @@ JobHandlers = Mapping[str, "HandlerRegistration | JobHandler"]
 # raises inside the handler thread rather than leaving that thread abandoned,
 # still holding the single local Ollama, while this loop claims the next job.
 # See ``executor/handlers/distill.py``.
+#
+# zoom_join_meeting and whatsapp_desktop_send_message share one handler
+# instance (see executor/app_automation/handler.py) which dispatches on
+# job.kind internally.
+_app_automation_handler = build_app_automation_handler()
+
 DEFAULT_HANDLERS: dict[str, HandlerRegistration] = {
-    "whatsapp_webhook": HandlerRegistration(build_whatsapp_webhook_handler()),
+    WHATSAPP_JOB_KIND: HandlerRegistration(build_whatsapp_webhook_handler()),
     "flp_sort": HandlerRegistration(build_flp_sort_handler()),
+    "system_control": HandlerRegistration(build_system_control_handler()),
+    ZOOM_JOIN_MEETING_JOB_KIND: HandlerRegistration(_app_automation_handler),
+    WHATSAPP_DESKTOP_SEND_MESSAGE_JOB_KIND: HandlerRegistration(_app_automation_handler),
     DISTILL_JOB_KIND: HandlerRegistration(
         build_distill_memory_handler(), timeout_seconds=DISTILL_TIMEOUT_SECONDS
     ),
@@ -97,6 +113,7 @@ def poll_once(
     repository: JobRepository | None = None,
     handler: JobHandler | None = None,
     handlers: JobHandlers | None = None,
+    kind_filter: str | None = None,
 ) -> Job | None:
     """Atomically claim and finish one ready job, if any.
 
@@ -112,7 +129,7 @@ def poll_once(
     stored diagnostic uses only an exception type, so payloads or provider
     details cannot leak into the durable queue.
     """
-    job = claim_next(repository=repository)
+    job = claim_next(kind_filter, repository=repository)
     if job is None:
         return None
 
@@ -220,6 +237,7 @@ def _run_with_timeout(registration: HandlerRegistration, job: Job) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the local executor until interrupted, or once for diagnostics."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     load_dotenv()
     # Here, and not at handler-build time: DEFAULT_HANDLERS is constructed at
     # module import, before load_dotenv has run, so a build-time check reads an
@@ -237,22 +255,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="seconds between polls when idle (default: 5)",
     )
     parser.add_argument("--once", action="store_true", help="claim at most one job and exit")
+    parser.add_argument(
+        "--kind",
+        choices=tuple(DEFAULT_HANDLERS),
+        help="claim only this registered job kind",
+    )
+    parser.add_argument(
+        "--no-heartbeat",
+        action="store_true",
+        help="do not maintain the shared executor heartbeat",
+    )
     args = parser.parse_args(argv)
     if args.interval <= 0:
         parser.error("--interval must be greater than zero")
 
-    if not args.once:
+    # A kind-filtered poller can only seed the chain it owns. This keeps the
+    # fast WhatsApp worker from touching background work and preserves the
+    # original unfiltered executor's startup behaviour for diagnostics.
+    seeds_distill = args.kind in (None, DISTILL_JOB_KIND)
+    if not args.once and seeds_distill:
         _seed_distill_chain()
+
+    handlers: JobHandlers = (
+        DEFAULT_HANDLERS
+        if args.kind is None
+        else {args.kind: DEFAULT_HANDLERS[args.kind]}
+    )
 
     try:
         while True:
             # Marks the executor live so batch tools (distill, backfill) can
             # refuse to compete for the single local Ollama. See
             # executor/heartbeat.py.
-            touch_heartbeat()
+            if not args.no_heartbeat:
+                touch_heartbeat()
             idle = True
             try:
-                idle = poll_once(handlers=DEFAULT_HANDLERS) is None
+                idle = poll_once(handlers=handlers, kind_filter=args.kind) is None
             except Exception as exc:
                 if args.once:
                     raise
@@ -265,7 +304,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # failed seed is otherwise silent forever). Retrying the
                 # idempotent seed here, once per idle cycle, gives it another
                 # chance without hitting Supabase on every busy iteration.
-                _seed_distill_chain()
+                if seeds_distill:
+                    _seed_distill_chain()
                 time.sleep(args.interval)
             # else: poll_once just finished real work and there may be more
             # queued -- loop straight back into another poll_once instead of
@@ -276,7 +316,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         # wait out up to DEFAULT_MAX_AGE_SECONDS of a stale-but-true guard
         # for no reason. A crash must NOT reach this branch -- see
         # executor/heartbeat.py's clear() docstring.
-        clear_heartbeat()
+        if not args.no_heartbeat:
+            clear_heartbeat()
         return 0
 
 

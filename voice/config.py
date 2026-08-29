@@ -124,3 +124,33 @@ def whisper_model_path() -> Path | None:
 def whisper_language() -> str:
     """Language hint for whisper.cpp; ``auto`` unless overridden."""
     return os.environ.get(WHISPER_LANGUAGE_ENV) or DEFAULT_WHISPER_LANGUAGE
+
+
+# ---------------------------------------------------------------------------
+# Text to speech
+#
+# Blueprint 3.2 puts the voice choice with Ali, by ear, and he picked `am_puck`
+# on 29 Aug 2026 after auditioning the installed Kokoro packs. It is recorded
+# here rather than left to a caller's default so every speaking path -- the
+# WhatsApp voice reply and the live loop both -- uses the same voice without
+# each one choosing again.
+#
+# Changing this changes what JARVIS sounds like, which is his call and not an
+# agent's. Override per-run with the env var if experimenting.
+# ---------------------------------------------------------------------------
+TTS_VOICE_ENV = "JARVIS_TTS_VOICE"
+DEFAULT_TTS_VOICE = "am_puck"
+
+# Kokoro-82M synthesises at 24 kHz. This is the model's rate, not a preference;
+# resampling before playback is an audible loss in the thing being judged.
+TTS_SAMPLE_RATE = 24000
+
+# Kokoro's pipeline code must agree with the voice id's prefix or the
+# phonemiser mismatches the pack. `am_` is American English.
+DEFAULT_TTS_LANG = "a"
+
+
+def tts_voice() -> str:
+    """The chosen Kokoro voice id."""
+    return os.environ.get(TTS_VOICE_ENV) or DEFAULT_TTS_VOICE
+

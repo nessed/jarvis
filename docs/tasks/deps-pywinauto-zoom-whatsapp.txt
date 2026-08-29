@@ -1,0 +1,14 @@
+pywinauto==0.6.9
+# comtypes==1.4.16 is pywinauto's own transitive dependency (its UIA backend
+# uses COM); pinning it too since pip resolved it alongside pywinauto during
+# this lane's install and requirements.txt otherwise pins every dependency
+# directly (see e.g. onnxruntime's comment in the voice-runtime deps).
+comtypes==1.4.16
+
+# Proof of import, this machine, 29 Aug 2026:
+#   .venv\Scripts\python.exe -m pip install pywinauto
+#   -> Successfully installed comtypes-1.4.16 pywinauto-0.6.9
+#   .venv\Scripts\python.exe -c "import pywinauto; print(pywinauto.__version__)"
+#   -> 0.6.9
+# No Python-version interpreter constraint like PyFLP's (executor/flp/sort.py)
+# -- imports and runs fine under this repo's main .venv (CPython 3.12.10).

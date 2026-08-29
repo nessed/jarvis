@@ -216,6 +216,42 @@ class TestWhatsAppWebhookHandler:
         assert sent == [{"to": "15550001111", "text": "Max is a good boy!"}]
         assert seen.mark_sent_calls == ["wamid.1"]
 
+    def test_shows_native_typing_indicator_before_memory_recall_and_routing(self) -> None:
+        order: list[str] = []
+
+        class OrderRecordingMemory(FakeMemory):
+            def recall(self, query: str, **kwargs: object):
+                order.append("recall")
+                return super().recall(query, **kwargs)
+
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: OrderRecordingMemory([]),
+            open_seen_messages=FakeSeenStore,
+            show_typing_indicator=lambda *, message_id: order.append(f"typing:{message_id}"),
+            complete=lambda *_: order.append("route") or _fake_completion_response("On it."),
+            send_text_message=lambda **_: order.append("send") or "wamid.reply",
+            write_memory=False,
+        )
+
+        handler(_job(_text_message_payload(message_id="wamid.typing")))
+
+        assert order == ["typing:wamid.typing", "recall", "route", "send"]
+
+    def test_a_typing_indicator_failure_does_not_block_the_real_reply(self) -> None:
+        sent: list[dict[str, object]] = []
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: FakeMemory([]),
+            open_seen_messages=FakeSeenStore,
+            show_typing_indicator=lambda **_: (_ for _ in ()).throw(RuntimeError("Graph unavailable")),
+            complete=lambda *_: _fake_completion_response("Still replying."),
+            send_text_message=lambda **kwargs: sent.append(kwargs) or "wamid.reply",
+            write_memory=False,
+        )
+
+        handler(_job(_text_message_payload()))
+
+        assert sent == [{"to": "15550001111", "text": "Still replying."}]
+
     def test_recalled_memory_never_reaches_the_model_as_a_system_message(self) -> None:
         """Stored inbound text must not come back wearing the operator's role.
 

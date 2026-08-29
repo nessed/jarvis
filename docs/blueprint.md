@@ -116,6 +116,7 @@ All holds: amd/whisper.cpp fork for NPU-offloaded STT (Urdu/English stays on Whi
 ## 3. Always-on presence **[UPDATED]**
 
 - **VPS/laptop split unchanged:** VPS holds webhook receiver, FastAPI bus, job queue, scheduler, web UI, light LLM calls. Laptop is the executor for files, FL/PyFLP, NPU inference, UIA, local memory.
+- **WhatsApp responsiveness — approved 29 Aug 2026.** The Meta webhook stays validate/deduplicate/**enqueue-only**. The laptop runs a dedicated responsive poller which claims only `whatsapp_webhook` jobs, and a separate background poller which claims every other registered kind, including `distill_memory`; the background poller alone seeds the distillation chain. This makes slow offline work unable to occupy the reply worker before it can emit Meta's typing cue. The launcher supervises both processes independently. The unfiltered poller CLI remains available for diagnostics and backward compatibility.
 - **Oracle Cloud Always Free — confirmed, still the winner.** 2 OCPU / 12GB Ampere A1 (1,500 OCPU-hrs + 9,000 GB-hrs/mo), 200GB block storage, 10TB egress. The Aug 18 2026 enforcement date has passed — provision new instances at 2/12 from day one and you're clean. 2/12 is ample for this stack. ARM capacity shortages in some regions still apply; retry or pick a quieter region. Cost: PKR 0.
 - **Hetzner CX22 (~PKR 1,240/mo) stays the paid fallback.** Fly/Railway/Cloudflare notes unchanged.
 - **Modern Standby / no-WoL constraint unchanged:** `powercfg` stay-awake-on-AC profile when jobs are expected, durable queue so sleeping just delays execution.
@@ -132,6 +133,117 @@ All holds: amd/whisper.cpp fork for NPU-offloaded STT (Urdu/English stays on Whi
 - **Correction to the migration path:** Zep retired its self-hosted Community Edition in 2025. If you outgrow Mem0 on temporal reasoning ("what changed since last month"), the free migration target is **Graphiti** (Zep's open-source engine, standalone) — Zep hosted costs money. The ~1,000-entry / stale-recall threshold for considering the move stands.
 - Embeddings (nomic-embed-text default, EmbeddingGemma/Qwen3-Embedding for quality), sqlite-vec on laptop, Supabase pgvector on VPS, raw personal data local-only: all unchanged.
 - Plain markdown + local semantic search remains the underrated portable option. Also note Anthropic ships an example "import-memory" skill pattern — Claude-native memory files are a legit lightweight layer alongside Mem0 for the Claude-executor side.
+
+---
+
+## 5. Interface — the ambient circle **[NEW, dictated by Ali 29 Aug 2026]**
+
+This is the endgame for the second-monitor experience, dictated directly —
+not an agent proposal. It supersedes any implication elsewhere in this
+document that Phase 4's "web UI" is a conventional dashboard with a sidebar,
+chat log, or settings pages. It is not. Treat this section as the target for
+whatever eventually runs on the second monitor; the VPS/laptop split, job
+queue, and voice pipeline elsewhere in this doc are the backend the circle
+sits on top of, unchanged.
+
+**Core idea: one circle, almost no permanent text, state communicated
+entirely through motion.** The circle *is* the assistant's whole visual
+language:
+
+| State | Circle behavior |
+|---|---|
+| Sleeping | tiny / static / dim |
+| Listening | gently expands with your voice |
+| Understanding | slow rotational/pulse motion |
+| Working | smooth continuous orbital movement |
+| Speaking | waveform-like deformation synced to speech |
+| Needs permission | distinct repeating pulse |
+| Error | brief shake/distortion |
+| Finished | quick contraction → idle |
+
+The animation must reflect **actual backend agent state**, not play
+arbitrary loops — the runtime exposes a state machine (`IDLE → LISTENING →
+TRANSCRIBING → THINKING → PLANNING → EXECUTING → SPEAKING → IDLE`) and the
+frontend is a dumb renderer of it, knowing nothing about LLMs, tools, or the
+job queue.
+
+**No transcript on monitor 2, ever.** Putting `USER: ... / JARVIS: ...` on
+screen reinvents a chatbot with a microphone — exactly what this is meant to
+not be. No window chrome; transparent/fullscreen background; the circle
+floats, optionally repositionable. **No UI until UI is necessary** is the
+governing principle for the whole surface.
+
+**The one exception: irreversible or sensitive actions get real UI.**
+Example: before deleting 1,382 unused audio files, the empty screen
+temporarily shows the count, the size, and explicit Cancel/Delete buttons —
+then collapses back to the circle the instant a decision is made. This is
+where confirmation-worthy actions (anything the "Destructive operations need
+explicit human approval" rule in `agents.md`/`CLAUDE.md` already covers)
+surface visually — the circle is silent about *what* is happening, never
+silent about *whether permission is needed*.
+
+**Push-to-talk is the default input, not always-on wake-word.** A remapped
+Copilot key drives it, contextually:
+
+- **Hold** → speak to Jarvis (release to execute)
+- **Tap** → toggle conversational/wake-word mode on, for anyone who wants
+  always-on `"Jarvis"` activation instead
+- **Double-tap** → stop the current task, immediately — not queued behind
+  whatever the agent is doing
+- **Tap while Jarvis is speaking** → interrupt/mute, mid-sentence
+- **Long-hold** → capture current screen/app context at the moment the key
+  was pressed, so "Jarvis, what the **** is this?" while looking at an FL
+  Studio error resolves "this" from a screenshot taken at press-time, not a
+  follow-up upload flow
+
+Always-on listening is a real option too (for people who want it), but
+false activations, privacy, background-conversation capture, and idle CPU
+draw are real costs — wake-word detection must run **locally** so audio is
+never streamed anywhere just to detect the wake word. The circle's own
+`○ / ◉ / ◉)))` states (off / listening for wake word / actively hearing you)
+are the mitigation for "is this thing currently listening?" rather than a
+settings toggle.
+
+**Barge-in matters more than any visual polish.** Mid-reply, "just fix the
+drums" should cut Jarvis off immediately, get a one-line acknowledgment, and
+redirect — that responsiveness sells the assistant illusion more than any
+animation would. "Stop" is never queued behind current work; it preempts.
+
+**The architecture point worth keeping:** the circle is not Jarvis's
+interface. The computer — screen, apps, files, the agent runtime already
+described in this blueprint — is Jarvis's interface. The circle only
+communicates presence, attention, and state.
+
+```text
+             ┌─────────────┐
+             │     YOU     │
+             └──────┬──────┘
+                    │
+          Voice / Copilot key
+                    │
+                    ▼
+                 ◉ JARVIS
+                    │
+              Agent runtime
+                    │
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+      Screen      Apps        Files
+        │           │           │
+        └───────────┬───────────┘
+                    ▼
+              Your computer
+```
+
+**What will actually be hard, per this same conversation:** not drawing the
+circle — making voice latency, interruption, permission prompts,
+cancellation, screen-context capture, and agent execution reliable enough
+that the user stops thinking about the UI at all. The extreme minimalism
+only works if those are solid; a laggy or unreliable backend behind a bare
+circle reads as broken, not elegant. Build order elsewhere in this document
+(voice in Phase 3, always-on split in Phase 4) is unchanged by this section
+— this is the target shape of the thing those phases are building toward,
+not a new phase.
 
 ---
 

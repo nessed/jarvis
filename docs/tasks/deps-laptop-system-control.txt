@@ -1,0 +1,11 @@
+psutil==7.2.2
+# Rationale: executor/system_control/processes.py needs psutil.process_iter /
+# psutil.Process / psutil.NoSuchProcess for exact-name/pid process lookup and
+# termination. Not previously in requirements.txt. Confirmed importable in
+# .venv after `pip install psutil==7.2.2` (2026-08-29):
+#   .venv\Scripts\python.exe -c "import psutil"
+# pywin32 (win32print/win32api, used by executor/system_control/printing.py)
+# is NOT added here: it is already part of the pinned pywin32 install (see
+# docs/tasks/laptop-system-control.md), confirmed importable without any new
+# install:
+#   .venv\Scripts\python.exe -c "import win32print, win32api"
