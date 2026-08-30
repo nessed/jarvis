@@ -4,6 +4,12 @@ Four processes have to be up for a WhatsApp message to get a reply:
 
     phone -> Meta -> tunnel -> bus -> Supabase queue -> WhatsApp worker -> reply
 
+A fifth, ``whisper-server``, is additionally needed for a *voice note* to get
+a reply -- text keeps working without it. It is started best-effort: missing
+NPU build artifacts (voice/whisper/local_backend.py's own availability check)
+produce a warning here, not a failed launch, since that build is machine-local
+and never committed.
+
 Starting them by hand means five steps in the right order, plus re-pointing
 Meta's callback every time the Cloudflare Quick Tunnel mints a new URL. This
 does all of it, waits for each piece to actually answer before starting the
@@ -105,11 +111,13 @@ class Supervisor:
     def __init__(self) -> None:
         self.children: list[tuple[str, subprocess.Popen]] = []
 
-    def spawn(self, name: str, args: list[str], log: Path) -> subprocess.Popen:
+    def spawn(
+        self, name: str, args: list[str], log: Path, env: dict[str, str] | None = None
+    ) -> subprocess.Popen:
         handle = log.open("w", encoding="utf-8", errors="replace")
         flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         process = subprocess.Popen(
-            args, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT, creationflags=flags
+            args, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT, creationflags=flags, env=env
         )
         self.children.append((name, process))
         return process
@@ -253,6 +261,23 @@ def wait_for_tunnel_url(log: Path, timeout: float = 60.0) -> str | None:
     return None
 
 
+def wait_for_whisper_server(timeout: float = 60.0) -> bool:
+    """``whisper-server``'s ``/health`` reports ``ok`` once the model has loaded.
+
+    Imported lazily, same as ``httpx`` above and for the same reason: nothing
+    outside the standard library loads until after the singleton lock.
+    """
+    from voice.whisper.server_client import WhisperServerClient
+
+    client = WhisperServerClient()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if client.is_ready():
+            return True
+        time.sleep(1.0)
+    return False
+
+
 def tunnel_reachable(url: str, timeout: float = 45.0) -> bool:
     """A Quick Tunnel answers its own 5xx for a while before the origin is wired."""
     import httpx
@@ -321,14 +346,14 @@ def main(argv: list[str] | None = None) -> int:
     print("Starting JARVIS", flush=True)
 
     try:
-        step("[1/4] Local AI (Ollama)")
+        step("[1/5] Local AI (Ollama)")
         if not ollama_ready():
             say("Ollama is not answering on 127.0.0.1:11434.")
             say("Start it and run this again — memory needs it.")
             return 1
         say("ready")
 
-        step("[2/4] Webhook receiver")
+        step("[2/5] Webhook receiver")
         bus_log = LOG_DIR / "bus.out.log"
         supervisor.spawn(
             "bus",
@@ -340,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         say(f"listening on {BUS_HOST}:{BUS_PORT}")
 
-        step("[3/4] Public tunnel")
+        step("[3/5] Public tunnel")
         cloudflared = ROOT / "tools" / ("cloudflared.exe" if os.name == "nt" else "cloudflared")
         if not cloudflared.exists():
             say(f"cloudflared not found at {cloudflared}")
@@ -394,7 +419,45 @@ def main(argv: list[str] | None = None) -> int:
                     say(f"  {line}")
                 say("replies will not arrive until this is fixed")
 
-        step("[4/4] Workers")
+        step("[4/5] Voice (whisper-server)")
+        from voice.whisper.local_backend import LocalWhisperBackend, subprocess_env
+        from voice.whisper.server_client import WhisperServerConfig
+
+        backend = LocalWhisperBackend()
+        availability = backend.availability()
+        if not availability.available:
+            say(f"skipping: {availability.reason}")
+            say("text messages are unaffected; voice notes will not get a reply until this is built")
+        else:
+            server_config = WhisperServerConfig.from_environ()
+            whisper_log = LOG_DIR / "whisper-server.out.log"
+            supervisor.spawn(
+                "whisper-server",
+                [
+                    str(backend.binary),
+                    "-m",
+                    str(backend.model),
+                    "-l",
+                    backend.language,
+                    "--host",
+                    server_config.host,
+                    "--port",
+                    str(server_config.port),
+                ],
+                whisper_log,
+                # Same defensive PATH prepend as the CLI backend
+                # (voice/whisper/local_backend.py): flexmlrt.dll is normally
+                # staged next to the binary already, but a partial build
+                # should still run rather than die with an opaque loader error.
+                env=subprocess_env(),
+            )
+            if wait_for_whisper_server():
+                say(f"listening on {server_config.host}:{server_config.port}")
+            else:
+                say(f"never became ready — see {whisper_log}")
+                say("text messages are unaffected; voice notes will fail until this is fixed")
+
+        step("[5/5] Workers")
         supervisor.spawn(
             "whatsapp-worker",
             [

@@ -383,6 +383,47 @@ def test_wait_for_tunnel_url_gives_up_when_no_match_appears_before_the_timeout(
     assert start_jarvis.wait_for_tunnel_url(log, timeout=1) is None
 
 
+# --- wait_for_whisper_server --------------------------------------------------
+#
+# Same "poll until ready, give up before the deadline" shape as
+# wait_for_tunnel_url, but the thing polled is a WhisperServerClient, imported
+# lazily inside the function under test -- so these patch the class on the
+# module it actually lives on, which is what the lazy `from ... import`
+# re-resolves on every call.
+
+
+def test_wait_for_whisper_server_returns_true_once_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    from voice.whisper import server_client
+
+    class EventuallyReady:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def is_ready(self) -> bool:
+            self.calls += 1
+            return self.calls >= 2
+
+    monkeypatch.setattr(server_client, "WhisperServerClient", EventuallyReady)
+    monkeypatch.setattr(start_jarvis.time, "sleep", lambda seconds: None)
+
+    assert start_jarvis.wait_for_whisper_server(timeout=5) is True
+
+
+def test_wait_for_whisper_server_gives_up_before_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from voice.whisper import server_client
+
+    class NeverReady:
+        def is_ready(self) -> bool:
+            return False
+
+    clock = iter([0.0, 0.1, 100.0])
+    monkeypatch.setattr(server_client, "WhisperServerClient", NeverReady)
+    monkeypatch.setattr(start_jarvis.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(start_jarvis.time, "sleep", lambda seconds: None)
+
+    assert start_jarvis.wait_for_whisper_server(timeout=1) is False
+
+
 # --- Supervisor.shutdown -----------------------------------------------------
 #
 # The Ctrl+C / child-death handling: terminate every live child, wait up to a

@@ -3,7 +3,12 @@ import json
 import httpx
 import pytest
 
-from bus.whatsapp_client import WhatsAppClient, WhatsAppClientConfig, WhatsAppSendError
+from bus.whatsapp_client import (
+    WhatsAppClient,
+    WhatsAppClientConfig,
+    WhatsAppReceiveError,
+    WhatsAppSendError,
+)
 
 
 def fake_transport(handler):
@@ -256,3 +261,76 @@ def test_send_voice_note_rejects_a_blank_recipient_before_uploading():
     with pytest.raises(WhatsAppSendError):
         client.send_voice_note(to="   ", audio=b"bytes")
     assert calls == []
+
+
+def test_download_media_resolves_the_id_to_a_url_then_fetches_it_with_the_same_token():
+    """Meta's documented two-call shape: id -> short-lived URL -> bytes."""
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if str(request.url).endswith("/media-id-777"):
+            return httpx.Response(
+                200,
+                json={
+                    "url": "https://lookaside.fbsbx.com/whatsapp_business/attachments/fake",
+                    "mime_type": "audio/ogg; codecs=opus",
+                },
+            )
+        return httpx.Response(200, content=b"OggS-fake-opus-bytes")
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    client = WhatsAppClient(config, transport=fake_transport(handler))
+
+    content, mime_type = client.download_media(media_id="media-id-777")
+
+    assert content == b"OggS-fake-opus-bytes"
+    assert mime_type == "audio/ogg; codecs=opus"
+    assert len(calls) == 2
+    assert str(calls[0].url) == "https://graph.facebook.com/v21.0/media-id-777"
+    assert calls[0].headers.get("authorization") == "Bearer a-generic-test-token"
+    assert str(calls[1].url) == "https://lookaside.fbsbx.com/whatsapp_business/attachments/fake"
+    assert calls[1].headers.get("authorization") == "Bearer a-generic-test-token"
+
+
+def test_download_media_rejects_a_blank_media_id_before_any_request():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={"url": "https://example.invalid/x"})
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    client = WhatsAppClient(config, transport=fake_transport(handler))
+
+    with pytest.raises(WhatsAppReceiveError, match="Media id"):
+        client.download_media(media_id="   ")
+    assert calls == []
+
+
+def test_download_media_raises_on_a_malformed_lookup_response():
+    def handler(request):
+        return httpx.Response(200, json={"unexpected": "shape"})
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    client = WhatsAppClient(config, transport=fake_transport(handler))
+
+    with pytest.raises(WhatsAppReceiveError, match="unexpected response shape"):
+        client.download_media(media_id="media-id-777")
+
+
+def test_download_media_surfaces_a_failed_fetch_without_the_token():
+    def handler(request):
+        if str(request.url).endswith("/media-id-777"):
+            return httpx.Response(200, json={"url": "https://lookaside.fbsbx.com/x", "mime_type": "audio/ogg"})
+        return httpx.Response(404, json={"error": {"code": 404, "message": "gone"}})
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    client = WhatsAppClient(config, transport=fake_transport(handler))
+
+    with pytest.raises(WhatsAppReceiveError) as exc_info:
+        client.download_media(media_id="media-id-777")
+
+    message = str(exc_info.value)
+    assert "code=404" in message
+    assert "a-generic-test-token" not in message

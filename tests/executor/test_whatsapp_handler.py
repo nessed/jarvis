@@ -12,6 +12,7 @@ from executor.handlers.whatsapp import (
     build_whatsapp_webhook_handler,
     memory_writes_enabled,
     open_default_seen_message_store,
+    parse_inbound_message,
     parse_inbound_text_message,
 )
 from router import RoutedResult
@@ -51,6 +52,36 @@ def _text_message_payload(
                                     "timestamp": "1700000000",
                                     "type": "text",
                                     "text": {"body": text},
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def _audio_message_payload(
+    *, sender: str = "15550001111", media_id: str = "media-id-777", message_id: str = "wamid.voice"
+) -> dict[str, object]:
+    return {
+        "entry": [
+            {
+                "id": "event-1",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "contacts": [{"wa_id": sender, "profile": {"name": "Generic User"}}],
+                            "messages": [
+                                {
+                                    "from": sender,
+                                    "id": message_id,
+                                    "timestamp": "1700000000",
+                                    "type": "audio",
+                                    "audio": {"id": media_id, "mime_type": "audio/ogg; codecs=opus"},
                                 }
                             ],
                         },
@@ -105,6 +136,42 @@ class TestParseInboundTextMessage:
         del payload["entry"][0]["changes"][0]["value"]["messages"][0]["id"]
 
         assert parse_inbound_text_message(payload) is None
+
+    def test_an_audio_message_is_not_a_text_message(self) -> None:
+        assert parse_inbound_text_message(_audio_message_payload()) is None
+
+
+class TestParseInboundMessage:
+    def test_extracts_a_text_message_same_as_the_text_only_parser(self) -> None:
+        message = parse_inbound_message(
+            _text_message_payload(sender="15550001111", text="Hi there", message_id="wamid.abc123")
+        )
+
+        assert message == InboundMessage(sender="15550001111", text="Hi there", message_id="wamid.abc123")
+
+    def test_extracts_an_audio_messages_media_id_with_no_text(self) -> None:
+        message = parse_inbound_message(
+            _audio_message_payload(sender="15550001111", media_id="media-id-777", message_id="wamid.voice")
+        )
+
+        assert message == InboundMessage(
+            sender="15550001111", text=None, message_id="wamid.voice", audio_media_id="media-id-777"
+        )
+
+    def test_an_audio_message_missing_its_media_id_is_not_a_message(self) -> None:
+        payload = _audio_message_payload()
+        del payload["entry"][0]["changes"][0]["value"]["messages"][0]["audio"]["id"]
+
+        assert parse_inbound_message(payload) is None
+
+    def test_an_image_message_is_ignored(self) -> None:
+        payload = _text_message_payload()
+        payload["entry"][0]["changes"][0]["value"]["messages"][0]["type"] = "image"
+
+        assert parse_inbound_message(payload) is None
+
+    def test_status_only_payload_is_not_a_message(self) -> None:
+        assert parse_inbound_message(_status_only_payload()) is None
 
 
 class FakeFact:
@@ -463,6 +530,87 @@ class TestWhatsAppWebhookHandler:
 
         assert seen.mark_sent_calls == []
         assert seen.has_sent("wamid.retry-me") is False
+
+
+class TestWhatsAppVoiceNotes:
+    def test_a_voice_note_is_downloaded_transcribed_routed_and_answered_with_a_voice_note(self) -> None:
+        memory = FakeMemory([])
+        seen = FakeSeenStore()
+        downloaded: list[str] = []
+        transcribed: list[bytes] = []
+        synthesized: list[str] = []
+        voice_sent: list[dict[str, object]] = []
+
+        def fake_complete(task_profile, messages):
+            assert messages[-1] == {"role": "user", "content": "how's the weather"}
+            return _fake_completion_response("Sunny all week.")
+
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: memory,
+            open_seen_messages=lambda: seen,
+            complete=fake_complete,
+            send_text_message=lambda **_: pytest.fail("a voice note must not get a text reply"),
+            download_media=lambda media_id: (downloaded.append(media_id) or b"ogg-bytes", "audio/ogg"),
+            transcribe_audio=lambda audio: transcribed.append(audio) or "how's the weather",
+            synthesize_voice_reply=lambda text: synthesized.append(text) or b"opus-bytes",
+            send_voice_note=lambda **kwargs: voice_sent.append(kwargs) or "wamid.voice-reply",
+            write_memory=True,
+        )
+
+        handler(_job(_audio_message_payload(sender="15550001111", media_id="media-id-777", message_id="wamid.voice")))
+
+        assert downloaded == ["media-id-777"]
+        assert transcribed == [b"ogg-bytes"]
+        assert synthesized == ["Sunny all week."]
+        assert voice_sent == [{"to": "15550001111", "audio": b"opus-bytes"}]
+        assert seen.mark_sent_calls == ["wamid.voice"]
+        assert memory.remember_calls == [
+            ("how's the weather", {"user_id": "15550001111", "role": "user"}),
+            ("Sunny all week.", {"user_id": "15550001111", "role": "assistant"}),
+        ]
+
+    def test_a_voice_note_that_transcribes_to_nothing_is_a_silent_no_op(self) -> None:
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: pytest.fail("must not recall for a blank transcript"),
+            open_seen_messages=FakeSeenStore,
+            download_media=lambda media_id: (b"ogg-bytes", "audio/ogg"),
+            transcribe_audio=lambda audio: "   ",
+            complete=lambda *_: pytest.fail("must not route a blank transcript"),
+            send_voice_note=lambda **_: pytest.fail("must not reply to a blank transcript"),
+        )
+
+        handler(_job(_audio_message_payload()))
+
+    def test_a_transcription_failure_propagates_like_every_other_step(self) -> None:
+        seen = FakeSeenStore()
+
+        def failing_transcribe(audio: bytes) -> str:
+            raise RuntimeError("whisper-server not reachable")
+
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: pytest.fail("must not recall when transcription fails"),
+            open_seen_messages=lambda: seen,
+            download_media=lambda media_id: (b"ogg-bytes", "audio/ogg"),
+            transcribe_audio=failing_transcribe,
+            send_voice_note=lambda **_: pytest.fail("must not reply when transcription fails"),
+        )
+
+        with pytest.raises(RuntimeError, match="whisper-server not reachable"):
+            handler(_job(_audio_message_payload(message_id="wamid.voice-fails")))
+
+        assert seen.mark_sent_calls == []
+
+    def test_a_text_message_still_uses_the_text_sender_not_the_voice_sender(self) -> None:
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: FakeMemory([]),
+            open_seen_messages=FakeSeenStore,
+            complete=lambda *_: _fake_completion_response("Hi."),
+            send_text_message=lambda **kwargs: "wamid.reply",
+            send_voice_note=lambda **_: pytest.fail("a text message must not get a voice reply"),
+            write_memory=False,
+        )
+
+        handler(_job(_text_message_payload()))
 
 
 class TestSeenMessageStore:

@@ -5,6 +5,14 @@ reply, sent back over the same client used everywhere else outbound
 (``bus.whatsapp_client.WhatsAppClient``). Memory, routing, and sending are all
 injectable so this can be unit-tested without Ollama, a live provider, or the
 Graph API.
+
+Blueprint 3.3's second half lives here too: "WhatsApp voice note -> transcript
+-> bus -> action -> Kokoro reply". A voice note is downloaded, decoded, and
+transcribed before it ever reaches recall/routing, so from that point on it is
+indistinguishable from a typed message -- and the reply comes back the same
+way it arrived, voice for voice, text for text. Downloading, transcribing, and
+synthesizing are each injectable for the same reason send/complete already
+were: no NPU, no Kokoro model, and no Graph API needed to test the wiring.
 """
 
 from __future__ import annotations
@@ -34,33 +42,65 @@ SYSTEM_PROMPT = (
 
 @dataclass(frozen=True)
 class InboundMessage:
-    """The one thing this handler needs out of a raw Meta webhook payload."""
+    """The one thing this handler needs out of a raw Meta webhook payload.
+
+    Exactly one of ``text`` or ``audio_media_id`` is set. A text message has
+    ``text`` and no media id; a voice note has ``audio_media_id`` and no text
+    until :func:`build_whatsapp_webhook_handler`'s transcription step fills it
+    in downstream — this dataclass itself never runs STT.
+    """
 
     sender: str
-    text: str
+    text: str | None
     message_id: str
+    audio_media_id: str | None = None
 
 
-def parse_inbound_text_message(payload: Mapping[str, Any]) -> InboundMessage | None:
-    """Extract the first inbound text message from a raw Meta webhook payload.
+def parse_inbound_message(payload: Mapping[str, Any]) -> InboundMessage | None:
+    """Extract the first inbound text or voice-note message from a raw Meta webhook payload.
 
-    Returns ``None`` for anything that is not an inbound text message —
-    delivery/read status callbacks, non-text message types (image, audio,
-    reaction, ...), and malformed or empty payloads are all silent no-ops,
-    not errors, since Meta sends all of those to the same webhook.
+    Returns ``None`` for anything that is neither — delivery/read status
+    callbacks, other message types (image, reaction, ...), and malformed or
+    empty payloads are all silent no-ops, not errors, since Meta sends all of
+    those to the same webhook.
     """
     for entry in payload.get("entry") or []:
         for change in entry.get("changes") or []:
             value = change.get("value") or {}
             for message in value.get("messages") or []:
-                if message.get("type") != "text":
-                    continue
                 sender = message.get("from")
-                text = (message.get("text") or {}).get("body")
                 message_id = message.get("id")
-                if sender and text and message_id:
-                    return InboundMessage(sender=str(sender), text=str(text), message_id=str(message_id))
+                if not sender or not message_id:
+                    continue
+                message_type = message.get("type")
+                if message_type == "text":
+                    text = (message.get("text") or {}).get("body")
+                    if text:
+                        return InboundMessage(sender=str(sender), text=str(text), message_id=str(message_id))
+                elif message_type == "audio":
+                    media_id = (message.get("audio") or {}).get("id")
+                    if media_id:
+                        return InboundMessage(
+                            sender=str(sender),
+                            text=None,
+                            message_id=str(message_id),
+                            audio_media_id=str(media_id),
+                        )
     return None
+
+
+def parse_inbound_text_message(payload: Mapping[str, Any]) -> InboundMessage | None:
+    """Extract the first inbound *text* message only.
+
+    Kept as its own entry point — narrower than :func:`parse_inbound_message`
+    — because it predates the voice path and existing callers/tests depend on
+    its text-only contract. Delegates to the shared parser so the two never
+    disagree about what counts as a valid text message.
+    """
+    message = parse_inbound_message(payload)
+    if message is None or message.text is None:
+        return None
+    return message
 
 
 class SeenMessageStore:
@@ -116,6 +156,9 @@ SeenStoreOpener = Callable[[], SeenMessageStore]
 Completion = Callable[[str, Sequence[Mapping[str, Any]]], RoutedResult]
 Sender = Callable[..., str]
 TypingIndicator = Callable[..., None]
+MediaDownloader = Callable[[str], tuple[bytes, str]]
+AudioTranscriber = Callable[[bytes], str]
+VoiceSynthesizer = Callable[[str], bytes]
 
 
 def memory_writes_enabled(environ: Mapping[str, str] | None = None) -> bool:
@@ -141,6 +184,10 @@ def build_whatsapp_webhook_handler(
     complete: Completion | None = None,
     send_text_message: Sender | None = None,
     show_typing_indicator: TypingIndicator | None = None,
+    download_media: MediaDownloader | None = None,
+    transcribe_audio: AudioTranscriber | None = None,
+    synthesize_voice_reply: VoiceSynthesizer | None = None,
+    send_voice_note: Sender | None = None,
     write_memory: bool | None = None,
 ) -> Callable[[Job], None]:
     """Return a plain ``JobHandler`` closure wiring cue -> recall -> route -> send -> remember.
@@ -169,15 +216,43 @@ def build_whatsapp_webhook_handler(
         client = WhatsAppClient(WhatsAppClientConfig.from_environ())
         client.show_typing_indicator(message_id=message_id)
 
+    def _default_download_media(media_id: str) -> tuple[bytes, str]:
+        client = WhatsAppClient(WhatsAppClientConfig.from_environ())
+        return client.download_media(media_id=media_id)
+
+    def _default_transcribe_audio(audio: bytes) -> str:
+        # Imported here, not at module scope: this handler runs on every
+        # WhatsApp message, most of which are text, and soundfile/httpx-heavy
+        # voice imports have no business loading for those.
+        from voice.audio import to_transcribable_wav
+        from voice.config import whisper_language
+        from voice.whisper.server_client import WhisperServerClient
+
+        wav = to_transcribable_wav(audio)
+        return WhisperServerClient().transcribe(wav, language=whisper_language())
+
+    def _default_synthesize_voice_reply(text: str) -> bytes:
+        from voice.speak import text_to_voice_note
+
+        return text_to_voice_note(text)
+
+    def _default_send_voice_note(*, to: str, audio: bytes) -> str:
+        client = WhatsAppClient(WhatsAppClientConfig.from_environ())
+        return client.send_voice_note(to=to, audio=audio)
+
     completion = complete or _default_complete
     sender = send_text_message or _default_send
     typing_indicator = show_typing_indicator or _default_show_typing_indicator
+    media_downloader = download_media or _default_download_media
+    audio_transcriber = transcribe_audio or _default_transcribe_audio
+    voice_synthesizer = synthesize_voice_reply or _default_synthesize_voice_reply
+    voice_sender = send_voice_note or _default_send_voice_note
     write_memory = memory_writes_enabled() if write_memory is None else write_memory
 
     def handle(job: Job) -> None:
-        inbound = parse_inbound_text_message(job.payload)
+        inbound = parse_inbound_message(job.payload)
         if inbound is None:
-            logger.info("whatsapp webhook job carried no inbound text message (job=%s)", job.id)
+            logger.info("whatsapp webhook job carried no inbound message (job=%s)", job.id)
             return
 
         with open_seen_messages() as seen:
@@ -200,13 +275,37 @@ def build_whatsapp_webhook_handler(
         else:
             logger.info("whatsapp typing indicator sent (job=%s, message_id=%s)", job.id, inbound.message_id)
 
+        is_voice = inbound.audio_media_id is not None
+        if is_voice:
+            # Download/decode/transcribe failures propagate unchanged, same as
+            # every other step in this handler — see the module docstring. A
+            # retry can plausibly succeed (whisper-server mid-restart, a
+            # network blip on the media fetch); there is no special-cased
+            # apology reply for a permanently broken NPU build, because that
+            # is a deploy problem to notice from the dead-lettered job, not
+            # something to paper over per-message.
+            audio_bytes, _mime_type = media_downloader(inbound.audio_media_id)
+            message_text = audio_transcriber(audio_bytes)
+            if not message_text or not message_text.strip():
+                # Same treatment an empty-body text message already gets in
+                # parse_inbound_message: no text means no message, silently.
+                logger.info(
+                    "whatsapp voice note transcribed to nothing (job=%s, message_id=%s)",
+                    job.id,
+                    inbound.message_id,
+                )
+                return
+            message_text = message_text.strip()
+        else:
+            message_text = inbound.text
+
         with open_memory() as memory:
-            recalled = memory.recall(inbound.text, user_id=inbound.sender)
+            recalled = memory.recall(message_text, user_id=inbound.sender)
             messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
             context = _format_recalled_context(recalled)
             if context:
                 messages.append({"role": "user", "content": _fence_recalled_context(context)})
-            messages.append({"role": "user", "content": inbound.text})
+            messages.append({"role": "user", "content": message_text})
 
             result = completion("latency", messages)
             reply = _extract_reply_text(result.response)
@@ -216,7 +315,13 @@ def build_whatsapp_webhook_handler(
             # 26 August 2026. Writing is only ~0.5s now that it embeds instead
             # of extracting, but the ordering still means no storage problem
             # can ever delay or discard a reply the user is waiting on.
-            sender(to=inbound.sender, text=reply)
+            #
+            # Voice in, voice out — blueprint 3.3. A voice note gets a spoken
+            # reply back, not a wall of text it has to open the chat to read.
+            if is_voice:
+                voice_sender(to=inbound.sender, audio=voice_synthesizer(reply))
+            else:
+                sender(to=inbound.sender, text=reply)
             with open_seen_messages() as seen:
                 seen.mark_sent(inbound.message_id)
 
@@ -226,7 +331,7 @@ def build_whatsapp_webhook_handler(
             if not write_memory:
                 return
             try:
-                memory.remember_turn(inbound.text, user_id=inbound.sender, role="user")
+                memory.remember_turn(message_text, user_id=inbound.sender, role="user")
                 memory.remember_turn(reply, user_id=inbound.sender, role="assistant")
             except Exception as exc:
                 logger.warning(

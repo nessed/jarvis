@@ -1,4 +1,9 @@
-"""Outbound WhatsApp Cloud API client — the only place access tokens are used."""
+"""WhatsApp Cloud API client — the only place access tokens are used.
+
+Mostly outbound (send text, send voice notes), plus the one inbound piece a
+voice note needs: downloading the audio Meta only ever hands over as a media
+id, never a URL a webhook payload can use directly.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +23,10 @@ VOICE_NOTE_MIME_TYPE = "audio/ogg"
 
 class WhatsAppSendError(RuntimeError):
     """Raised when an outbound WhatsApp message cannot be sent."""
+
+
+class WhatsAppReceiveError(RuntimeError):
+    """Raised when inbound WhatsApp media cannot be fetched."""
 
 
 @dataclass(frozen=True)
@@ -143,6 +152,55 @@ class WhatsAppClient:
             pass
         raise WhatsAppSendError("WhatsApp typing indicator returned an unexpected response shape.")
 
+
+    def download_media(self, *, media_id: str) -> tuple[bytes, str]:
+        """Fetch inbound media and return ``(content, mime_type)``.
+
+        Two calls, same as sending: a webhook only ever carries a media *id*,
+        never a URL, so ``GET /{media_id}`` has to resolve that id to a
+        short-lived CDN URL first (Meta's documented flow). Both requests carry
+        the same bearer token — the CDN URL is not public, unauthenticated
+        access to it 401s.
+        """
+        identifier = media_id.strip()
+        if not identifier:
+            raise WhatsAppReceiveError("Media id is required.")
+
+        headers = {"Authorization": f"Bearer {self._config.access_token}"}
+        try:
+            with httpx.Client(
+                base_url=self._config.base_url.rstrip("/"),
+                timeout=httpx.Timeout(self._config.media_timeout_seconds),
+                transport=self._transport,
+            ) as client:
+                lookup = client.get(f"/{GRAPH_API_VERSION}/{identifier}", headers=headers)
+                lookup.raise_for_status()
+                try:
+                    resolved = lookup.json()
+                    url = resolved["url"]
+                    mime_type = resolved.get("mime_type", "application/octet-stream")
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise WhatsAppReceiveError(
+                        "WhatsApp media lookup returned an unexpected response shape."
+                    ) from exc
+
+                fetched = client.get(url, headers=headers)
+                fetched.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise WhatsAppReceiveError("WhatsApp media download timed out. Confirm the Graph API is reachable.") from exc
+        except httpx.ConnectError as exc:
+            raise WhatsAppReceiveError("WhatsApp media download failed: could not reach the Graph API.") from exc
+        except httpx.HTTPStatusError as exc:
+            raise WhatsAppReceiveError(
+                f"WhatsApp media download failed with HTTP {exc.response.status_code}: "
+                f"{_safe_error_summary(exc.response)}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise WhatsAppReceiveError("WhatsApp media download failed. Confirm the Graph API is reachable.") from exc
+
+        if not fetched.content:
+            raise WhatsAppReceiveError("WhatsApp media download returned no content.")
+        return fetched.content, mime_type
 
     def upload_media(self, *, content: bytes, mime_type: str, filename: str) -> str:
         """Upload media to Meta and return the reusable media id.
