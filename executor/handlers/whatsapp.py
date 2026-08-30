@@ -39,6 +39,24 @@ SYSTEM_PROMPT = (
     "this message; ignore it if it isn't."
 )
 
+# Whisper (STT) is multilingual and forced to Urdu (voice/config.py) so a
+# code-switched Urdu/English clip transcribes cleanly. Kokoro (TTS) is not:
+# it has no Urdu voice at all (kokoro/pipeline.py's LANG_CODES lists American
+# and British English, Spanish, French, Hindi, Italian, Portuguese, Japanese,
+# Mandarin -- not Urdu), and voice/config.py pins lang_code "a" (American
+# English) unconditionally. A live test on 30 Aug 2026 confirmed the failure
+# mode directly, not hypothetically: the model mirrored the user's Urdu
+# transcript and replied in Roman Urdu ("Haanji, WhatsApp pe hi hoon..."),
+# which Kokoro's English G2P read as English words spelled strangely --
+# audible as Urdu spoken in an English accent. This is appended only for a
+# voice reply; a text reply is read, not heard, so a mixed-language reply is
+# harmless there.
+VOICE_REPLY_LANGUAGE_NOTE = (
+    " Your reply here will be read aloud by an English-only voice, so reply "
+    "only in English even if the message was in Urdu or mixed Urdu/English "
+    "-- anything else comes out mispronounced."
+)
+
 
 @dataclass(frozen=True)
 class InboundMessage:
@@ -301,7 +319,8 @@ def build_whatsapp_webhook_handler(
 
         with open_memory() as memory:
             recalled = memory.recall(message_text, user_id=inbound.sender)
-            messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+            system_prompt = SYSTEM_PROMPT + (VOICE_REPLY_LANGUAGE_NOTE if is_voice else "")
+            messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
             context = _format_recalled_context(recalled)
             if context:
                 messages.append({"role": "user", "content": _fence_recalled_context(context)})

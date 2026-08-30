@@ -504,3 +504,68 @@ def test_shutdown_stops_children_in_reverse_spawn_order(capsys: pytest.CaptureFi
 
     output = capsys.readouterr().out
     assert output.index("stopping executor") < output.index("stopping tunnel") < output.index("stopping bus")
+
+
+# --- Supervisor.check_alive ---------------------------------------------------
+#
+# The regression this covers: whisper-server crashing (wrong binary, missing
+# NPU artifact, whatever) must not take bus/tunnel/workers down with it. A
+# dead *required* child still has to stop everything -- that part is unchanged.
+
+
+def test_check_alive_reports_a_dead_required_child() -> None:
+    supervisor = start_jarvis.Supervisor()
+    supervisor.children.append(("bus", FakeProcess(already_dead=True)))
+
+    assert supervisor.check_alive() == "bus"
+
+
+def test_check_alive_ignores_all_children_still_running() -> None:
+    supervisor = start_jarvis.Supervisor()
+    supervisor.children.append(("bus", FakeProcess()))
+    supervisor.children.append(("tunnel", FakeProcess()))
+
+    assert supervisor.check_alive() is None
+
+
+def test_check_alive_does_not_report_a_dead_optional_child(capsys: pytest.CaptureFixture[str]) -> None:
+    supervisor = start_jarvis.Supervisor()
+    supervisor.children.append(("bus", FakeProcess()))
+    supervisor.optional.add("whisper-server")
+    supervisor.children.append(("whisper-server", FakeProcess(already_dead=True)))
+
+    assert supervisor.check_alive() is None
+    assert "whisper-server stopped unexpectedly" in capsys.readouterr().out
+
+
+def test_check_alive_only_reports_a_dead_optional_child_once(capsys: pytest.CaptureFixture[str]) -> None:
+    supervisor = start_jarvis.Supervisor()
+    supervisor.optional.add("whisper-server")
+    supervisor.children.append(("whisper-server", FakeProcess(already_dead=True)))
+
+    assert supervisor.check_alive() is None
+    assert supervisor.check_alive() is None
+
+    assert capsys.readouterr().out.count("whisper-server stopped unexpectedly") == 1
+
+
+def test_check_alive_still_reports_a_dead_required_child_alongside_a_dead_optional_one() -> None:
+    supervisor = start_jarvis.Supervisor()
+    supervisor.optional.add("whisper-server")
+    supervisor.children.append(("whisper-server", FakeProcess(already_dead=True)))
+    supervisor.children.append(("bus", FakeProcess(already_dead=True)))
+
+    assert supervisor.check_alive() == "bus"
+
+
+def test_spawn_marks_a_child_optional_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    supervisor = start_jarvis.Supervisor()
+    fake_process = FakeProcess()
+    monkeypatch.setattr(start_jarvis.subprocess, "Popen", lambda *a, **k: fake_process)
+
+    supervisor.spawn("whisper-server", ["cmd"], tmp_path / "whisper.log", optional=True)
+    supervisor.spawn("bus", ["cmd"], tmp_path / "bus.log")
+
+    assert supervisor.optional == {"whisper-server"}

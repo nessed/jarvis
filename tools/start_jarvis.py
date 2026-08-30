@@ -106,13 +106,29 @@ _singleton_lock: socket.socket | None = None
 
 
 class Supervisor:
-    """Owns the child processes so they die together, not one at a time."""
+    """Owns the child processes so the *required* ones die together.
+
+    Not every child is required. ``whisper-server`` is optional: a WhatsApp
+    voice note fails without it, but text messages do not need it at all, and
+    the whole point of starting it best-effort (see the module docstring) is
+    defeated if its death takes bus/tunnel/workers down with it. ``optional``
+    marks exactly that: a dead optional child is reported once and otherwise
+    ignored by :meth:`check_alive`, never treated as a reason to shut down.
+    """
 
     def __init__(self) -> None:
         self.children: list[tuple[str, subprocess.Popen]] = []
+        self.optional: set[str] = set()
+        self._reported_dead: set[str] = set()
 
     def spawn(
-        self, name: str, args: list[str], log: Path, env: dict[str, str] | None = None
+        self,
+        name: str,
+        args: list[str],
+        log: Path,
+        env: dict[str, str] | None = None,
+        *,
+        optional: bool = False,
     ) -> subprocess.Popen:
         handle = log.open("w", encoding="utf-8", errors="replace")
         flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
@@ -120,12 +136,26 @@ class Supervisor:
             args, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT, creationflags=flags, env=env
         )
         self.children.append((name, process))
+        if optional:
+            self.optional.add(name)
         return process
 
     def check_alive(self) -> str | None:
+        """The name of the first dead *required* child, or ``None``.
+
+        A dead optional child is reported once via ``say`` (so it is not
+        silently invisible) and then skipped on every later check — nothing
+        here escalates it into a shutdown reason.
+        """
         for name, process in self.children:
-            if process.poll() is not None:
-                return name
+            if process.poll() is None:
+                continue
+            if name in self.optional:
+                if name not in self._reported_dead:
+                    self._reported_dead.add(name)
+                    say(f"{name} stopped unexpectedly — see tools/{name}.out.log (optional, continuing without it)")
+                continue
+            return name
         return None
 
     def shutdown(self) -> None:
@@ -425,8 +455,17 @@ def main(argv: list[str] | None = None) -> int:
 
         backend = LocalWhisperBackend()
         availability = backend.availability()
+        # backend.binary is whisper-cli.exe -- it has no --host/--port and
+        # exits on them. The server binary is a sibling in the same
+        # bin/Release/ directory, since both come out of the same
+        # build-vitisai build (voice/whisper/local_backend.py's own docstring
+        # names both artifacts landing there together).
+        server_binary = backend.binary.parent / "whisper-server.exe"
         if not availability.available:
             say(f"skipping: {availability.reason}")
+            say("text messages are unaffected; voice notes will not get a reply until this is built")
+        elif not server_binary.exists():
+            say(f"skipping: whisper-server not built: {server_binary} does not exist")
             say("text messages are unaffected; voice notes will not get a reply until this is built")
         else:
             server_config = WhisperServerConfig.from_environ()
@@ -434,7 +473,7 @@ def main(argv: list[str] | None = None) -> int:
             supervisor.spawn(
                 "whisper-server",
                 [
-                    str(backend.binary),
+                    str(server_binary),
                     "-m",
                     str(backend.model),
                     "-l",
@@ -450,6 +489,9 @@ def main(argv: list[str] | None = None) -> int:
                 # staged next to the binary already, but a partial build
                 # should still run rather than die with an opaque loader error.
                 env=subprocess_env(),
+                # Optional: a dead or never-ready whisper-server must degrade
+                # to text-only, never take bus/tunnel/workers down with it.
+                optional=True,
             )
             if wait_for_whisper_server():
                 say(f"listening on {server_config.host}:{server_config.port}")

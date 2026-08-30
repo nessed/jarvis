@@ -7,6 +7,8 @@ import pytest
 
 from db.jobs import Job
 from executor.handlers.whatsapp import (
+    SYSTEM_PROMPT,
+    VOICE_REPLY_LANGUAGE_NOTE,
     InboundMessage,
     SeenMessageStore,
     build_whatsapp_webhook_handler,
@@ -568,6 +570,58 @@ class TestWhatsAppVoiceNotes:
             ("how's the weather", {"user_id": "15550001111", "role": "user"}),
             ("Sunny all week.", {"user_id": "15550001111", "role": "assistant"}),
         ]
+
+    def test_a_voice_reply_is_instructed_to_stay_in_english(self) -> None:
+        """Regression: Kokoro has no Urdu voice and mispronounces anything but
+        English -- confirmed live 30 Aug 2026 when the model mirrored a
+        transcribed Urdu message and replied in Roman Urdu, which came out
+        audibly as an English accent reading Urdu words. The system prompt
+        for a voice reply must carry the English-only instruction; a text
+        reply is read, not heard, so it must not.
+        """
+        completion_calls: list[list[dict[str, str]]] = []
+
+        def fake_complete(task_profile, messages):
+            completion_calls.append(list(messages))
+            return _fake_completion_response("Sure thing.")
+
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: FakeMemory([]),
+            open_seen_messages=FakeSeenStore,
+            complete=fake_complete,
+            download_media=lambda media_id: (b"ogg-bytes", "audio/ogg"),
+            transcribe_audio=lambda audio: "some transcript",
+            synthesize_voice_reply=lambda text: b"opus-bytes",
+            send_voice_note=lambda **_: "wamid.voice-reply",
+            write_memory=False,
+        )
+
+        handler(_job(_audio_message_payload()))
+
+        [messages] = completion_calls
+        system_message = next(m for m in messages if m["role"] == "system")
+        assert system_message["content"] == SYSTEM_PROMPT + VOICE_REPLY_LANGUAGE_NOTE
+
+    def test_a_text_reply_is_not_instructed_about_language(self) -> None:
+        completion_calls: list[list[dict[str, str]]] = []
+
+        def fake_complete(task_profile, messages):
+            completion_calls.append(list(messages))
+            return _fake_completion_response("Sure thing.")
+
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: FakeMemory([]),
+            open_seen_messages=FakeSeenStore,
+            complete=fake_complete,
+            send_text_message=lambda **_: "wamid.reply",
+            write_memory=False,
+        )
+
+        handler(_job(_text_message_payload()))
+
+        [messages] = completion_calls
+        system_message = next(m for m in messages if m["role"] == "system")
+        assert system_message["content"] == SYSTEM_PROMPT
 
     def test_a_voice_note_that_transcribes_to_nothing_is_a_silent_no_op(self) -> None:
         handler = build_whatsapp_webhook_handler(
