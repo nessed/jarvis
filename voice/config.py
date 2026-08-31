@@ -81,10 +81,13 @@ WHISPER_CPP_BIN_ENV = "JARVIS_WHISPER_CPP_BIN"
 WHISPER_MODEL_ENV = "JARVIS_WHISPER_MODEL"
 
 #: Language hint passed to whisper.cpp. Blueprint §2 keeps Urdu/English on
-#: Whisper large-v3 precisely because Parakeet is English/European only, so the
-#: default is autodetect rather than a hardcoded "en".
+#: Whisper large-v3 precisely because Parakeet is English/European only.
+#: Ali confirmed he mixes Urdu and English mid-sentence, and "auto" silently
+#: drops the Urdu half of a code-switched clip (docs/history/
+#: voice-urdu-language-detection.md), so the default forces Urdu instead;
+#: pure-English clips degrade but nothing is dropped outright.
 WHISPER_LANGUAGE_ENV = "JARVIS_WHISPER_LANGUAGE"
-DEFAULT_WHISPER_LANGUAGE = "auto"
+DEFAULT_WHISPER_LANGUAGE = "ur"
 
 
 def clip_dir() -> Path:
@@ -122,7 +125,7 @@ def whisper_model_path() -> Path | None:
 
 
 def whisper_language() -> str:
-    """Language hint for whisper.cpp; ``auto`` unless overridden."""
+    """Language hint for whisper.cpp; forced Urdu unless overridden."""
     return os.environ.get(WHISPER_LANGUAGE_ENV) or DEFAULT_WHISPER_LANGUAGE
 
 

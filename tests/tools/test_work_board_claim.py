@@ -69,3 +69,99 @@ def test_malformed_state_is_not_overwritten(tmp_path: Path) -> None:
         board.claim(state_dir=state_dir, role="CORE", work_item="one", files=["tools/a.py"], resources=[], stale_after_seconds=60)
 
     assert state_path.read_text(encoding="utf-8") == "not json"
+
+
+# --- pruning is loud, and the CLI will not prune fresh claims ----------------
+#
+# Both cover the 30 August 2026 collision: a lane hit a conflict, re-ran with
+# --stale-after-seconds 30, silently deleted a live lane's claims, and both
+# then edited the same files. Pruning is age-only (_prune_stale's docstring),
+# so a short window is not a staleness check -- it is a licence to delete
+# whatever someone claimed seconds ago.
+
+
+def _dead_claim(state_dir: Path, *, age_seconds: int, files: list[str]) -> None:
+    created = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "claims.json").write_text(
+        json.dumps(
+            {
+                "claims": [
+                    {
+                        "id": "doomed",
+                        "role": "BUILD",
+                        "work_item": "live-lane",
+                        "files": files,
+                        "resources": [],
+                        "pid": 99999999,
+                        "created_at": created,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_a_pruned_claim_is_announced_on_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state_dir = tmp_path / "state"
+    _dead_claim(state_dir, age_seconds=120, files=["tools/a.py"])
+
+    board.list_claims(state_dir=state_dir, stale_after_seconds=1)
+
+    error_output = capsys.readouterr().err
+    assert "doomed" in error_output
+    assert "BUILD/live-lane" in error_output
+    assert "tools/a.py" in error_output
+
+
+def test_pruning_announcements_stay_off_the_parseable_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state_dir = tmp_path / "state"
+    # Older than the floor, so the CLI can prune it without a below-floor window.
+    _dead_claim(state_dir, age_seconds=400, files=["tools/a.py"])
+
+    assert board.main(["--state-dir", str(state_dir), "--stale-after-seconds", "300", "list"]) == 0
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == []
+    assert "doomed" in captured.err
+
+
+def test_the_cli_refuses_a_window_short_enough_to_delete_live_claims(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state_dir = tmp_path / "state"
+    fresh = board.claim(
+        state_dir=state_dir,
+        role="CORE",
+        work_item="mine",
+        files=["tools/a.py"],
+        resources=[],
+        stale_after_seconds=board.DEFAULT_STALE_AFTER_SECONDS,
+    )
+
+    exit_code = board.main(
+        ["--state-dir", str(state_dir), "--stale-after-seconds", "30", "claim",
+         "--role", "BUILD", "--work-item", "thief", "--file", "tools/a.py"]
+    )
+
+    assert exit_code == 2
+    assert "floor" in capsys.readouterr().err
+    still_held = board.list_claims(
+        state_dir=state_dir, stale_after_seconds=board.DEFAULT_STALE_AFTER_SECONDS
+    )
+    assert [item.id for item in still_held] == [fresh.id]
+
+
+def test_the_floor_does_not_reach_the_library_functions(tmp_path: Path) -> None:
+    # The existing dead-owner test drives pruning with stale_after_seconds=1.
+    # Putting the floor in main() rather than in claim()/list_claims()/release()
+    # is what keeps that possible without a real wait.
+    state_dir = tmp_path / "state"
+    _dead_claim(state_dir, age_seconds=120, files=["tools/a.py"])
+
+    assert board.list_claims(state_dir=state_dir, stale_after_seconds=1) == []

@@ -8,32 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `51e3a84 Wire voice notes into the WhatsApp handler and run whisper-server as a managed process` on `main`, 1 ahead, 0 behind origin.
+**HEAD** `37c51d4 Fix two live-verification bugs: wrong whisper-server binary, and force voice replies to stay in English` on `main`, 2 ahead, 0 behind origin.
 
-**Working tree:** 14 changed (plus 11 untracked)
+**Working tree:** 25 changed
 
 ```
-  M  docs/context.md
-  A  docs/history/voice-whatsapp-live-verification.md
-  M  docs/state.md
-  M  executor/handlers/whatsapp.py
-  M  tests/executor/test_whatsapp_handler.py
-  M  tests/tools/test_start_jarvis.py
-   M tests/tools/test_work_board_claim.py
-   M tests/voice/test_config.py
-   M tests/voice/test_local_backend.py
-  M  tools/start_jarvis.py
-   M tools/work_board_claim.py
-   M voice/benchmark_stt.py
-  ...and 2 more
+  A  docs/consults/2026-08-30-consult-selftest/prompt.md
+  A  docs/consults/2026-08-30-consult-selftest/response.md
+  A  docs/consults/2026-08-30-consult-selftest/verdict.json
+  A  docs/consults/2026-08-30-work-board-silent-prune/prompt.md
+  A  docs/consults/2026-08-30-work-board-silent-prune/response.md
+  A  docs/consults/2026-08-30-work-board-silent-prune/verdict.json
+  A  docs/history/voice-urdu-language-detection.md
+  A  docs/history/work-board-silent-prune.md
+  A  docs/tasks/laptop-power-lag-dc-overlay-test-report.md
+  A  docs/tasks/laptop-power-lag-dc-overlay-test.md
+  A  docs/tasks/laptop-power-lag-hp-bios-f11-report.md
+  A  docs/tasks/laptop-power-lag-hp-bios-f11-staging/preflight-security.ps1
+  ...and 13 more
 ```
 
-**Offline suite:** 862 passed, 7 deselected, 2 warnings in 163.26s (0:02:43) _(recorded 2026-08-31)_
+**Offline suite:** 862 passed, 7 deselected, 2 warnings in 60.41s (0:01:00) _(recorded 2026-09-01)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `37c51d4` Fix two live-verification bugs: wrong whisper-server binary, and force voice replies to stay in English  _(2026-08-31)_
 - `51e3a84` Wire voice notes into the WhatsApp handler and run whisper-server as a managed process  _(2026-08-30)_
 - `0391f3f` Land desktop automation, the typing-cue fix, and NPU voice STT  _(2026-08-29)_
 - `4f39697` Land the voice runtime, the fact-review path, and an FLP project inspector  _(2026-08-29)_
@@ -41,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `50233bc` Record the model-ID gap, dual message-id dedup, and a full board pass  _(2026-08-29)_
 - `77c07e5` Stop a Meta webhook redelivery from enqueueing a second job  _(2026-08-29)_
 - `e4f15a7` Make queue_depths and retry_health O(1) queries, add distill-chain liveness  _(2026-08-29)_
-- `ae158b9` Cover OpenAIChatClient construction and pin mem0ai's private-API surface  _(2026-08-29)_
 
 <!-- END GENERATED -->
 

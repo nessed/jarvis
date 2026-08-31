@@ -160,7 +160,16 @@ class WhisperCppBackend:
 
     @staticmethod
     def _run(command: list[str]) -> subprocess.CompletedProcess:
-        return subprocess.run(command, capture_output=True, text=True, check=False)
+        # UTF-8 explicitly: the locale codec (cp1252 here) cannot decode Urdu
+        # or any non-Latin transcript and raises UnicodeDecodeError instead.
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
 
     def availability(self) -> Availability:
         if self._binary is None:

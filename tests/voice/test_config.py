@@ -76,10 +76,11 @@ def test_whisper_paths_come_from_the_environment(monkeypatch: pytest.MonkeyPatch
     assert config.whisper_model_path() == tmp_path / "large-v3.bin"
 
 
-def test_whisper_language_defaults_to_autodetect(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Blueprint §2 keeps Urdu/English on large-v3 because Parakeet is
-    English/European only. Hardcoding "en" would throw that away."""
+def test_whisper_language_defaults_to_urdu(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ali code-switches Urdu/English mid-sentence; "auto" silently drops the
+    Urdu half of a clip (docs/history/voice-urdu-language-detection.md), so
+    the default forces Urdu instead of autodetecting."""
     monkeypatch.delenv(config.WHISPER_LANGUAGE_ENV, raising=False)
-    assert config.whisper_language() == "auto"
-    monkeypatch.setenv(config.WHISPER_LANGUAGE_ENV, "ur")
     assert config.whisper_language() == "ur"
+    monkeypatch.setenv(config.WHISPER_LANGUAGE_ENV, "auto")
+    assert config.whisper_language() == "auto"

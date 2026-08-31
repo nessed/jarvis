@@ -1,0 +1,9 @@
+{
+  "verdict": "4.",
+  "reasoning": "2+2=4 by definition of integer addition; no project evidence was needed or supplied, and none could bear on it.",
+  "confidence": "high",
+  "what_would_change_this": "Nothing available in this project. Only a non-standard definition of '+' or a non-decimal/modular arithmetic context stated in the question would change the answer.",
+  "_model": "opus",
+  "_question": "What is 2+2? Answer with the JSON contract.",
+  "_untrusted": true
+}

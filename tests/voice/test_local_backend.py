@@ -195,10 +195,10 @@ def test_with_nothing_set_it_falls_back_to_this_lanes_build_output():
     assert backend.model == local_backend.DEFAULT_MODEL
 
 
-def test_the_language_defaults_to_auto_not_english(artifacts):
-    # Blueprint 2: Urdu/English stays on large-v3 precisely because it is not
-    # an English-only model. Hardcoding "en" here would throw that away.
-    assert LocalWhisperBackend(**artifacts).language == "auto"
+def test_the_language_defaults_to_urdu_not_auto(artifacts):
+    # Ali code-switches Urdu/English mid-sentence; "auto" silently drops the
+    # Urdu half of a clip (docs/history/voice-urdu-language-detection.md).
+    assert LocalWhisperBackend(**artifacts).language == "ur"
 
 
 def test_the_language_env_var_is_honoured(artifacts, monkeypatch: pytest.MonkeyPatch):

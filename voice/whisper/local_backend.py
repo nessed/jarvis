@@ -327,6 +327,15 @@ class LocalWhisperBackend:
             command,
             capture_output=True,
             text=True,
+            # encoding is explicit: text=True alone decodes with the locale
+            # codec, which is cp1252 on this machine and cannot represent Urdu,
+            # Arabic or any non-Latin script. whisper.cpp writes UTF-8, so a
+            # forced-Urdu run died with UnicodeDecodeError on byte 0x81 and the
+            # transcript was reported as '(nothing recognised)' -- the model had
+            # worked and the text was destroyed on the way back. errors='replace'
+            # keeps one bad byte from losing a whole transcript.
+            encoding="utf-8",
+            errors="replace",
             check=False,
             env=subprocess_env(),
         )

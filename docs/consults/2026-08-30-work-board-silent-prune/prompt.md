@@ -1,3 +1,33 @@
+You are a second opinion on a decision inside an AI-agent-built project.
+The agent asking has already gathered the evidence below and could not
+resolve the question from it alone. Do not restate the evidence. Decide.
+
+## Question
+
+Class B: minimal repair for a silent-destruction defect in tools/work_board_claim.py, the coordination tool CLAUDE.md mandates every agent use before editing any file.
+
+EVIDENCE (all first-hand, this session):
+1. claim() records pid=os.getpid() -- the CLI process's own pid. That process exits the instant it prints the claim JSON. So every real claim on the board has a dead pid by construction.
+2. _prune_stale() drops a claim only if (created_at < cutoff AND not _owner_alive(pid)). Because (1) makes _owner_alive always False for real claims, pruning is age-only. The liveness half is dead code that never fires.
+3. --stale-after-seconds is an unbounded user integer (default 24h). Passing a small value makes claim/list/release silently delete every claim younger than that and print nothing about it.
+4. I did exactly that today. I hit a conflict, saw the holder pid was dead, concluded 'stale', re-ran with --stale-after-seconds 30, took the files, and began editing. A live parallel session owned them. I only discovered it when a file changed underneath my edit mid-write. The victim lane got no signal at all.
+5. The existing test test_stale_claim_is_pruned_when_owner_is_gone hand-writes pid 99999999 and passes stale_after_seconds=1, so it proves the dead-owner path while never covering a live lane's claim being destroyed.
+
+agents.md permits repairing a mandated tool only as far as unblocking the lane, reported as a scope expansion.
+
+QUESTION: which is the minimal correct repair?
+A) Make pruning loud: print every pruned claim (id/role/work-item/files) to stderr on claim/list/release, so a lane that destroys another's claims sees it and must report it. No semantics change.
+B) Put a floor under --stale-after-seconds so fresh claims cannot be nuked.
+C) Delete _owner_alive and document age-only pruning honestly.
+D) Some combination, or something better.
+
+Rank against 'minimal repair that unblocks the lane', and say explicitly which parts are scope creep.
+
+## Evidence
+
+### tools/work_board_claim.py
+
+```
 """Atomic local claims for independent work-board lanes.
 
 The state lives in ``.work-board/claims.json`` and is deliberately local-only.
@@ -23,19 +53,6 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_STATE_DIR = REPOSITORY_ROOT / ".work-board"
 DEFAULT_STALE_AFTER_SECONDS = 24 * 60 * 60
 LOCK_STALE_AFTER_SECONDS = 60
-
-#: Floor under ``--stale-after-seconds``, enforced in ``main`` only.
-#:
-#: Pruning is age-only (see ``_prune_stale``), so a small window is not a
-#: staleness threshold at all -- it is a licence to delete whatever another
-#: lane claimed in the last few seconds. Five minutes is short enough to clear
-#: a genuinely abandoned board and far longer than the seconds-scale windows
-#: that caused the 30 August 2026 collision.
-#:
-#: Deliberately not enforced in ``claim``/``list_claims``/``release``: the
-#: library functions stay unbounded so tests can drive pruning directly
-#: without a real wait.
-MINIMUM_STALE_AFTER_SECONDS = 300
 
 
 class ClaimError(Exception):
@@ -160,37 +177,8 @@ def _owner_alive(pid: int) -> bool:
         return True
 
 
-def _report_pruned(claim: Claim, age_seconds: float) -> None:
-    """Announce a dropped claim on stderr, loudly enough to be reported on.
-
-    Pruning used to be silent, and silence is what makes it dangerous: on 30
-    August 2026 a lane hit a conflict, re-ran with ``--stale-after-seconds
-    30``, and deleted a *live* parallel lane's claims. Both lanes then edited
-    the same files. Neither the destroying lane nor the victim got any signal
-    until a file changed underneath a half-written edit.
-
-    stderr, not stdout, so the JSON a caller parses stays clean.
-    """
-    held = ", ".join(claim.files + claim.resources) or "(nothing)"
-    print(
-        f"pruned claim {claim.id} ({claim.role}/{claim.work_item}), "
-        f"held {int(age_seconds)}s: {held}",
-        file=sys.stderr,
-    )
-
-
 def _prune_stale(claims: list[Claim], stale_after_seconds: int) -> list[Claim]:
-    """Drop claims older than the window, announcing each one that goes.
-
-    Pruning is **age-only** in practice. The ``_owner_alive`` conjunct below
-    reads like a liveness guard but can never fire for a real claim: ``claim()``
-    records ``os.getpid()``, and that process exits the moment it prints, so
-    every claim on the board has a dead pid by construction. It is kept because
-    removing it changes nothing and the tests pin the dead-owner path; do not
-    mistake it for protection a running lane actually has.
-    """
-    now = _utc_now()
-    cutoff = now - timedelta(seconds=stale_after_seconds)
+    cutoff = _utc_now() - timedelta(seconds=stale_after_seconds)
     active: list[Claim] = []
     for claim in claims:
         try:
@@ -200,7 +188,6 @@ def _prune_stale(claims: list[Claim], stale_after_seconds: int) -> list[Claim]:
         except ValueError as exc:
             raise ClaimError("claim state contains an invalid timestamp; refusing to change it") from exc
         if created_at < cutoff and not _owner_alive(claim.pid):
-            _report_pruned(claim, (now - created_at).total_seconds())
             continue
         active.append(claim)
     return active
@@ -270,16 +257,7 @@ def release(*, state_dir: Path, claim_id: str, stale_after_seconds: int) -> Clai
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Atomically claim local work-board files and resources.")
     parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR, help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--stale-after-seconds",
-        type=int,
-        default=DEFAULT_STALE_AFTER_SECONDS,
-        help=(
-            f"age at which a claim is dropped (default {DEFAULT_STALE_AFTER_SECONDS}s). "
-            f"Pruning is age-only, so anything below {MINIMUM_STALE_AFTER_SECONDS}s is refused: "
-            "it would delete claims a lane is still actively working behind."
-        ),
-    )
+    parser.add_argument("--stale-after-seconds", type=int, default=DEFAULT_STALE_AFTER_SECONDS)
     commands = parser.add_subparsers(dest="command", required=True)
     claim_parser = commands.add_parser("claim", help="create a claim")
     claim_parser.add_argument("--role", required=True)
@@ -296,15 +274,6 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.stale_after_seconds < 0:
         print("error: --stale-after-seconds must be zero or positive", file=sys.stderr)
-        return 2
-    if args.stale_after_seconds < MINIMUM_STALE_AFTER_SECONDS:
-        print(
-            f"error: --stale-after-seconds {args.stale_after_seconds} is below the "
-            f"{MINIMUM_STALE_AFTER_SECONDS}s floor. Pruning is age-only, so this would "
-            "delete claims a live lane is still working behind. If a claim is genuinely "
-            "abandoned, release it by id.",
-            file=sys.stderr,
-        )
         return 2
     try:
         if args.command == "claim":
@@ -324,3 +293,21 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+```
+
+## Response format
+
+Answer as strict JSON and nothing else. No prose before or after, no code
+fence. Exactly these keys:
+
+{
+  "verdict": "the decision or answer, one or two sentences, actionable",
+  "reasoning": "why, citing the specific evidence above that drove it",
+  "confidence": "high | medium | low",
+  "what_would_change_this": "the concrete observation that would flip this verdict"
+}
+
+Set confidence to low rather than guessing. If the evidence provided is not
+enough to decide, say exactly what is missing in what_would_change_this — that
+is a useful answer, an invented one is not.
