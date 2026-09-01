@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -6,6 +7,7 @@ import openai
 import pytest
 
 from router import NoEligibleProvider, Provider, ProviderRequestError, ProviderRouter, load_providers
+from router import routing
 from router.routing import OpenAIChatClient, _chat_model_id, _retry_delay_seconds
 
 
@@ -659,3 +661,140 @@ def test_provider_router_maps_a_real_openai_402_payment_required_error_and_falls
 
     assert result.provider == "spare"
     assert router.health["openai_rung"].last_status == 402
+
+
+# --- the process-lifetime ledger ---------------------------------------------
+#
+# Q10c, 1 Sep 2026: the cooldown ledger is process-lifetime. Before that,
+# module-level route() built a ProviderRouter per call, so a provider that had
+# just returned 429 with a retry-after was retried on the very next message --
+# the cooldown died with the router that recorded it. These pin the fix at the
+# route() seam, which is what every caller in the tree actually uses.
+
+
+@pytest.fixture
+def no_shared_router():
+    """Keep the process-lifetime singleton out of every other test's way."""
+    routing.reset_shared_router(None)
+    yield
+    routing.reset_shared_router(None)
+
+
+def test_the_shared_router_is_built_once_and_reused(no_shared_router):
+    first = routing.shared_router()
+    second = routing.shared_router()
+
+    assert first is second
+
+
+def test_nothing_is_built_until_something_routes(no_shared_router):
+    assert routing.current_shared_router() is None
+
+    routing.shared_router()
+
+    assert routing.current_shared_router() is not None
+
+
+def test_a_cooldown_survives_between_two_route_calls(no_shared_router):
+    router, calls = router_for(
+        ["first", "second"],
+        {"first": ProviderRequestError("limited", 429, {"Retry-After": "13"})},
+    )
+    routing.reset_shared_router(router)
+
+    first = asyncio.run(routing.route("batch", [{"role": "user", "content": "hi"}]))
+    second = asyncio.run(routing.route("batch", [{"role": "user", "content": "again"}]))
+
+    assert (first.provider, second.provider) == ("second", "second")
+    # "first" is attempted once, not once per call: the second route() reads
+    # the same ledger and skips the rung it just cooled down.
+    assert [provider for provider, _ in calls] == ["first", "second", "second"]
+
+
+def test_the_cooldown_expires_and_the_rung_comes_back(no_shared_router):
+    clock = [1000.0]
+    calls = []
+    outcomes = {"first": ProviderRequestError("limited", 429, {"Retry-After": "13"})}
+    endpoint_to_name = {f"https://{name}.example/v1": name for name in ("first", "second")}
+    router = ProviderRouter(
+        providers(["first", "second"]),
+        environ={"FIRST_KEY": "test-key", "SECOND_KEY": "test-key"},
+        client_factory=lambda endpoint, key: FakeClient(endpoint_to_name[endpoint], outcomes, calls),
+        clock=lambda: clock[0],
+    )
+    routing.reset_shared_router(router)
+
+    asyncio.run(routing.route("batch", [{"role": "user", "content": "one"}]))
+    clock[0] += 12.0
+    asyncio.run(routing.route("batch", [{"role": "user", "content": "two"}]))
+    assert [provider for provider, _ in calls] == ["first", "second", "second"]
+
+    outcomes.pop("first")
+    clock[0] += 2.0
+    third = asyncio.run(routing.route("batch", [{"role": "user", "content": "three"}]))
+
+    assert third.provider == "first"
+
+
+def test_resetting_the_shared_router_clears_the_ledger(no_shared_router):
+    router, calls = router_for(
+        ["first", "second"],
+        {"first": ProviderRequestError("limited", 429, {"Retry-After": "13"})},
+    )
+    routing.reset_shared_router(router)
+    asyncio.run(routing.route("batch", [{"role": "user", "content": "hi"}]))
+
+    fresh, fresh_calls = router_for(["first", "second"], {})
+    routing.reset_shared_router(fresh)
+    result = asyncio.run(routing.route("batch", [{"role": "user", "content": "hi again"}]))
+
+    assert result.provider == "first"
+
+
+# --- the snapshot the routing process publishes -------------------------------
+
+
+def test_the_snapshot_reports_a_countdown_not_a_monotonic_deadline():
+    router, _ = router_for(
+        ["first", "second"],
+        {"first": ProviderRequestError("limited", 429, {"Retry-After": "13"})},
+    )
+    asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    snapshot = router.health_snapshot()
+
+    assert snapshot["first"]["last_status"] == 429
+    assert 0 < snapshot["first"]["cooldown_seconds_remaining"] <= 13
+    assert snapshot["first"]["rate_limit_headers"] == {"retry-after": "13"}
+    assert "cooldown_until" not in snapshot["first"]
+
+
+def test_an_untouched_provider_reports_a_zero_countdown():
+    router, _ = router_for(["first", "second"], {})
+
+    snapshot = router.health_snapshot()
+
+    assert snapshot["second"] == {
+        "last_status": None,
+        "cooldown_seconds_remaining": 0.0,
+        "rate_limit_headers": {},
+    }
+
+
+def test_the_snapshot_carries_nothing_secret():
+    """Only status codes, a countdown, and rate-limit headers ever leave here."""
+    router, _ = router_for(
+        ["first"], {"first": ProviderRequestError("limited", 429, {"Retry-After": "13"})}
+    )
+    with pytest.raises(NoEligibleProvider):
+        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    serialised = json.dumps(router.health_snapshot())
+
+    assert "test-key" not in serialised
+    assert "first.example" not in serialised
+    assert set(router.health_snapshot()["first"]) == {
+        "last_status",
+        "cooldown_seconds_remaining",
+        "rate_limit_headers",
+    }

@@ -7,6 +7,7 @@ import email.utils
 import json
 import os
 import re
+import threading
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -304,6 +305,30 @@ class ProviderRouter:
             return True
         return not any(start <= now.hour < end for start, end in PEAK_DEEPSEEK_WINDOWS_UTC)
 
+    def health_snapshot(self) -> dict[str, dict[str, Any]]:
+        """A view of provider health that means something in another process.
+
+        ``ProviderHealth.cooldown_until`` is a ``monotonic()`` reading, and
+        monotonic clocks share no origin between processes — handing that
+        number to the bus would compare it against an unrelated zero. It is
+        converted to seconds remaining here, and ``router/health_report.py``
+        ages that countdown on the way back out.
+
+        Carries only what ``/status`` already exposed: a status code, a
+        countdown, and rate-limit headers (already filtered to ``retry-after``
+        and ``x-ratelimit-*`` by ``_record_response_headers``). No key, no
+        endpoint, no body.
+        """
+        now = self._clock()
+        return {
+            name: {
+                "last_status": health.last_status,
+                "cooldown_seconds_remaining": round(max(0.0, health.cooldown_until - now), 3),
+                "rate_limit_headers": dict(health.rate_limit_headers),
+            }
+            for name, health in self.health.items()
+        }
+
     def _record_cooldown(self, provider: Provider, status: int | None, headers: Mapping[str, str]) -> None:
         normalized = {key.lower(): value for key, value in headers.items()}
         cooldown = _retry_delay_seconds(normalized, self._default_backoff_seconds, now=self._now())
@@ -387,8 +412,57 @@ def _chat_model_id(item: Any) -> str | None:
     return model_id if isinstance(model_id, str) and model_id else None
 
 
+#: One router per process, created on first use. Guarded because a handler can
+#: be called from the poller's worker thread while another is mid-flight; the
+#: lock only protects *creation*, since two routers would mean two ledgers and
+#: the ledger is the whole point. Health mutation past that is single-writer in
+#: practice — a poller claims one job at a time.
+_SHARED_ROUTER_LOCK = threading.Lock()
+_shared_router: "ProviderRouter | None" = None
+
+
+def shared_router() -> ProviderRouter:
+    """The process-lifetime router, built on first use.
+
+    Before this existed, ``route()`` constructed a ``ProviderRouter`` per call.
+    Every call therefore re-read ``providers.yaml`` and, far worse, started
+    from a blank ``health`` map: a provider that had just returned 429 with a
+    ``retry-after`` was tried again on the very next message, because the
+    cooldown it had just earned died with the router that recorded it. A
+    ledger that does not outlive one call is not a ledger.
+
+    Process-lifetime, not persisted to disk: Q10c's answer. A restart forgets
+    cooldowns, which is the correct trade — the alternative is a stale file
+    telling a fresh process to avoid a provider that recovered hours ago.
+    """
+    global _shared_router
+    if _shared_router is None:
+        with _SHARED_ROUTER_LOCK:
+            if _shared_router is None:
+                _shared_router = ProviderRouter()
+    return _shared_router
+
+
+def current_shared_router() -> ProviderRouter | None:
+    """The shared router if one has been built, without building one.
+
+    Lets a process ask "has anything routed here?" without paying for a
+    manifest read. The executor's health publisher uses it so a worker that
+    never routes — ``action-worker``, ``background-worker`` — neither builds a
+    router nor overwrites the snapshot of the worker that does.
+    """
+    return _shared_router
+
+
+def reset_shared_router(router: ProviderRouter | None = None) -> ProviderRouter | None:
+    """Replace (or clear) the shared router. A test seam, not a runtime path."""
+    global _shared_router
+    _shared_router = router
+    return router
+
+
 async def route(
     task_profile: str, messages: Sequence[Mapping[str, Any]], *, urgent: bool = False, **request_options: Any
 ) -> RoutedResult:
     """Convenience entrypoint for executor integration."""
-    return await ProviderRouter().route(task_profile, messages, urgent=urgent, **request_options)
+    return await shared_router().route(task_profile, messages, urgent=urgent, **request_options)

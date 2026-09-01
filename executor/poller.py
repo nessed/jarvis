@@ -44,7 +44,8 @@ from executor.handlers.distill import (
 from executor.handlers.whatsapp import build_whatsapp_webhook_handler
 from executor.heartbeat import clear as clear_heartbeat, touch as touch_heartbeat
 from executor.system_control.handler import build_system_control_handler
-from router import RoutedResult, route
+from router import RoutedResult, current_shared_router, route
+from router.health_report import material_state, write as write_provider_health
 
 
 JobHandler = Callable[[Job], None]
@@ -330,6 +331,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         turn = 0
+        published: tuple | None = None
         while True:
             # Marks the executor live so batch tools (distill, backfill) can
             # refuse to compete for the single local Ollama. See
@@ -345,6 +347,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.once:
                     raise
                 logger.warning("executor poll failed (%s)", type(exc).__name__)
+            published = _publish_provider_health(published)
             if args.once:
                 return 0
             if idle:
@@ -368,6 +371,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.no_heartbeat:
             clear_heartbeat()
         return 0
+
+
+def _publish_provider_health(published: tuple | None) -> tuple | None:
+    """Report this process's provider ledger for ``/status``, if it has one.
+
+    Q10c: the process that routes reports provider health. That is this one —
+    the bus builds a router but is enqueue-only and never routes, so reading
+    its in-memory health map told ``/status`` only that nothing had been tried,
+    in a shape that looked like nothing was wrong.
+
+    ``current_shared_router`` rather than ``shared_router``: a worker that has
+    never routed must not build a router just to publish its defaults, and
+    must not overwrite the snapshot belonging to the worker that does. Of the
+    three supervised pollers only ``whatsapp-worker`` routes.
+
+    The write is skipped unless something material changed — the countdown
+    alone is not a reason, because the reader ages it from ``reported_at``.
+    Without that guard this would rewrite the file every poll, forever.
+    """
+    router = current_shared_router()
+    if router is None:
+        return published
+    snapshot = router.health_snapshot()
+    state = material_state(snapshot)
+    if state == published:
+        return published
+    write_provider_health(snapshot)
+    return state
 
 
 def _seed_distill_chain() -> None:

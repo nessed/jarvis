@@ -781,3 +781,117 @@ def test_request_completion_passes_urgent_through(monkeypatch):
     asyncio.run(poller.request_completion("latency", [], urgent=True))
 
     assert calls == [True]
+
+
+# --- publishing provider health ----------------------------------------------
+#
+# Q10c: the process that routes reports provider health. That is the executor,
+# not the bus -- the bus builds a router but is enqueue-only and never calls
+# route(), so reading its in-memory health map told /status only that nothing
+# had been tried, in a shape that looked like nothing was wrong.
+
+
+class _FakeRouter:
+    def __init__(self, snapshot) -> None:
+        self._snapshot = snapshot
+        self.snapshot_calls = 0
+
+    def health_snapshot(self):
+        self.snapshot_calls += 1
+        return self._snapshot
+
+
+def _health(status=429, remaining=60.0, headers=None):
+    return {
+        "groq": {
+            "last_status": status,
+            "cooldown_seconds_remaining": remaining,
+            "rate_limit_headers": headers if headers is not None else {"retry-after": "60"},
+        }
+    }
+
+
+def test_a_worker_that_never_routed_publishes_nothing(monkeypatch):
+    """action-worker and background-worker must not stamp their defaults over
+    the snapshot belonging to the one worker that actually routes."""
+    monkeypatch.setattr(poller, "current_shared_router", lambda: None)
+    monkeypatch.setattr(
+        poller, "write_provider_health", lambda *_: pytest.fail("nothing routed here")
+    )
+
+    assert poller._publish_provider_health(None) is None
+
+
+def test_the_first_snapshot_is_published(monkeypatch):
+    written: list[dict] = []
+    monkeypatch.setattr(poller, "current_shared_router", lambda: _FakeRouter(_health()))
+    monkeypatch.setattr(poller, "write_provider_health", written.append)
+
+    state = poller._publish_provider_health(None)
+
+    assert written == [_health()]
+    assert state is not None
+
+
+def test_a_ticking_countdown_alone_does_not_rewrite_the_file(monkeypatch):
+    """Otherwise this writes several times a second, forever, for no new fact."""
+    written: list[dict] = []
+    router = _FakeRouter(_health(remaining=60.0))
+    monkeypatch.setattr(poller, "current_shared_router", lambda: router)
+    monkeypatch.setattr(poller, "write_provider_health", written.append)
+
+    state = poller._publish_provider_health(None)
+    router._snapshot = _health(remaining=41.0)
+    state = poller._publish_provider_health(state)
+
+    assert len(written) == 1
+
+
+def test_a_changed_status_is_published(monkeypatch):
+    written: list[dict] = []
+    router = _FakeRouter(_health(status=429))
+    monkeypatch.setattr(poller, "current_shared_router", lambda: router)
+    monkeypatch.setattr(poller, "write_provider_health", written.append)
+
+    state = poller._publish_provider_health(None)
+    router._snapshot = _health(status=503)
+    poller._publish_provider_health(state)
+
+    assert [entry["groq"]["last_status"] for entry in written] == [429, 503]
+
+
+def test_recovery_is_published(monkeypatch):
+    written: list[dict] = []
+    router = _FakeRouter(_health(remaining=60.0))
+    monkeypatch.setattr(poller, "current_shared_router", lambda: router)
+    monkeypatch.setattr(poller, "write_provider_health", written.append)
+
+    state = poller._publish_provider_health(None)
+    router._snapshot = _health(status=200, remaining=0.0, headers={})
+    poller._publish_provider_health(state)
+
+    assert len(written) == 2
+    assert written[1]["groq"]["cooldown_seconds_remaining"] == 0.0
+
+
+def test_the_poll_loop_publishes_each_cycle(monkeypatch):
+    published: list[object] = []
+    calls = 0
+
+    def fake_poll_once(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise KeyboardInterrupt
+        return None
+
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "poll_once", fake_poll_once)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: False)
+    monkeypatch.setattr(poller.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        poller, "_publish_provider_health", lambda state: published.append(state) or "state"
+    )
+
+    assert poller.main(["--no-heartbeat"]) == 0
+    assert published == [None, "state"]

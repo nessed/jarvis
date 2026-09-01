@@ -1,11 +1,14 @@
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import bus.main as bus_main
 from bus.main import create_app
 from bus.status import QueueStatusReader, create_status_handler
+from router import health_report
 
 
 class FakeQuery:
@@ -337,3 +340,121 @@ def test_status_endpoint_includes_distill_chain_health_when_wired() -> None:
         "dead_letter_count": 1,
         "has_ever_run": True,
     }
+
+
+# --- /status reports the routing process's ledger -----------------------------
+#
+# Q10c, 1 Sep 2026. Until then /status read the *bus's* own ProviderRouter.
+# The bus is enqueue-only and never calls route(), so every entry stayed at its
+# constructed default for the life of the process: /status said "no failures"
+# when it meant "no attempts", and the two are indistinguishable in that shape.
+
+
+def _routed_failure_snapshot():
+    """What the executor's router looks like after one 429 with a retry-after."""
+    router, _calls = _cooled_down_router()
+    return router.health_snapshot()
+
+
+def _cooled_down_router():
+    from router import Provider, ProviderRequestError, ProviderRouter
+
+    calls = []
+    names = ("groq", "cerebras")
+    endpoint_to_name = {f"https://{name}.example/v1": name for name in names}
+    outcomes = {"groq": ProviderRequestError("limited", 429, {"Retry-After": "60"})}
+
+    class _Client:
+        def __init__(self, provider):
+            self.provider = provider
+
+        async def create_chat_completion(self, *, model, messages, **kwargs):
+            calls.append(self.provider)
+            outcome = outcomes.get(self.provider)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return {"provider": self.provider}
+
+    router = ProviderRouter(
+        [
+            Provider(
+                name=name,
+                endpoint=f"https://{name}.example/v1",
+                key_env=f"{name.upper()}_KEY",
+                priority=index,
+                default_model=f"{name}-model",
+                task_profiles=("latency",),
+            )
+            for index, name in enumerate(names, start=1)
+        ],
+        environ={"GROQ_KEY": "k", "CEREBRAS_KEY": "k"},
+        client_factory=lambda endpoint, key: _Client(endpoint_to_name[endpoint]),
+    )
+    asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+    return router, calls
+
+
+def test_status_reports_a_cooldown_the_executor_recorded(tmp_path, monkeypatch) -> None:
+    report = tmp_path / "provider-health.json"
+    health_report.write(_routed_failure_snapshot(), report)
+    # Bound before patching: bus.main reads the same module object, so a lambda
+    # that called health_report.read would call itself.
+    real_read = health_report.read
+    monkeypatch.setattr(bus_main.health_report, "read", lambda: real_read(report))
+
+    client = TestClient(
+        create_app(
+            bearer_token="token",
+            queue_depths=lambda: {},
+            last_job=lambda: None,
+        )
+    )
+    body = client.get("/status", headers={"Authorization": "Bearer token"}).json()
+
+    assert body["provider_health"]["groq"]["last_status"] == 429
+    assert body["provider_health"]["groq"]["cooldown_seconds_remaining"] > 0
+    assert body["provider_health"]["groq"]["reported"] is True
+
+
+def test_status_says_unreported_rather_than_healthy_when_nothing_has_routed(monkeypatch) -> None:
+    monkeypatch.setattr(bus_main.health_report, "read", lambda: None)
+
+    client = TestClient(
+        create_app(bearer_token="token", queue_depths=lambda: {}, last_job=lambda: None)
+    )
+    body = client.get("/status", headers={"Authorization": "Bearer token"}).json()
+
+    groq = body["provider_health"]["groq"]
+    assert groq["reported"] is False
+    assert groq["last_status"] is None
+    assert groq["cooldown_seconds_remaining"] == 0.0
+
+
+def test_status_still_lists_the_whole_provider_ladder_when_unreported(monkeypatch) -> None:
+    """The roster comes from the local manifest, so the key set never shrinks."""
+    monkeypatch.setattr(bus_main.health_report, "read", lambda: None)
+
+    client = TestClient(
+        create_app(bearer_token="token", queue_depths=lambda: {}, last_job=lambda: None)
+    )
+    body = client.get("/status", headers={"Authorization": "Bearer token"}).json()
+
+    assert len(body["provider_health"]) > 1
+    assert all(entry["reported"] is False for entry in body["provider_health"].values())
+
+
+def test_a_provider_the_reporter_knows_but_the_manifest_does_not_is_kept(monkeypatch) -> None:
+    """A roster that has moved on is exactly when you want to see the difference."""
+    monkeypatch.setattr(
+        bus_main.health_report,
+        "read",
+        lambda: {"a-new-rung": {"last_status": 200, "cooldown_seconds_remaining": 0.0, "reported": True}},
+    )
+
+    client = TestClient(
+        create_app(bearer_token="token", queue_depths=lambda: {}, last_job=lambda: None)
+    )
+    body = client.get("/status", headers={"Authorization": "Bearer token"}).json()
+
+    assert body["provider_health"]["a-new-rung"]["last_status"] == 200
+    assert body["provider_health"]["groq"]["reported"] is False

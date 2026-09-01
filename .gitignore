@@ -13,6 +13,9 @@ memory.db-*
 *.seen-messages.db
 *.pending-actions.db
 
+# Written by whichever executor process routes; read by the bus for /status.
+.provider-health.json
+
 # pytest scratch and cache. The system TEMP directory is locked down on this
 # machine, so every run is forced to --basetemp here (see CLAUDE.md). Lanes use
 # a per-lane suffix so concurrent suites do not share a scratch directory.

@@ -18,6 +18,7 @@ from bus.webhook_dedup import (
 )
 from db.jobs import JobRepository, SupabaseJobsRepository, enqueue
 from router import ProviderRouter
+from router import health_report
 
 load_dotenv()
 
@@ -49,16 +50,40 @@ def _queue_status_reader(jobs: JobRepository | None) -> QueueStatusReader | None
         return None
 
 
+#: What a provider looks like when no routing process has reported on it.
+#: Deliberately carries ``reported: False`` rather than a plausible-looking
+#: zero: the bus never routes, so silence here means "not measured", and the
+#: two must not be readable as the same thing.
+_UNREPORTED: dict[str, Any] = {
+    "last_status": None,
+    "cooldown_seconds_remaining": 0.0,
+    "rate_limit_headers": {},
+    "reported": False,
+}
+
+
 def _provider_health(router: ProviderRouter) -> dict[str, dict[str, Any]]:
-    """Expose non-secret health/cooldown metadata for configured routing lanes."""
-    return {
-        name: {
-            "last_status": health.last_status,
-            "cooldown_until": health.cooldown_until,
-            "rate_limit_headers": health.rate_limit_headers,
-        }
-        for name, health in router.health.items()
-    }
+    """Non-secret health/cooldown metadata, as reported by the process that routes.
+
+    Until 2 September 2026 this read ``router.health`` — the *bus's* own
+    router. The bus is enqueue-only and never calls ``route()``, so every entry
+    was the constructed default forever, and ``/status`` reported "no failures"
+    when what it meant was "no attempts". Q10c settled who reports: the
+    executor, which is where routing actually happens, so the real ledger
+    arrives through ``router/health_report.py``.
+
+    The provider roster still comes from the local manifest, so the key set is
+    the full ladder whether or not anything has been measured. Entries the
+    reporter knows about that the local roster does not are kept rather than
+    dropped, because a roster that has moved on is exactly when you want to see
+    what the other process is actually talking to.
+    """
+    reported = health_report.read() or {}
+    health = {name: dict(reported.get(name, _UNREPORTED)) for name in router.health}
+    for name, entry in reported.items():
+        if name not in health:
+            health[name] = dict(entry)
+    return health
 
 
 def create_app(

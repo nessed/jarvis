@@ -8,32 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `84f6d42 Let a WhatsApp message enqueue a real action, on a closed allowlist` on `main`, 3 ahead, 0 behind origin.
+**HEAD** `34b4bc0 Write the whole Oracle side of Phase 4 before the account exists` on `main`, 4 ahead, 0 behind origin.
 
-**Working tree:** 23 changed (plus 2 untracked)
+**Working tree:** 15 changed
 
 ```
-  A  .dockerignore
-   M bus/main.py
-  M  docs/board/tasks/phase4-prep.md
-  A  docs/tasks/phase4-runbook.md
-   M executor/poller.py
-  A  infra/.gitignore
-  A  infra/README.md
-  A  infra/docker/Dockerfile
-  A  infra/docker/compose.yaml
-  A  infra/docker/requirements-bus.txt
-  A  infra/scripts/harden.sh
-  A  infra/scripts/install-cloudflared.sh
-  ...and 11 more
+  M  .gitignore
+  M  bus/main.py
+  M  docs/board/README.md
+  M  docs/board/tasks/pytest-addopts.md
+  M  docs/board/tasks/router-cooldown-ledger.md
+  M  docs/context.md
+  M  docs/state.md
+  M  executor/poller.py
+  M  router/__init__.py
+  A  router/health_report.py
+  M  router/routing.py
+  M  tests/executor/test_poller.py
+  ...and 3 more
 ```
 
-**Offline suite:** 1166 passed, 9 deselected, 10 warnings in 57.43s _(recorded 2026-09-02)_
+**Offline suite:** 1166 passed, 9 deselected, 10 warnings in 53.62s _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `34b4bc0` Write the whole Oracle side of Phase 4 before the account exists  _(2026-09-02)_
 - `84f6d42` Let a WhatsApp message enqueue a real action, on a closed allowlist  _(2026-09-02)_
 - `31c1c64` Add the job replay harness and the blueprint's facts check  _(2026-09-02)_
 - `0ff4e1a` Give the four orphaned job kinds a worker that can actually claim them  _(2026-09-02)_
@@ -41,34 +42,30 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `94551a3` Replace plan.md with a self-serve work board under docs/board/  _(2026-09-01)_
 - `bf15f79` Close the Meta token rotation and the FL Studio convention on Ali's instruction  _(2026-09-01)_
 - `3695c05` Cover three untested voice CLIs, make the schema drift detector able to fail, and reconcile the docs  _(2026-09-01)_
-- `52e2c03` push  _(2026-09-01)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-**Phase 2's producer/consumer gap is closed.** `action-worker` gave the four
-action job kinds a poller (committed, `0ff4e1a`); `enqueue-classifier` gave
-`system_control` and `zoom_join_meeting` a producer, live-verified end to end
-on 2 Sep. Work the NEXT order in `docs/board/README.md`; do not ask what next.
-
-**One integration hold.** `enqueue-classifier` is finished and green in
-isolation but uncommitted: it broke one test in the `replay-harness` lane's
-still-uncommitted files, which that lane holds a claim on. Reported, not
-touched — `docs/tasks/enqueue-classifier-crosslane-note.md` has the one-line
-fix. Nothing in git is red.
+**Phase 2's producer/consumer gap is closed and the router's ledger is real.**
+Three tasks landed 2 Sep: `action-worker` (a poller for the four action job
+kinds), `enqueue-classifier` (WhatsApp text becomes action jobs), and
+`router-cooldown-ledger` (process-lifetime cooldowns, and `/status` now serves
+the ledger of the process that actually routes). Work the NEXT order in
+`docs/board/README.md`; do not ask what is next.
 
 **Three things are Ali's, and only these:**
 
 - **Q12 — drop Pipecat from the desk loop?** Blocks `voice-loop` and
-  `voice-command-ingress` behind it. Recommendation and consult filed.
+  `voice-command-ingress` behind it.
 - **Q11** — how long the router's "verification window" is. Blocks only
   `router-eligibility-window`.
-- **U2** — the five model IDs are still absent as key names in `.env`. This is
-  now costing something real: the router falls back to `openrouter/free`,
-  which returned `User Safety: safe` instead of JSON on two of four classifier
-  probes. Commands fail safe (they read as chat) but work only as reliably as
-  that rung. `live-routing-probe` stays blocked.
+- **U2** — the five model IDs are still absent as key names in `.env`, and
+  this is now costing two measurable things. `groq` and `cerebras` sort to the
+  front of every request and are silently skipped ("no model configured"), so
+  the ladder collapses to `openrouter/free`; and that rung answered the
+  command classifier with `User Safety: safe` instead of JSON on two of four
+  probes. Commands fail safe, but they are only as reliable as that rung.
 
 **Standing constraint:** the FLP writing half stays unbuilt — no mixer-sorting
 convention exists and the placeholder ruleset is unapproved; see
