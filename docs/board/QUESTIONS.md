@@ -284,3 +284,46 @@ Does not block `blueprint-corrections`, which applies your §3.3 text as
 written regardless.
 
 **Answer:** _pending_
+
+## Q12 — Drop Pipecat from the desk loop?
+
+`voice-loop` stopped before writing a line, on its own Constraints clause:
+Pipecat is a stop-and-report if its abstractions fight this stack. They do.
+Read off the installed packages, not upstream docs:
+
+- **Transport needs a second PortAudio binding.** `pipecat.transports.local`
+  hard-imports `pyaudio` (`pipecat-ai[local]`), which is not installed. The
+  whole voice runtime here is `sounddevice`.
+- **Its Kokoro is a different engine.** Pipecat's TTS service wants
+  `kokoro-onnx`; installed is `kokoro==0.9.4`, the `KPipeline` path where you
+  picked `am_puck` by ear.
+- **Its wake word is textual, not acoustic.** Pipecat matches a phrase in a
+  transcript, so STT must run continuously — the inverse of the openWakeWord
+  gate that exists to keep Whisper large-v3 off the NPU until wake.
+- STT (your whisper.cpp fork over HTTP) and the reply path (this repo's own
+  router + memory) are custom subclasses too.
+
+Five of six stages become custom code. Pipecat contributes its frame graph,
+its Silero VAD analyzer, and interruption handling — and `silero-vad` 6.2.1
+is installed standalone, so the VAD is yours either way. Barge-in was the
+one real argument for keeping it; against a local `sounddevice` output
+stream, stopping playback is an abort and a state change, not the buffered-
+across-a-network-transport problem Pipecat's machinery solves.
+
+**Recommend: drop Pipecat from §3.3's desk-loop clause, keep Silero VAD.**
+Build the loop directly on `sounddevice` + `openwakeword` + `silero-vad` +
+the existing `server_client` / `speak` / `router` seams. Pipecat stays
+installed and stays the obvious choice if a later phase wants a networked
+transport — WebRTC to your phone, say — which is the case it is built for.
+
+Blueprint edit if you agree: `docs/blueprint.md` lines 112, 267, 338 and 342
+all name "Pipecat + Silero VAD"; those become "Silero VAD", with §3.3's
+"Assemble the Pipecat loop" becoming "Assemble the local loop".
+
+Second opinion: `docs/consults/2026-09-02-pipecat-fit/` — verdict (B)
+stop-and-report, confidence high. Full finding:
+`docs/tasks/voice-loop-report.md`.
+
+Blocks: `voice-loop`, and therefore `voice-command-ingress` behind it.
+
+**Answer:** _pending_

@@ -312,9 +312,129 @@ def test_cli_limits_a_kind_filtered_worker_to_its_own_handler(monkeypatch):
     assert calls == [
         {
             "handlers": {"whatsapp_webhook": poller.DEFAULT_HANDLERS["whatsapp_webhook"]},
-            "kind_filter": "whatsapp_webhook",
+            "kind_filter": ("whatsapp_webhook",),
         }
     ]
+
+
+# --- a worker that owns several kinds -------------------------------------
+# ``claim_next_job`` filters on one kind, so a worker owning a set asks for
+# them one at a time. What must hold is that it never asks for a kind outside
+# its set, and that a busy kind cannot hold the others behind it forever.
+
+
+def test_cli_restricts_a_multi_kind_worker_to_exactly_its_own_handlers(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    def fake_poll_once(**kwargs):
+        calls.append(kwargs)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "poll_once", fake_poll_once)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: pytest.fail("should not seed"))
+
+    assert poller.main(["--kind", "system_control", "zoom_join_meeting", "--no-heartbeat"]) == 0
+    assert calls == [
+        {
+            "handlers": {
+                "system_control": poller.DEFAULT_HANDLERS["system_control"],
+                "zoom_join_meeting": poller.DEFAULT_HANDLERS["zoom_join_meeting"],
+            },
+            "kind_filter": ("system_control", "zoom_join_meeting"),
+        }
+    ]
+
+
+def test_cli_rejects_a_kind_that_is_not_registered(capsys):
+    with pytest.raises(SystemExit):
+        poller.main(["--kind", "system_control", "not_a_registered_kind"])
+    assert "not_a_registered_kind" in capsys.readouterr().err
+
+
+def test_cli_rotates_the_kind_order_so_one_busy_kind_cannot_starve_the_rest(monkeypatch):
+    seen: list[tuple[str, ...]] = []
+
+    def fake_poll_once(**kwargs):
+        seen.append(kwargs["kind_filter"])
+        if len(seen) == 3:
+            raise KeyboardInterrupt
+        return None
+
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "poll_once", fake_poll_once)
+    monkeypatch.setattr(poller.time, "sleep", lambda _seconds: None)
+
+    assert poller.main(["--kind", "system_control", "zoom_join_meeting", "--no-heartbeat"]) == 0
+    assert seen == [
+        ("system_control", "zoom_join_meeting"),
+        ("zoom_join_meeting", "system_control"),
+        ("system_control", "zoom_join_meeting"),
+    ]
+
+
+def test_a_multi_kind_worker_only_seeds_the_distill_chain_when_it_owns_that_kind(monkeypatch):
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "seed_distill_chain", lambda: pytest.fail("should not seed"))
+    monkeypatch.setattr(
+        poller, "poll_once", lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt)
+    )
+
+    assert poller.main(["--kind", "system_control", "flp_sort", "--no-heartbeat"]) == 0
+
+
+def test_poll_once_asks_every_owned_kind_before_reporting_an_idle_queue():
+    jobs = FakeJobs(None)
+
+    assert poll_once(repository=jobs, kind_filter=("system_control", "flp_sort")) is None
+    assert jobs.calls == [
+        ("claim_next", "system_control"),
+        ("claim_next", "flp_sort"),
+    ]
+
+
+def test_poll_once_never_asks_for_a_kind_outside_the_owned_set():
+    jobs = FakeJobs(None)
+
+    poll_once(repository=jobs, kind_filter=("system_control",))
+
+    assert jobs.calls == [("claim_next", "system_control")]
+
+
+def test_poll_once_stops_asking_once_a_job_is_claimed():
+    jobs = FakeJobs(replace(_job(), kind="system_control"))
+
+    poll_once(
+        repository=jobs,
+        handler=lambda job: None,
+        kind_filter=("system_control", "zoom_join_meeting"),
+    )
+
+    assert [call for call in jobs.calls if call[0] == "claim_next"] == [
+        ("claim_next", "system_control")
+    ]
+
+
+def test_an_empty_kind_filter_is_rejected_rather_than_claiming_every_kind():
+    jobs = FakeJobs(_job())
+
+    with pytest.raises(ValueError):
+        poll_once(repository=jobs, kind_filter=())
+    assert jobs.calls == []
+
+
+def test_kinds_to_claim_normalises_none_and_a_single_kind():
+    assert poller.kinds_to_claim(None) == (None,)
+    assert poller.kinds_to_claim("system_control") == ("system_control",)
+    assert poller.kinds_to_claim(["a", "b"]) == ("a", "b")
+
+
+def test_rotate_kinds_walks_the_set_and_wraps():
+    kinds = ("a", "b", "c")
+    assert poller.rotate_kinds(kinds, 0) == ("a", "b", "c")
+    assert poller.rotate_kinds(kinds, 1) == ("b", "c", "a")
+    assert poller.rotate_kinds(kinds, 3) == ("a", "b", "c")
+    assert poller.rotate_kinds(("solo",), 7) == ("solo",)
 
 
 def test_cli_only_the_background_worker_seeds_the_distill_chain(monkeypatch):

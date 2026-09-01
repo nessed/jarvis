@@ -501,32 +501,20 @@ defect. All Class C.
 - **`flp-sort-producer-via-whatsapp`** — wiring "sort out this FLP" gives inbound
   WhatsApp text the power to write files on disk. Inbound text was an injection
   channel until 27 Aug. Explicit consent required.
-- **Four registered job kinds have no consumer, and the blueprint and the code
-  disagree about whose job that is.** Found by the 1 Sep 2026 docs drift audit,
-  verified independently. `docs/blueprint.md` §3 says the background poller
-  "claims every other registered kind". `executor/poller.py:258-262` defines
-  `--kind` with `choices=tuple(DEFAULT_HANDLERS)` and **no `nargs`**, so it
-  takes exactly one value, and `tools/start_jarvis.py:517-527` passes
-  `distill_memory`. So `flp_sort`, `system_control`, `zoom_join_meeting` and
-  `whatsapp_desktop_send_message` are registered handlers that **no running
-  poller will ever claim**.
-
-  Meanwhile `docs/state.md`'s "Executor topology" row calls the current
-  restricted-to-`distill_memory` split *the approved implementation*. Both
-  cannot be right.
-
-  **Do not "just fix it" by widening `--kind`.** The obvious conformance —
-  letting background-worker claim every other kind — puts a 2-second
+- **~~Four registered job kinds have no consumer~~ — SETTLED 2 Sep 2026 by
+  `action-worker`.** Kept because the warning below is still the reason the
+  fix has the shape it does. A third supervised poller now owns `flp_sort`,
+  `system_control`, `zoom_join_meeting` and `whatsapp_desktop_send_message`;
+  `--kind` takes `nargs="+"`, and the poll loop rotates its kind order so the
+  set cannot self-starve. The obvious conformance was **not** taken: letting
+  background-worker claim every other kind would put a 2-second
   `zoom_join_meeting` behind a `distill_memory` job that holds Ollama for
-  20-130s. That starvation is the exact thing the two-worker split was built to
-  prevent, and it is what left eight inbound messages unclaimed on 26 Aug 2026.
-  A correct answer probably needs a third worker or a real priority column,
-  and the queue has neither today.
-
-  Not urgent yet: nothing enqueues any of these four kinds, so nothing is
-  currently stuck. It becomes urgent the moment `enqueue-classifier` lands —
-  that job would ship a producer whose jobs queue forever. **Settle this
-  before `enqueue-classifier`, not after.**
+  20-130s, which is the exact starvation the two-worker split was built to
+  prevent and what left eight inbound messages unclaimed on 26 Aug 2026. The
+  blueprint sentence saying the background poller "claims every other
+  registered kind" is now wrong in a third way and is `blueprint-corrections`'
+  to fix. `docs/board/tasks/action-worker.md` holds the evidence, including
+  the first live claim of any of those four kinds.
 
 - **`facts-check-job` scheduling** — audit §3.5: numbered Phase 0.8 with an owner,
   or cut. CLI-vs-job-kind follows from the answer. The 1 Sep 2026 audit did this

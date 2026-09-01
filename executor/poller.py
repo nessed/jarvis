@@ -108,14 +108,52 @@ def backoff_seconds(attempts: int) -> float:
     return min(BACKOFF_CAP_SECONDS, BACKOFF_BASE_SECONDS * (2 ** max(0, attempts - 1)))
 
 
+def kinds_to_claim(kind_filter: str | Sequence[str] | None) -> tuple[str | None, ...]:
+    """Normalise a kind filter into the sequence of kinds to try, in order.
+
+    ``None`` means unfiltered, and is expressed as a one-element ``(None,)``
+    so every caller can use the same loop. An empty sequence is rejected
+    rather than treated as unfiltered: a worker restricted to no kinds must
+    never quietly become a worker that claims every kind.
+    """
+    if kind_filter is None:
+        return (None,)
+    if isinstance(kind_filter, str):
+        return (kind_filter,)
+    kinds = tuple(kind_filter)
+    if not kinds:
+        raise ValueError("kind_filter must name at least one kind, or be None")
+    return kinds
+
+
+def rotate_kinds(kinds: Sequence[str], turn: int) -> tuple[str, ...]:
+    """The same kinds, starting one position further along on each turn.
+
+    ``claim_next_job`` takes a single kind, so a worker that owns a set has
+    to ask for them one at a time and always claims the first kind that has
+    work. Asking in a fixed order makes the *earlier* kinds a de facto
+    priority tier: a backlog of ``system_control`` would hold every
+    ``zoom_join_meeting`` behind it regardless of ``run_after``. Rotating the
+    starting point bounds that to one cycle through the set.
+    """
+    if not kinds:
+        return ()
+    offset = turn % len(kinds)
+    return tuple(kinds[offset:]) + tuple(kinds[:offset])
+
+
 def poll_once(
     *,
     repository: JobRepository | None = None,
     handler: JobHandler | None = None,
     handlers: JobHandlers | None = None,
-    kind_filter: str | None = None,
+    kind_filter: str | Sequence[str] | None = None,
 ) -> Job | None:
     """Atomically claim and finish one ready job, if any.
+
+    ``kind_filter`` may name one kind, several kinds, or none at all. Several
+    kinds are tried in the order given and the first claim wins, because the
+    database claim is per-kind (see ``kinds_to_claim``).
 
     ``handler`` remains an explicit per-call override for diagnostics and
     compatibility. Otherwise ``handlers`` supplies the registered handler for
@@ -129,7 +167,11 @@ def poll_once(
     stored diagnostic uses only an exception type, so payloads or provider
     details cannot leak into the durable queue.
     """
-    job = claim_next(kind_filter, repository=repository)
+    job = None
+    for kind in kinds_to_claim(kind_filter):
+        job = claim_next(kind, repository=repository)
+        if job is not None:
+            break
     if job is None:
         return None
 
@@ -257,8 +299,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true", help="claim at most one job and exit")
     parser.add_argument(
         "--kind",
+        nargs="+",
         choices=tuple(DEFAULT_HANDLERS),
-        help="claim only this registered job kind",
+        metavar="KIND",
+        help="claim only these registered job kinds (one or more)",
     )
     parser.add_argument(
         "--no-heartbeat",
@@ -270,19 +314,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--interval must be greater than zero")
 
     # A kind-filtered poller can only seed the chain it owns. This keeps the
-    # fast WhatsApp worker from touching background work and preserves the
-    # original unfiltered executor's startup behaviour for diagnostics.
-    seeds_distill = args.kind in (None, DISTILL_JOB_KIND)
+    # fast WhatsApp worker and the action worker from touching background work
+    # and preserves the original unfiltered executor's startup behaviour for
+    # diagnostics.
+    kinds: tuple[str, ...] | None = tuple(args.kind) if args.kind else None
+    seeds_distill = kinds is None or DISTILL_JOB_KIND in kinds
     if not args.once and seeds_distill:
         _seed_distill_chain()
 
     handlers: JobHandlers = (
         DEFAULT_HANDLERS
-        if args.kind is None
-        else {args.kind: DEFAULT_HANDLERS[args.kind]}
+        if kinds is None
+        else {kind: DEFAULT_HANDLERS[kind] for kind in kinds}
     )
 
     try:
+        turn = 0
         while True:
             # Marks the executor live so batch tools (distill, backfill) can
             # refuse to compete for the single local Ollama. See
@@ -290,8 +337,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not args.no_heartbeat:
                 touch_heartbeat()
             idle = True
+            kind_filter = None if kinds is None else rotate_kinds(kinds, turn)
+            turn += 1
             try:
-                idle = poll_once(handlers=handlers, kind_filter=args.kind) is None
+                idle = poll_once(handlers=handlers, kind_filter=kind_filter) is None
             except Exception as exc:
                 if args.once:
                     raise

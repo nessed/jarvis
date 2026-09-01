@@ -1,10 +1,10 @@
 ---
 id: voice-loop
-status: ready
+status: blocked
 lane: AUTO
 priority: 1
 phase: 3
-blocked-on: none
+blocked-on: Q12
 files: voice/loop.py, voice/vad.py, tests/voice/test_loop.py, tests/voice/test_vad.py, docs/tasks/voice-loop-report.md
 resources: microphone-speakers (live smoke only), ollama-embed (via the normal reply path)
 ---
@@ -86,4 +86,47 @@ test) should judge. Update `docs/state.md`'s Phase 3 row.
 
 ## Log
 
-_(empty)_
+### 2 Sep 2026 — stopped before build: Pipecat does not fit (Q12 filed)
+
+Nothing was built. The Constraints section's own escape clause fired:
+Pipecat's abstractions fight this stack, so this is a stop-and-report and
+the task is `blocked` on **Q12**, not a hand-rolled substitution.
+
+Evidence, read off the installed packages:
+
+```
+$ .venv/Scripts/python.exe -c "import pipecat.transports.local.audio, pipecat.services.kokoro.tts"
+FAIL  pipecat.transports.local.audio | ImportError | Missing module: No module named 'pyaudio'
+FAIL  pipecat.services.kokoro.tts    | ImportError | Missing module: No module named 'kokoro_onnx'
+```
+
+- **Transport:** `pipecat-ai[local]` needs `pyaudio~=0.2.14`; this repo's
+  voice runtime is `sounddevice` throughout. Two PortAudio bindings, or a
+  hand-written transport subclass.
+- **TTS:** Pipecat's Kokoro service needs `kokoro-onnx`, a different engine
+  from the installed `kokoro==0.9.4` `KPipeline` path where Ali chose
+  `am_puck` by ear — a constraint this task marks as not revisitable.
+- **Wake word:** Pipecat's only wake support (`WakePhraseUserTurnStart  Strategy`, `WakeCheckFilter`) regex-matches a `TranscriptionFrame`, so STT
+  must run continuously — the inverse of the acoustic openWakeWord gate that
+  exists to keep Whisper large-v3 off the NPU until wake.
+- **STT and LLM:** both custom subclasses (fork's `whisper-server` over HTTP;
+  this repo's own router + `memory.conversation`).
+
+Five of six stages become custom subclasses. Pipecat would contribute its
+frame graph, its Silero VAD analyzer, and interruption handling; `silero-vad`
+6.2.1 is installed standalone, so the VAD is available either way.
+
+Class B consult run per `agents.md`. Verdict **(B) stop-and-report**,
+confidence **high**:
+
+    docs/consults/2026-09-02-pipecat-fit/
+
+Full finding, including what U6's ear test should judge once unblocked:
+
+    docs/tasks/voice-loop-report.md
+
+**Unblock condition:** Ali answers Q12. If he drops Pipecat from §3.3, this
+task becomes `ready` with the framework constraint struck and the rest of the
+Constraints list unchanged. If he keeps it, this task is re-scoped to include
+`pyaudio` plus five Pipecat service subclasses, and the `am_puck`/openWakeWord
+constraints need his ruling too.

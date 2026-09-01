@@ -38,6 +38,30 @@ whole point is that the spec now leads. Verified against the tree on
 Add those four to the board via `board-audit` — do not create them ad hoc,
 and do not start any of them from inside this task.
 
+## Also correct §3's worker sentence (added 2 Sep 2026 by `action-worker`)
+
+`docs/blueprint.md:119` says the laptop runs "a separate background poller
+which claims every other registered kind, including `distill_memory`". That
+was never true of the code and is now doubly wrong: `action-worker` landed
+2 Sep 2026 and there are **three** pollers, each restricted to a disjoint set.
+
+Replace the clause with what shipped, which is Ali's Q2 = A answer applied:
+
+- `whatsapp-worker` — `whatsapp_webhook` only
+- `background-worker` — `distill_memory` only; alone in seeding the
+  distillation chain and maintaining the batch heartbeat
+- `action-worker` — `flp_sort`, `system_control`, `zoom_join_meeting`,
+  `whatsapp_desktop_send_message`; an optional child, since its death leaves
+  desktop actions unclaimed but leaves text and voice replies untouched
+
+Keep the sentence's reason intact — slow offline work must not occupy the
+reply worker before it can emit Meta's typing cue — because that is exactly
+why the action kinds got their own worker rather than being folded into the
+background one. Evidence and the live claim: `docs/board/tasks/action-worker.md`.
+
+This is a factual correction to text Ali's own Q2 answer superseded, not a
+new decision. It is documentation only, like a/b/c.
+
 ## Steps for b
 
 1. Replace `docs/blueprint.md:82-93` with Ali's §3.3 verbatim.

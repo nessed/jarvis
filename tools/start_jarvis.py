@@ -4,11 +4,14 @@ Four processes have to be up for a WhatsApp message to get a reply:
 
     phone -> Meta -> tunnel -> bus -> Supabase queue -> WhatsApp worker -> reply
 
-A fifth, ``whisper-server``, is additionally needed for a *voice note* to get
-a reply -- text keeps working without it. It is started best-effort: missing
-NPU build artifacts (voice/whisper/local_backend.py's own availability check)
-produce a warning here, not a failed launch, since that build is machine-local
-and never committed.
+Two more children exist for work that is not a reply, and both are optional --
+their death degrades one capability and must never take the reply path down.
+``action-worker`` is the third poller; without it a desktop action
+(``system_control``, the two UIA kinds, ``flp_sort``) is claimed by nobody.
+``whisper-server`` is what a *voice note* needs to get a reply; text does not
+need it, and it is started best-effort because missing NPU build artifacts
+(voice/whisper/local_backend.py's own availability check) are a machine-local
+condition that was never committed -- a warning here, not a failed launch.
 
 Starting them by hand means five steps in the right order, plus re-pointing
 Meta's callback every time the Cloudflare Quick Tunnel mints a new URL. This
@@ -111,8 +114,10 @@ class Supervisor:
     Not every child is required. ``whisper-server`` is optional: a WhatsApp
     voice note fails without it, but text messages do not need it at all, and
     the whole point of starting it best-effort (see the module docstring) is
-    defeated if its death takes bus/tunnel/workers down with it. ``optional``
-    marks exactly that: a dead optional child is reported once and otherwise
+    defeated if its death takes bus/tunnel/workers down with it.
+    ``action-worker`` is optional for the same reason: without it a desktop
+    action goes unclaimed, while text and voice replies are untouched.
+    ``optional`` marks exactly that: a dead optional child is reported once and otherwise
     ignored by :meth:`check_alive`, never treated as a reason to shut down.
     """
 
@@ -347,6 +352,54 @@ def resolves_on_public_dns(url: str) -> bool:
     return False
 
 
+#: The job kinds the action worker owns. All four are registered in
+#: ``executor.poller.DEFAULT_HANDLERS`` and, before this worker existed, no
+#: running poller ever claimed any of them: ``--kind`` took one value and the
+#: two live workers were pinned to ``whatsapp_webhook`` and ``distill_memory``.
+#: They are kept off the other two workers deliberately — a desktop action
+#: that takes a second must never queue behind a 130s Ollama extraction.
+ACTION_JOB_KINDS = (
+    "flp_sort",
+    "system_control",
+    "zoom_join_meeting",
+    "whatsapp_desktop_send_message",
+)
+
+
+def spawn_workers(supervisor: Supervisor, python: str, interval: str) -> None:
+    """Start the three supervised pollers, each restricted to its own kinds.
+
+    Only ``background-worker`` seeds the distill chain and maintains the batch
+    heartbeat; the other two pass ``--no-heartbeat`` because neither drives the
+    single local Ollama, and a worker that marked the executor live would block
+    the batch tools that guard on it (``executor/heartbeat.py``).
+
+    ``action-worker`` is **optional**, decided the same way ``whisper-server``
+    was: its death degrades desktop actions, and text and voice replies keep
+    working without it, so it must not take bus/tunnel/reply-path down with it.
+    """
+    supervisor.spawn(
+        "whatsapp-worker",
+        [python, "-m", "executor.poller", "--kind", "whatsapp_webhook",
+         "--no-heartbeat", "--interval", interval],
+        LOG_DIR / "whatsapp-worker.out.log",
+    )
+    supervisor.spawn(
+        "background-worker",
+        [python, "-m", "executor.poller", "--kind", "distill_memory",
+         "--interval", interval],
+        LOG_DIR / "background-worker.out.log",
+    )
+    supervisor.spawn(
+        "action-worker",
+        [python, "-m", "executor.poller", "--kind", *ACTION_JOB_KINDS,
+         "--no-heartbeat", "--interval", interval],
+        LOG_DIR / "action-worker.out.log",
+        optional=True,
+    )
+    say(f"WhatsApp, background and action workers polling every {interval}s")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Start the whole JARVIS stack")
     parser.add_argument("--skip-webhook", action="store_true", help="don't re-point Meta")
@@ -500,34 +553,7 @@ def main(argv: list[str] | None = None) -> int:
                 say("text messages are unaffected; voice notes will fail until this is fixed")
 
         step("[5/5] Workers")
-        supervisor.spawn(
-            "whatsapp-worker",
-            [
-                python,
-                "-m",
-                "executor.poller",
-                "--kind",
-                "whatsapp_webhook",
-                "--no-heartbeat",
-                "--interval",
-                str(args.interval),
-            ],
-            LOG_DIR / "whatsapp-worker.out.log",
-        )
-        supervisor.spawn(
-            "background-worker",
-            [
-                python,
-                "-m",
-                "executor.poller",
-                "--kind",
-                "distill_memory",
-                "--interval",
-                str(args.interval),
-            ],
-            LOG_DIR / "background-worker.out.log",
-        )
-        say(f"WhatsApp and background workers polling every {args.interval}s")
+        spawn_workers(supervisor, python, str(args.interval))
 
         print("\n" + "-" * 58, flush=True)
         print("  JARVIS is running. Message it on WhatsApp.", flush=True)

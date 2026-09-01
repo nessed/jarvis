@@ -68,29 +68,31 @@ Whoever receives answers (in chat or as edits to `QUESTIONS.md`):
 Rewritten 1 Sep 2026 after Ali answered `QUESTIONS.md`. Six tasks came off the
 blocked list; two more shed their `Q` gate and now wait only on a sibling
 task. One, `live-routing-probe`, stayed blocked: its gate was U2 and the
-paste has not reached `.env` yet. Ali's Q10b answer also implies four new
-router tasks that `board-audit` should file — see item 14.
+paste has not reached `.env` yet. `voice-loop` went back to blocked on
+2 Sep — see Q12. Ali's Q10b answer also implies four new
+router tasks that `board-audit` should file — see item 13.
 
 Ready now:
 
-1. `action-worker` — third worker so the 4 orphaned job kinds can run (Q2=A)
-2. `voice-loop` — the local desk assistant loop (Phase 3's last build item)
-3. `replay-harness` — replay real job payloads through real handlers
-4. `router-cooldown-ledger` — process-lifetime ledger + real /status health (Q10c)
-5. `blueprint-corrections` — a, b and c all approved; b is Ali's own §3.3
+1. `enqueue-classifier` — WhatsApp text becomes real action jobs. Unblocked
+   2 Sep by `action-worker`; the allowlist is fixed at `system_control` +
+   `zoom_join_meeting`, nothing else
+2. `replay-harness` — replay real job payloads through real handlers
+3. `router-cooldown-ledger` — process-lifetime ledger + real /status health (Q10c)
+4. `blueprint-corrections` — a, b and c all approved; b is Ali's own §3.3
    text, applied verbatim, documentation only
-6. `facts-check-tool` — the blueprint's own anti-rot check, never built
-7. `phase4-prep` — write all Oracle/VPS scripts before the account exists
-8. `pyflp-parse-failures` — diagnose the 2 hard + 7 partial `.flp` failures
-9. `stt-groq-fallback` — voice owns a small Groq STT client (Q8=A)
-10. `wakeword-fp-monitor` — logging + report so Ali's FP test is one command
-11. `backfill-run` — **overnight window only** (Q4); takes `ollama-extract`
-    exclusively and stops the executor, so it cannot overlap `voice-loop`'s
-    live smoke or anything else touching Ollama
-12. `pytest-addopts` — barrier task; run only when nothing else is mid-run
-13. `db-maintenance` — approved to write live schema; the orphan row is
+5. `facts-check-tool` — the blueprint's own anti-rot check, never built
+6. `phase4-prep` — write all Oracle/VPS scripts before the account exists
+7. `pyflp-parse-failures` — diagnose the 2 hard + 7 partial `.flp` failures
+8. `stt-groq-fallback` — voice owns a small Groq STT client (Q8=A)
+9. `wakeword-fp-monitor` — logging + report so Ali's FP test is one command
+10. `backfill-run` — **overnight window only** (Q4); takes `ollama-extract`
+    exclusively and stops the executor, so it cannot overlap anything else
+    touching Ollama
+11. `pytest-addopts` — barrier task; run only when nothing else is mid-run
+12. `db-maintenance` — approved to write live schema; the orphan row is
     **reported, not deleted**
-14. `board-audit` — recurring; also the fallback when nothing else is ready.
+13. `board-audit` — recurring; also the fallback when nothing else is ready.
     **Run it next for the four router tasks** Ali's §3.3 implies:
     `router-eligibility-window` (needs Q11), `router-cost-class-ordering`,
     `provider-status-generator`, and folding 401/402/403 surfacing into
@@ -98,16 +100,20 @@ Ready now:
 
 Blocked, in the order they'll matter once unblocked:
 
+14. `voice-loop` — **Q12**, raised 2 Sep. Stopped before build on its own
+    Constraints clause: Pipecat's local transport needs `pyaudio`, its Kokoro
+    service needs `kokoro-onnx`, and its wake word is a transcript regex
+    rather than the acoustic openWakeWord gate — five of six stages would be
+    custom subclasses. Stop-and-report, not a substitution. See
+    `docs/tasks/voice-loop-report.md`
 15. `live-routing-probe` — U2. Ali gave the five model IDs but a key-name
     check of `.env` found none of them present; the probe would only
     re-prove the known gap until they land
-16. `enqueue-classifier` — Q1/Q2 answered; waits only on `action-worker`.
-    Allowlist is fixed: `system_control` + `zoom_join_meeting`, nothing else
-17. `voice-command-ingress` — Q7 answered (enqueue-only `POST /command`);
-    waits only on `voice-loop`
-18. `vps-harden-deploy` (U7, after `phase4-prep`)
-19. `bus-offbox-packaging` (after `enqueue-classifier` + `vps-harden-deploy`)
-20. `cloud-routine-wire` (U8, after `bus-offbox-packaging`)
+16. `voice-command-ingress` — Q7 answered (enqueue-only `POST /command`);
+    waits on `voice-loop`, so now behind Q12 as well
+17. `vps-harden-deploy` (U7, after `phase4-prep`)
+18. `bus-offbox-packaging` (after `enqueue-classifier` + `vps-harden-deploy`)
+19. `cloud-routine-wire` (U8, after `bus-offbox-packaging`)
 
 USER items live in `USER-TASKS.md`. Decisions live in `QUESTIONS.md`.
 Deliberately-not-being-done items live in `PARKED.md` — read it before

@@ -569,3 +569,86 @@ def test_spawn_marks_a_child_optional_only_when_asked(
     supervisor.spawn("bus", ["cmd"], tmp_path / "bus.log")
 
     assert supervisor.optional == {"whisper-server"}
+
+
+# --- spawn_workers -----------------------------------------------------------
+#
+# Three supervised pollers, each restricted to its own kinds. The point of the
+# split is that a desktop action never queues behind a 130s Ollama extraction,
+# so what these assert is the *partition*: every registered kind is owned by
+# exactly one worker, and no worker's set overlaps another's.
+
+
+class RecordingSupervisor:
+    """Records spawn calls instead of starting processes."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def spawn(self, name, args, log, env=None, *, optional=False):
+        self.calls.append({"name": name, "args": list(args), "log": log, "optional": optional})
+        return None
+
+
+def _spawned(interval: str = "3") -> dict[str, dict[str, object]]:
+    supervisor = RecordingSupervisor()
+    start_jarvis.spawn_workers(supervisor, "py.exe", interval)
+    return {call["name"]: call for call in supervisor.calls}
+
+
+def _kinds_of(call: dict[str, object]) -> list[str]:
+    args = call["args"]
+    start = args.index("--kind") + 1
+    kinds = []
+    for value in args[start:]:
+        if value.startswith("--"):
+            break
+        kinds.append(value)
+    return kinds
+
+
+def test_the_launcher_spawns_three_workers() -> None:
+    assert sorted(_spawned()) == ["action-worker", "background-worker", "whatsapp-worker"]
+
+
+def test_the_action_worker_owns_every_kind_the_other_two_do_not() -> None:
+    from executor import poller
+
+    spawned = _spawned()
+    owned = [kind for call in spawned.values() for kind in _kinds_of(call)]
+
+    # No kind is claimable by two workers, and none is left unclaimable.
+    assert len(owned) == len(set(owned))
+    assert set(owned) == set(poller.DEFAULT_HANDLERS)
+
+
+def test_the_action_worker_claims_only_the_action_kinds() -> None:
+    assert _kinds_of(_spawned()["action-worker"]) == list(start_jarvis.ACTION_JOB_KINDS)
+    assert "whatsapp_webhook" not in start_jarvis.ACTION_JOB_KINDS
+    assert "distill_memory" not in start_jarvis.ACTION_JOB_KINDS
+
+
+def test_only_the_background_worker_maintains_the_batch_heartbeat() -> None:
+    spawned = _spawned()
+    assert "--no-heartbeat" in spawned["action-worker"]["args"]
+    assert "--no-heartbeat" in spawned["whatsapp-worker"]["args"]
+    assert "--no-heartbeat" not in spawned["background-worker"]["args"]
+
+
+def test_the_action_worker_is_optional_and_the_reply_path_workers_are_not() -> None:
+    spawned = _spawned()
+    assert spawned["action-worker"]["optional"] is True
+    assert spawned["whatsapp-worker"]["optional"] is False
+    assert spawned["background-worker"]["optional"] is False
+
+
+def test_every_worker_gets_the_requested_poll_interval_and_its_own_log() -> None:
+    spawned = _spawned("7")
+    for name, call in spawned.items():
+        assert call["args"][call["args"].index("--interval") + 1] == "7"
+        assert call["log"] == start_jarvis.LOG_DIR / f"{name}.out.log"
+
+
+def test_every_worker_runs_the_poller_module_with_the_given_interpreter() -> None:
+    for call in _spawned().values():
+        assert call["args"][:3] == ["py.exe", "-m", "executor.poller"]
