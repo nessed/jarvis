@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -464,3 +465,62 @@ def test_the_package_init_does_not_pull_in_the_submodule(monkeypatch: pytest.Mon
         assert "voice.whisper.local_backend" not in sys.modules
     finally:
         sys.modules.update(saved)
+
+
+# -- the encoding kwargs on the real subprocess.run call ----------------------
+#
+# These assert directly on ``LocalWhisperBackend._run``'s call into
+# ``subprocess.run``. Every other test in this file goes through ``FakeRunner``,
+# which takes only ``command`` -- so the kwargs that actually carry the
+# transcript back across the process boundary were never asserted anywhere.
+#
+# Their absence is not hypothetical. On 29 Aug 2026 ``text=True`` alone decoded
+# whisper.cpp's UTF-8 output with this machine's cp1252 locale codec, a
+# successful forced-Urdu transcription died with UnicodeDecodeError, and the
+# result was reported as "(nothing recognised)" -- a working model read as a
+# broken one, and it cost a wrong conclusion about Urdu quality before anyone
+# found it. See docs/state.md, "Text encoding on this machine".
+
+
+def test_run_decodes_as_utf8_and_never_with_the_locale_codec(monkeypatch: pytest.MonkeyPatch):
+    seen: dict = {}
+
+    def fake_run(command, **kwargs):
+        seen.update(kwargs)
+        seen["command"] = command
+        return completed("ok")
+
+    monkeypatch.setattr(local_backend.subprocess, "run", fake_run)
+    LocalWhisperBackend._run(["whisper-cli", "-f", "clip.wav"])
+
+    assert seen["encoding"] == "utf-8", (
+        "text=True alone decodes with the locale codec (cp1252 here), which "
+        "cannot represent Urdu or Arabic script"
+    )
+    assert seen["errors"] == "replace", (
+        "one undecodable byte must not cost the whole transcript"
+    )
+    assert seen["capture_output"] is True
+    assert seen["check"] is False, "a non-zero exit is handled, not raised"
+
+
+def test_run_survives_urdu_through_a_real_subprocess(tmp_path: Path):
+    """No fakes: a real child process emits UTF-8 Urdu and it must arrive intact.
+
+    This is the end-to-end version of the test above. If ``_run``'s encoding
+    kwargs regress, this fails on the same UnicodeDecodeError seen on 29 Aug.
+    """
+    urdu = "\u06c1\u06d2\u0644\u0648 \u062c\u0627\u0631\u0648\u0633"  # "hello jarvis" in Urdu script
+    script = (
+        "import sys; "
+        "sys.stdout.buffer.write("
+        f"{urdu!r}.encode('utf-8')); "
+        "sys.stdout.buffer.flush()"
+    )
+
+    result = LocalWhisperBackend._run([sys.executable, "-c", script])
+
+    assert result.returncode == 0, result.stderr
+    assert urdu in result.stdout, (
+        f"Urdu was destroyed crossing the process boundary: {result.stdout!r}"
+    )

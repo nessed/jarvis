@@ -43,9 +43,22 @@ DEFAULT_TEXT = (
 )
 
 
-def installed_voices() -> list[str]:
+def default_cache_root() -> Path:
+    """Where huggingface caches the downloaded voice packs.
+
+    Resolved through a function rather than inlined so a test can point the
+    scan at a directory it created itself instead of at the real home
+    directory. Kept lazy: ``Path.home()`` reads the environment, and doing
+    that at import time would make importing this module fail on a machine
+    with no home set.
+    """
+    return Path.home() / ".cache" / "huggingface"
+
+
+def installed_voices(cache_root: Path | None = None) -> list[str]:
     """Voice ids actually cached on this machine, read off disk."""
-    pattern = str(Path.home() / ".cache" / "huggingface" / "**" / "*.pt")
+    root = default_cache_root() if cache_root is None else Path(cache_root)
+    pattern = str(root / "**" / "*.pt")
     names = {Path(p).stem for p in glob.glob(pattern, recursive=True)}
     return sorted(n for n in names if "_" in n and len(n) > 3)
 

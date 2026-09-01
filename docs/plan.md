@@ -150,8 +150,12 @@ owned and shipped a red tree behind a green focused run. `.githooks/pre-commit`
 exists because of it.
 
 - `db.jobs.JobRepository` — implementers: `db/jobs.py SupabaseJobsRepository`,
-  `tests/db/test_jobs.py:27`, `tests/test_integration.py:11`,
-  `tests/executor/test_poller.py:30`, `tests/executor/test_distill_handler.py:59`.
+  `tests/db/test_jobs.py:27` (`InMemoryJobsRepository`),
+  `tests/test_integration.py:11` (`FakeJobs`),
+  `tests/executor/test_poller.py:33` (`FakeJobs`),
+  `tests/executor/test_distill_handler.py:59` (`FakeQueue`).
+  *Line numbers re-verified 1 Sep 2026; `test_poller.py` had drifted 30 → 33.
+  Each now names the class, so the next reader can re-find it after it moves.*
 - `executor/handlers/distill.py:112 ChainQueue` is a **second, deliberately
   narrower Protocol on the same object**, split apart to dodge exactly this.
   Treat both as one interface.
@@ -159,8 +163,13 @@ exists because of it.
   `repository._client`, so it breaks on repository internals while implementing
   neither Protocol.
 - `TurnStore` / `FactExtractor` / `ConversationMemory` doubles live in
-  `tests/executor/test_distill_handler.py:186,210` and
-  `tests/executor/test_whatsapp_handler.py:117,375,398`.
+  `tests/executor/test_distill_handler.py:186` (`FakeTurns`), `:210`
+  (`FakeExtractor`), and `tests/executor/test_whatsapp_handler.py:179`
+  (`FakeFact`), `:186` (`FakeMemory`), `:208` (`FakeSeenStore`).
+  *Re-verified 1 Sep 2026. The three `test_whatsapp_handler.py` pointers were
+  all wrong — 117/375/398 landed on unrelated lines. This is the section that
+  exists to stop a stranded double shipping a red tree, so it rotting is the
+  failure mode it was written to prevent.*
 - `Job` is a frozen dataclass **constructed positionally** in
   `tests/test_integration.py:18`. Adding a field anywhere but the end breaks it
   silently.
@@ -201,9 +210,9 @@ before starting. **This is the block to hand an idle orchestrator.**
 | id | what | files |
 |---|---|---|
 | ~~`test-repoint-webhook`~~ | **Done** (`1672f8c`). The 64-char guard was correctly **not** added — the lane found no source confirms any Meta verify_token length limit, and this session independently web-searched and found none either (2026-08-28); "64" in this row was an unverified number, not a real constraint. Guessing one would have been fabricating a validation rule. | `tools/repoint_webhook.py`, `tests/tools/test_repoint_webhook.py` |
-| ~~`test-context-status`~~ | **Done** (`1672f8c`). The bug that lane found and correctly left alone (`main()` calling `splice()` before branching on `--check`) is now **also done**, uncommitted, this pass: `--check` now short-circuits before `splice()`, so a missing-markers file reaches `check()`'s own dedicated message via a clean `return 1` instead of an uncaught `SystemExit`. `--write` is unaffected (still needs the spliced block, so it still raises the same way). | `tests/tools/test_context_status.py`, `tools/context_status.py` |
-| ~~`test-distill-memory-cli`~~ | **Done**, uncommitted. 12 new tests mirroring `test_run_backfill.py`'s pattern. | `tests/tools/test_distill_memory.py` |
-| ~~`test-start-jarvis-uncovered-paths`~~ | **Done**, uncommitted. 11 → 28 tests; all four named gaps covered against fakes. | `tests/tools/test_start_jarvis.py` |
+| ~~`test-context-status`~~ | **Done** (`1672f8c`). The bug that lane found and correctly left alone (`main()` calling `splice()` before branching on `--check`) is now **also done** (landed 2026-08-29): `--check` now short-circuits before `splice()`, so a missing-markers file reaches `check()`'s own dedicated message via a clean `return 1` instead of an uncaught `SystemExit`. `--write` is unaffected (still needs the spliced block, so it still raises the same way). | `tests/tools/test_context_status.py`, `tools/context_status.py` |
+| ~~`test-distill-memory-cli`~~ | **Done** (landed 2026-08-29). 12 new tests mirroring `test_run_backfill.py`'s pattern. | `tests/tools/test_distill_memory.py` |
+| ~~`test-start-jarvis-uncovered-paths`~~ | **Done** (landed 2026-08-29). 11 → 28 tests; all four named gaps covered against fakes. | `tests/tools/test_start_jarvis.py` |
 | ~~`consult-untested-paths`~~ | **Done** (`1672f8c`). | `tests/tools/test_consult.py` |
 | ~~`test-openai-chat-client`~~ | **Done** (`ae158b9`). Exercised through its real `__init__`/`AsyncOpenAI` import path, fake swapped in only at `with_raw_response`. | `tests/router/test_routing.py` |
 | ~~`poller-invariant-tests`~~ | **Done** (`b9458fb`, folded into the poller batch that also fixed drain-without-sleep, reseed-in-loop, heartbeat-clear-on-exit, and flp-permanent-failure-no-retry). | `tests/executor/test_poller.py` |
@@ -219,13 +228,14 @@ before starting. **This is the block to hand an idle orchestrator.**
 | ~~`status-dead-letter-key`~~ | **Done** (`e4f15a7`). `_QUEUE_STATUSES` now includes `dead_letter`; test updated. | `bus/status.py`, `tests/status/test_live_queue_status.py` |
 | ~~`reframe-archived-consults`~~ | **Done** (`1cb18ed`). Both files wrapped in `frame_untrusted()`'s exact shape (imported the real function, not hand-typed). | `docs/consults/*/response.md` |
 | ~~`injection-blocker-stale-status`~~ | **Done** (`1cb18ed`). Only the embedded "What was found and NOT fixed" sub-finding was stale (the system-role recall bug, fixed in `628b6ea`) — the file's top-level "OPEN. Not reproduced." status is a separate, still-unresolved incident (the fake plan-mode text, H4-H6) and was left alone. | `docs/blockers/tool-result-injection.md` |
-| ~~`poller-dead-request-completion`~~ | **Done as scoped** (`c6565c0`): gained 2 tests pinning its actual current behavior, still zero live callers. "Wire it or delete it" was a false binary — its docstring ("give executor jobs the provider router's single async entry point") and signature (`urgent: bool = False`) show it's a deliberately-placed hook for a future *batch*-routed job kind, not dead code to remove. Nothing in the repo currently calls `route(..., urgent=False)` at all (checked 2026-08-28: `ProviderRouter` is only instantiated in `bus/main.py`; the only executor caller, `executor/handlers/whatsapp.py:160`, always passes `urgent=True`). Actually wiring it means inventing that caller, which is `router-deepseek-defer-not-skip`'s job, not this one's — see that entry below. | `executor/poller.py` (hot), `tests/executor/test_poller.py` |
+| ~~`poller-dead-request-completion`~~ | **Done as scoped** (`c6565c0`): gained 2 tests pinning its actual current behavior, still zero live callers. "Wire it or delete it" was a false binary — its docstring ("give executor jobs the provider router's single async entry point") and signature (`urgent: bool = False`) show it's a deliberately-placed hook for a future *batch*-routed job kind, not dead code to remove. Nothing in the repo currently calls `route(..., urgent=False)` at all (checked 2026-08-28: `ProviderRouter` is only instantiated in `bus/main.py`; the only executor caller, `executor/handlers/whatsapp.py:227`, always passes `urgent=True`). Actually wiring it means inventing that caller, which is `router-deepseek-defer-not-skip`'s job, not this one's — see that entry below. | `executor/poller.py` (hot), `tests/executor/test_poller.py` |
 | `verify-configured-model-ids` | **Evidence gathered** (`docs/state.md`'s Provider rungs section, 2026-08-28), fix not applied. Five providers (`GROQ_DEFAULT_MODEL`, `CEREBRAS_DEFAULT_MODEL`, `NVIDIA_DEFAULT_MODEL`, `GEMINI_DEFAULT_MODEL`, `CLAUDE_API_DEFAULT_MODEL`) are absent as *keys* in the live `.env` (checked names only, no values read). Current model IDs researched and cited in `docs/state.md`. Setting the actual values in `.env` is the user's, not an agent's — `.env` is hand-filled per `CLAUDE.md`. | `docs/state.md` |
 
 ### Greenfield — touches no existing file at all
 
-`whisper-npu-build` · `stt-backends` ·
-`stt-benchmark` · `wakeword-train` · `kokoro-tts` ·
+~~`whisper-npu-build`~~ (done, `0391f3f`) · `stt-backends` ·
+`stt-benchmark` · ~~`wakeword-train`~~ (not blocked — **not needed**, the
+pretrained model passed 7/7; see `docs/state.md`) · `kokoro-tts` ·
 `voice-loop` · `voice-acceptance` · `oracle-provision` · `vps-harden-deploy` ·
 `vps-web-ui` · `cloud-routine-trigger` ·
 `phase4-acceptance` · `uitars-install` · `facts-check-job`
@@ -244,15 +254,24 @@ some are already in flight and re-dispatching one collides head-on.**
 
 | brief | covers | state |
 |---|---|---|
-| `docs/tasks/whisper-npu-build.md` | `whisper-npu-build` | **blocked on AC power**, see below |
-| `docs/tasks/laptop-system-control.md` | Power/wifi/bluetooth/display, scheduled tasks, printing, file ops, process-kill — CLI/API only, no UIA | **in flight** |
-| `docs/tasks/pywinauto-zoom-whatsapp.md` | Zoom's native-dialog join tail, WhatsApp Desktop send-as-personal-number — the real UIA targets from blueprint 2.4 | **in flight** |
+| `docs/tasks/whisper-npu-build.md` | `whisper-npu-build` | ~~blocked on AC power~~ **DONE** (`0391f3f`). Whisper large-v3 on the XDNA NPU, 12.4x CPU encoder speed, independently re-verified by CORE. Report: `docs/tasks/whisper-npu-build-report.md` |
+| `docs/tasks/laptop-system-control.md` | Power/wifi/bluetooth/display, scheduled tasks, printing, file ops, process-kill — CLI/API only, no UIA | ~~in flight~~ **DONE** (`0391f3f`). `executor/system_control/`, 77 tests, registered as job kind `system_control`. Report: `docs/tasks/laptop-system-control-report.md` |
+| `docs/tasks/pywinauto-zoom-whatsapp.md` | Zoom's native-dialog join tail, WhatsApp Desktop send-as-personal-number — the real UIA targets from blueprint 2.4 | ~~in flight~~ **DONE** (`0391f3f`). `executor/app_automation/`, 45 tests, registered as `zoom_join_meeting` + `whatsapp_desktop_send_message`. Report: `docs/tasks/pywinauto-zoom-whatsapp-report.md` |
 
-`whisper-npu-build` may not start while `laptop-power-lag-live-capture` holds a
-claim: a from-source C++ build during a battery-transition power capture
-poisons the capture, and that capture's numbers are what Ali is asked to judge.
-It also needs AC power — this laptop has a recorded `108 C` ACPI thermal event.
-Check `work_board_claim.py list` before starting it.
+**All three landed. Do not re-dispatch any of them.** What is now true of all
+three, and is the next real question for this area: they are registered in
+`executor/poller.py`'s `DEFAULT_HANDLERS` but **nothing enqueues them**. The
+tree has exactly two producers: `bus/main.py:112`
+(`whatsapp_webhook`) and `executor/handlers/distill.py:469` (the
+self-re-enqueuing distill chain), and neither emits these kinds. Giving them a producer is `enqueue-classifier`, which is
+a Barrier and is Class C — see Decisions. `flp_sort` is in the same position.
+
+~~`whisper-npu-build` may not start while `laptop-power-lag-live-capture` holds
+a claim~~ — moot, the build is done. The reasoning is kept because it applies
+to the next from-source build: a C++ build during a battery-transition power
+capture poisons the capture, and that capture's numbers are what Ali is asked
+to judge. This laptop also has a recorded `108 C` ACPI thermal event, so any
+long build needs AC power. Check `work_board_claim.py list` first.
 
 It does **not** collide with `voice-deps-and-tooling` on files: that lane owns
 `voice/benchmark_stt.py`, this one owns `voice/whisper/local_backend.py`, and
@@ -281,7 +300,7 @@ Disjoint ownership working as designed is not a conflict.
    weekday/peak gate (`router/routing.py:296-305`) only fires when
    `urgent=False`, and nothing in the repo calls `route()`/`request_completion`
    with `urgent=False` today — the only executor caller,
-   `executor/handlers/whatsapp.py:160`, always passes `urgent=True` (a live
+   `executor/handlers/whatsapp.py:227`, always passes `urgent=True` (a live
    reply), and `executor/poller.py`'s `request_completion` (the intended hook
    for a batch caller — see `poller-dead-request-completion`) has zero
    callers. Deferring "the job" via `run_after` needs an actual batch-routed
@@ -340,7 +359,7 @@ in the comment.
 
 ### Other single-file contention
 
-- `bus/main.py` — ~~`webhook-message-dedup`~~ **done**, uncommitted (see below).
+- `bus/main.py` — ~~`webhook-message-dedup`~~ **done** (landed 2026-08-29, see below).
   `status-provider-health-source`, `voice-command-ingress`, `enqueue-classifier`
   are Class C (see Decisions). `bus-offbox-packaging` is Phase 4, not started,
   gated behind `enqueue-classifier` — not buildable yet, don't invent scope for
@@ -359,7 +378,7 @@ in the comment.
   id" line has since been corrected to say it dedups at both enqueue and send;
   that follow-up is done.
 - `bus/status.py` — ~~`status-dead-letter-key`~~, ~~`status-count-queries`~~,
-  ~~`status-distill-chain-liveness`~~ **all done**, uncommitted (2026-08-28).
+  ~~`status-distill-chain-liveness`~~ **all done** (landed 2026-08-29).
   `queue_depths()`/`retry_health()` now issue count-only PostgREST queries
   (`count="exact", head=True`) instead of fetching every row — verified
   against the actually-pinned `postgrest` 1.1.1 (via `supabase==2.18.1`),
@@ -386,7 +405,7 @@ in the comment.
 **Correction worth keeping:** Ali's `.flp` copies are **not** blocking all
 Phase 2 work.
 
-- ~~`flp-sort-real-flp-end-to-end`~~ **Done**, uncommitted (2026-08-28).
+- ~~`flp-sort-real-flp-end-to-end`~~ **Done** (landed 2026-08-29).
   Downloaded PyFLP's own upstream fixture into `test_projects/FL 20.8.4.flp`
   (public, from `demberto/PyFLP`'s repo — see `docs/blockers/pyflp-python-312.md`
   for the same URL a prior lane already used). New
@@ -402,12 +421,12 @@ Phase 2 work.
   `.venv311\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp-flp -m realflp tests/flp/` →
   `4 passed`. Main suite unaffected (`480 passed, 5 deselected` — one more
   deselected than before, correctly, since the new test is `realflp`-marked).
-- ~~`flp-write-path-guard`~~ **Done**, uncommitted. `flp_sort_root()` (env
+- ~~`flp-write-path-guard`~~ **Done** (landed 2026-08-29). `flp_sort_root()` (env
   `JARVIS_FLP_SORT_ROOT`, defaults to `test_projects/`) + a
   `resolve()`/`relative_to()` guard in `build_flp_sort_handler`, raising
   `FlpSortPathOutsideRoot` before `backup()`/`loader()` run for any path
   outside it.
-- ~~`flp-diff-report-emission`~~ **Done**, uncommitted. `write_diff_report()`
+- ~~`flp-diff-report-emission`~~ **Done** (landed 2026-08-29). `write_diff_report()`
   writes `MixerDiff.as_dict()` as `<stem>.<stamp>.diff.json` beside the
   backup, same timestamp source so the two are pairable; skipped when the
   diff is empty.
@@ -469,8 +488,38 @@ defect. All Class C.
 - **`flp-sort-producer-via-whatsapp`** — wiring "sort out this FLP" gives inbound
   WhatsApp text the power to write files on disk. Inbound text was an injection
   channel until 27 Aug. Explicit consent required.
+- **Four registered job kinds have no consumer, and the blueprint and the code
+  disagree about whose job that is.** Found by the 1 Sep 2026 docs drift audit,
+  verified independently. `docs/blueprint.md` §3 says the background poller
+  "claims every other registered kind". `executor/poller.py:258-262` defines
+  `--kind` with `choices=tuple(DEFAULT_HANDLERS)` and **no `nargs`**, so it
+  takes exactly one value, and `tools/start_jarvis.py:517-527` passes
+  `distill_memory`. So `flp_sort`, `system_control`, `zoom_join_meeting` and
+  `whatsapp_desktop_send_message` are registered handlers that **no running
+  poller will ever claim**.
+
+  Meanwhile `docs/state.md`'s "Executor topology" row calls the current
+  restricted-to-`distill_memory` split *the approved implementation*. Both
+  cannot be right.
+
+  **Do not "just fix it" by widening `--kind`.** The obvious conformance —
+  letting background-worker claim every other kind — puts a 2-second
+  `zoom_join_meeting` behind a `distill_memory` job that holds Ollama for
+  20-130s. That starvation is the exact thing the two-worker split was built to
+  prevent, and it is what left eight inbound messages unclaimed on 26 Aug 2026.
+  A correct answer probably needs a third worker or a real priority column,
+  and the queue has neither today.
+
+  Not urgent yet: nothing enqueues any of these four kinds, so nothing is
+  currently stuck. It becomes urgent the moment `enqueue-classifier` lands —
+  that job would ship a producer whose jobs queue forever. **Settle this
+  before `enqueue-classifier`, not after.**
+
 - **`facts-check-job` scheduling** — audit §3.5: numbered Phase 0.8 with an owner,
-  or cut. CLI-vs-job-kind follows from the answer.
+  or cut. CLI-vs-job-kind follows from the answer. The 1 Sep 2026 audit did this
+  job by hand once (`docs/tasks/docs-drift-audit-report.md`) and found ~12% of
+  checkable claims had drifted in four days, which is the empirical case for
+  scheduling it rather than cutting it.
 - **`voice-command-ingress`** — a bearer-authed `POST /command` on the bus, or the
   voice loop calling `db.jobs.enqueue` directly. Different architectures for
   Phase 4: the first survives the bus moving to Oracle, the second does not.
@@ -497,6 +546,26 @@ defect. All Class C.
 - **`live-schema-drift-guard`** — `tests/db/test_jobs_integration.py:114` calls
   `pytest.skip` on exactly the condition it exists to catch, and the file is
   `--ignore`d by both the documented command and the pre-commit hook. It has
-  never run and cannot go red.
+  never run and cannot go red. **DONE 1 Sep 2026.** Was a file-local,
+  fakes-only fix — brief `docs/tasks/live-schema-drift-guard.md`. It is scoped
+  to make the file *capable* of going red (separating "no credentials" from
+  "network failed" from "schema drifted") **without** touching the live `jobs`
+  table and **without** removing the `--ignore`, so it is not acting as a
+  barrier. Removing the `--ignore` is still a barrier and is still open.
 
 ---
+
+## In flight, 1 September 2026
+
+Claimed on the work board. Check `work_board_claim.py list` before touching
+any of these paths.
+
+| lane | brief | owns |
+|---|---|---|
+| `voice-cli-tests` | `docs/tasks/voice-cli-tests.md` | `tests/voice/test_{try_stt,listen_wakeword,audition_voices}.py`, and DI seams only in the three matching `voice/*.py` modules |
+| `live-schema-drift-guard` | `docs/tasks/live-schema-drift-guard.md` | `tests/db/test_jobs_integration.py` |
+
+`voice-cli-tests` exists because `voice/try_stt.py` (183 lines) landed in
+`52e2c03` with **zero** test references anywhere in `tests/`, alongside
+`voice/listen_wakeword.py` (164) and `voice/audition_voices.py` (128). Every
+other module in `voice/` already has a test file.

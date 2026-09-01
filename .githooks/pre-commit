@@ -19,7 +19,7 @@ if [ ! -x "$PY" ]; then
 fi
 
 echo "pre-commit: running full offline suite..." >&2
-OUTPUT=$("$PY" -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp --ignore=tests/db/test_jobs_integration.py 2>&1)
+OUTPUT=$("$PY" -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp 2>&1)
 STATUS=$?
 
 if [ $STATUS -ne 0 ]; then

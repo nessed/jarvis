@@ -8,32 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `37c51d4 Fix two live-verification bugs: wrong whisper-server binary, and force voice replies to stay in English` on `main`, 2 ahead, 0 behind origin.
+**HEAD** `52e2c03 push` on `main`, 3 ahead, 0 behind origin.
 
-**Working tree:** 25 changed
+**Working tree:** 23 changed
 
 ```
-  A  docs/consults/2026-08-30-consult-selftest/prompt.md
-  A  docs/consults/2026-08-30-consult-selftest/response.md
-  A  docs/consults/2026-08-30-consult-selftest/verdict.json
-  A  docs/consults/2026-08-30-work-board-silent-prune/prompt.md
-  A  docs/consults/2026-08-30-work-board-silent-prune/response.md
-  A  docs/consults/2026-08-30-work-board-silent-prune/verdict.json
-  A  docs/history/voice-urdu-language-detection.md
-  A  docs/history/work-board-silent-prune.md
-  A  docs/tasks/laptop-power-lag-dc-overlay-test-report.md
-  A  docs/tasks/laptop-power-lag-dc-overlay-test.md
-  A  docs/tasks/laptop-power-lag-hp-bios-f11-report.md
-  A  docs/tasks/laptop-power-lag-hp-bios-f11-staging/preflight-security.ps1
-  ...and 13 more
+  M  .githooks/pre-commit
+  M  .gitignore
+  M  CLAUDE.md
+  M  README.md
+  M  docs/blockers/tool-result-injection.md
+  M  docs/context.md
+  M  docs/plan.md
+  M  docs/state.md
+  A  docs/tasks/docs-drift-audit-report.md
+  A  docs/tasks/docs-drift-audit.md
+  A  docs/tasks/live-schema-drift-guard-report.md
+  A  docs/tasks/live-schema-drift-guard.md
+  ...and 11 more
 ```
 
-**Offline suite:** 862 passed, 7 deselected, 2 warnings in 60.41s (0:01:00) _(recorded 2026-09-01)_
+**Offline suite:** 976 passed, 9 deselected, 2 warnings in 53.30s _(recorded 2026-09-01)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `52e2c03` push  _(2026-09-01)_
 - `37c51d4` Fix two live-verification bugs: wrong whisper-server binary, and force voice replies to stay in English  _(2026-08-31)_
 - `51e3a84` Wire voice notes into the WhatsApp handler and run whisper-server as a managed process  _(2026-08-30)_
 - `0391f3f` Land desktop automation, the typing-cue fix, and NPU voice STT  _(2026-08-29)_
@@ -41,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `221ce33` Record this session's lane briefs and consult exchanges  _(2026-08-29)_
 - `50233bc` Record the model-ID gap, dual message-id dedup, and a full board pass  _(2026-08-29)_
 - `77c07e5` Stop a Meta webhook redelivery from enqueueing a second job  _(2026-08-29)_
-- `e4f15a7` Make queue_depths and retry_health O(1) queries, add distill-chain liveness  _(2026-08-29)_
 
 <!-- END GENERATED -->
 
@@ -59,14 +59,27 @@ during the live pass — `docs/history/voice-whatsapp-live-verification.md`.
   code-switched clips. Replies stay English regardless — Kokoro has no Urdu
   voice. `docs/history/voice-urdu-language-detection.md`
 
-**FL Studio: the audit is done, the convention is not.** 24 of Ali's real
-projects were read (`docs/tasks/flp-audit-data.json`, and the published report).
+**FL Studio: the audit is done, the convention is not.** 26 entries were read
+(`docs/tasks/flp-audit-data.json`) — 25 of Ali's real projects plus PyFLP's own
+`FL 20.8.4` fixture.
 Takes land on random lanes because FL's own "auto-create audio clips" uses the
 first free lane — the documented fix is Audio Track mode, no discipline needed.
 He has three competing naming schemes, not one, and names things only above
-~5h invested. 18 of 24 projects parse; the rest are PyFLP bugs, all loud.
-`tools/flp_inspect.py` is read-only and has no tests yet — do not build the
-writing half on it until it does.
+~5h invested. **17 parse clean, 7 parse partially, 2 fail outright**
+(`outroforest`, `prayon`) — recounted 1 Sep 2026, the earlier "18 of 24" was
+wrong in both numbers. Every failure is loud; none are silent.
+`tools/flp_inspect.py` is read-only and now has 28 tests
+(`tests/tools/test_flp_inspect.py`, landed in `52e2c03`), so the gate that
+said "do not build the writing half on it until it does" is cleared. The
+writing half is still blocked on the convention below, not on coverage.
+
+**Docs were audited against the tree, 1 Sep 2026.** ~88% of checkable claims
+held. The rest are fixed; the full finding list is
+`docs/tasks/docs-drift-audit-report.md`. The two that mattered most: `state.md`
+claimed the executor topology "is not live" when both workers had been polling
+since 31 Aug, and `plan.md`'s cross-lane test-double index — the section that
+exists to stop a stranded test double shipping a red tree — had rotted on 4 of
+11 pointers.
 
 ## Waiting on you
 

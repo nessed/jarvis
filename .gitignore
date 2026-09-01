@@ -12,9 +12,15 @@ memory.db-*
 *.mem0-history.db
 *.seen-messages.db
 
+# pytest scratch and cache. The system TEMP directory is locked down on this
+# machine, so every run is forced to --basetemp here (see CLAUDE.md). Lanes use
+# a per-lane suffix so concurrent suites do not share a scratch directory.
+# .pytest-typing-diagnosis/ is one such leftover and became unreadable
+# (Permission denied), which made git print a warning on *every* invocation
+# until it was ignored here.
 .pytest-basetemp/
 .pytest-basetemp-*/
-.pytest_cache/
+.pytest-typing-diagnosis/
 .context-status.json
 .executor-heartbeat
 test_projects/

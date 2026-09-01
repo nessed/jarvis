@@ -68,14 +68,41 @@ def _bar(score: float, width: int = 32) -> str:
     return "#" * filled + "-" * (width - filled)
 
 
-def listen(threshold: float, device: int | None, meter: bool, seconds: float | None) -> int:
-    import numpy as np
-    import sounddevice as sd
+def _load_model():
+    """The real openWakeWord model. Imported lazily: loading it is expensive."""
     from openwakeword.model import Model
+
+    return Model(wakeword_models=[MODEL_KEY], inference_framework="onnx")
+
+
+def _open_stream(device: int | None):
+    """The real microphone, opened in the format the model was trained on."""
+    import sounddevice as sd
+
+    return sd.InputStream(
+        samplerate=WAKEWORD_SAMPLE_RATE,
+        channels=WAKEWORD_CHANNELS,
+        dtype=WAKEWORD_DTYPE,
+        blocksize=FRAME_SAMPLES,
+        device=device,
+    )
+
+
+def listen(
+    threshold: float,
+    device: int | None,
+    meter: bool,
+    seconds: float | None,
+    *,
+    load_model=_load_model,
+    open_stream=_open_stream,
+    clock=time.monotonic,
+) -> int:
+    import numpy as np
 
     # Fail loudly and early if the pretrained model is not where we expect it,
     # rather than at the first frame with a confusing KeyError.
-    model = Model(wakeword_models=[MODEL_KEY], inference_framework="onnx")
+    model = load_model()
     if MODEL_KEY not in model.models:
         print(
             f"error: openwakeword did not load '{MODEL_KEY}'. "
@@ -93,17 +120,11 @@ def listen(threshold: float, device: int | None, meter: bool, seconds: float | N
     peak = 0.0
     # A bounded run so this can be launched from a chat prompt and actually
     # return, instead of only ending on Ctrl+C in an interactive terminal.
-    deadline = (time.monotonic() + seconds) if seconds else None
+    deadline = (clock() + seconds) if seconds else None
 
     try:
-        with sd.InputStream(
-            samplerate=WAKEWORD_SAMPLE_RATE,
-            channels=WAKEWORD_CHANNELS,
-            dtype=WAKEWORD_DTYPE,
-            blocksize=FRAME_SAMPLES,
-            device=device,
-        ) as stream:
-            while deadline is None or time.monotonic() < deadline:
+        with open_stream(device) as stream:
+            while deadline is None or clock() < deadline:
                 frame, overflowed = stream.read(FRAME_SAMPLES)
                 if overflowed:
                     # Dropped audio makes a miss meaningless -- say so rather
@@ -116,7 +137,7 @@ def listen(threshold: float, device: int | None, meter: bool, seconds: float | N
                 if meter:
                     print(f"\r  {_bar(score)} {score:0.3f}", end="", flush=True)
 
-                now = time.monotonic()
+                now = clock()
                 if score >= threshold and (now - last_hit) > REFRACTORY_SECONDS:
                     hits += 1
                     last_hit = now

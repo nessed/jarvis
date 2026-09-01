@@ -49,16 +49,67 @@ def test_the_hook_is_a_posix_shell_script() -> None:
     assert "sh" in first_line
 
 
+def _documented_suite_command() -> str:
+    """The pytest invocation CLAUDE.md documents as required before any commit.
+
+    Returned from ``-m pytest`` onward, so it is comparable against the hook
+    regardless of how each spells the interpreter.
+
+    Read out of CLAUDE.md rather than hardcoded. The previous version of this
+    test pinned the flags as literals, so changing the documented command made
+    it fail for the wrong reason -- it reported drift between the hook and a
+    copy of the command frozen in a test file, not drift between the hook and
+    CLAUDE.md.
+    """
+    for line in (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8").splitlines():
+        if "-m pytest" in line and "required before any commit" in line:
+            command = line.split("#", 1)[0]
+            return " ".join(command[command.index("-m pytest"):].split())
+    raise AssertionError(
+        "CLAUDE.md no longer documents a full-suite command marked "
+        "'required before any commit'"
+    )
+
+
 def test_the_hook_runs_the_documented_offline_suite_command() -> None:
-    text = _hook_text()
+    hook = " ".join(_hook_text().split())
+    documented = _documented_suite_command()
 
     # CLAUDE.md's Commands section names this exact invocation as "required
-    # before any commit". If the hook's actual command drifts from it, the
-    # hook is no longer proving what CLAUDE.md claims it proves.
-    assert "pytest" in text
-    assert "-p no:cacheprovider" in text
-    assert "--basetemp=.pytest-basetemp" in text
-    assert "--ignore=tests/db/test_jobs_integration.py" in text
+    # before any commit". If the hook's actual command drifts from it, the hook
+    # is no longer proving what CLAUDE.md claims it proves. Compared whole, not
+    # flag by flag: '-p no:cacheprovider' must keep its value, and a flag-set
+    # check would pass on '-p something_else'.
+    assert documented.startswith("-m pytest"), documented
+    assert documented in hook, (
+        f"CLAUDE.md documents {documented!r} as required before any commit, "
+        f"but .githooks/pre-commit does not run that command"
+    )
+
+    # Not stylistic. The system TEMP directory is locked down on this machine,
+    # so pytest's default cache and scratch dirs fail with PermissionError.
+    assert "-p no:cacheprovider" in documented
+    assert "--basetemp=.pytest-basetemp" in documented
+
+
+def test_the_hook_does_not_skip_the_jobs_integration_file_by_path() -> None:
+    """The full suite must not be narrowed with ``--ignore``.
+
+    Until 1 Sep 2026 both the hook and CLAUDE.md passed
+    ``--ignore=tests/db/test_jobs_integration.py`` to keep the two tests in
+    that file that need live Supabase out of every routine run. ``--ignore`` is
+    path-based, so it also took out the 23 offline guards in the same file --
+    including the ones that keep the live-schema drift detector honest. Those
+    guards had therefore never run.
+
+    Both live tests now carry ``@pytest.mark.live``, and pytest.ini's addopts
+    already deselect that marker, so the exclusion happens per-test instead of
+    per-file. Re-adding ``--ignore`` would silently re-hide the guards.
+    """
+    assert "--ignore" not in _hook_text(), (
+        "the hook narrows the suite by path; use a pytest marker instead so "
+        "offline tests in the same file still run"
+    )
 
 
 def test_the_hook_refuses_a_red_suite() -> None:

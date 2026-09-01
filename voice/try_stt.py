@@ -10,10 +10,12 @@ own voice without writing a clip path by hand.
     .venv\\Scripts\\python.exe voice/try_stt.py --seconds 10 --keep
     .venv\\Scripts\\python.exe voice/try_stt.py --clip some-existing.wav
 
-Speak Urdu or English -- the language is left on ``auto`` on purpose. Pinning it
-to English is roughly twice as fast and is the user's call to make, not an
-agent's, because it silently stops Urdu working. See
-``docs/tasks/whisper-npu-build-report.md``.
+Speak Urdu or English. **The default is Urdu (``ur``), not ``auto``**, changed
+30 Aug 2026: Ali code-switches Urdu/English mid-sentence and ``auto`` was
+silently dropping the Urdu half of mixed clips, which is worse than ``-l ur``'s
+degraded pure-English case. ``--language`` overrides it per run. The tradeoff
+data is in ``docs/history/voice-urdu-language-detection.md``; the original
+auto-detect reasoning is in ``docs/tasks/whisper-npu-build-report.md``.
 """
 
 from __future__ import annotations
@@ -26,7 +28,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from voice.config import WAKEWORD_CHANNELS, WAKEWORD_DTYPE, WAKEWORD_SAMPLE_RATE
+from voice.config import (
+    DEFAULT_WHISPER_LANGUAGE,
+    WAKEWORD_CHANNELS,
+    WAKEWORD_DTYPE,
+    WAKEWORD_SAMPLE_RATE,
+)
 
 # whisper.cpp wants 16 kHz mono PCM, which is the same format the wake-word
 # recorder already captures, so the constants are shared rather than restated.
@@ -54,6 +61,16 @@ def _force_utf8_console() -> None:
                 # A redirected or already-wrapped stream: printing ASCII still
                 # works, so this is not worth failing the run over.
                 pass
+
+
+def scratch_clip_path() -> Path:
+    """Where an unnamed recording is written when ``--clip`` was not given.
+
+    Written next to the other scratch audio, not into the repo. A function
+    rather than an inline expression so a test can redirect it instead of
+    monkeypatching the standard library.
+    """
+    return Path(tempfile.gettempdir()) / "jarvis-try-stt.wav"
 
 
 def record(seconds: float, device: int | None, destination: Path) -> float:
@@ -91,12 +108,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--keep", action="store_true", help="keep the recorded .wav")
     parser.add_argument(
         "--language", default=None,
-        help="force a language ('ur' Urdu, 'en' English, 'hi' Hindi). Default: auto-detect. "
-             "Forcing is also ~2x faster because it skips the detection pass.",
+        help=(
+            "force a language ('ur' Urdu, 'en' English, 'hi' Hindi). "
+            f"Default: {DEFAULT_WHISPER_LANGUAGE}. "
+            "Forcing is also ~2x faster because it skips the detection pass."
+        ),
     )
     parser.add_argument(
         "--compare", action="store_true",
-        help="transcribe the same audio as auto, Urdu and English, and print all three",
+        help=(
+            "transcribe the same audio three ways and print all three. Note the "
+            f"first row is the configured default ({DEFAULT_WHISPER_LANGUAGE}), "
+            "not auto-detect, so today this compares "
+            f"{DEFAULT_WHISPER_LANGUAGE}/ur/en."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -121,9 +146,9 @@ def main(argv: list[str] | None = None) -> int:
         temporary = None
         spoken_seconds = None
     else:
-        # Written next to the other scratch audio, not into the repo, unless
-        # --keep says otherwise.
-        temporary = Path(tempfile.gettempdir()) / "jarvis-try-stt.wav"
+        # Not written into the repo, and removed again unless --keep says
+        # otherwise.
+        temporary = scratch_clip_path()
         clip = temporary
         spoken_seconds = record(args.seconds, args.device, clip)
 
