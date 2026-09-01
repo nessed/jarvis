@@ -1,0 +1,25 @@
+# Copy to terraform.tfvars and fill in on U7 day. That file is gitignored.
+#
+# Every value here is read off the OCI console or the CLI during the signup
+# sitting; none of them is a secret in the API-key sense, and none of them
+# belongs in version control either.
+
+# The region Ali picked for A1 capacity. If `terraform apply` comes back with
+# "Out of host capacity", change this line and re-apply -- that is the whole
+# retry loop, and it is why region is a variable rather than a constant.
+region = "ap-mumbai-1"
+
+# Tenancy root OCID is fine for a personal tenancy:
+#   oci iam compartment list --all
+compartment_ocid = "ocid1.tenancy.oc1..REPLACE_ME"
+
+# Read it off:
+#   oci iam availability-domain list
+availability_domain = "REPLACE:AP-MUMBAI-1-AD-1"
+
+# The public half only. The private key stays on the laptop and is never
+# committed, never pasted into a tool, never attached to a consult.
+ssh_public_key = "ssh-ed25519 AAAA... ali@laptop"
+
+# Optional. Narrow SSH to Ali's own address if his ISP gives him a stable one.
+# ssh_ingress_cidr = "203.0.113.4/32"

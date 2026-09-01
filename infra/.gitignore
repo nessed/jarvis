@@ -1,0 +1,16 @@
+# Terraform's downloaded provider plugins. ~500 MB of OCI provider, and it is
+# reproducible from .terraform.lock.hcl, which IS committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# State holds instance OCIDs and the public IP, and crash logs can hold more.
+crash.log
+crash.*.log
+
+# terraform.tfvars carries the compartment OCID, the availability domain, and
+# Ali's public key. None of that is secret in the key sense, but it is his
+# tenancy's identifiers and there is no reason for them to be in a public repo.
+# Use terraform.tfvars.example as the template.
+terraform.tfvars
+*.auto.tfvars

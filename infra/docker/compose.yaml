@@ -1,0 +1,57 @@
+# The bus, on the VPS. One service.
+#
+# Build context is the repo root, so run it from there:
+#     docker compose -f infra/docker/compose.yaml up -d --build
+#
+# Deliberately one service and not three. The blueprint's Phase 4 sketch has a
+# web UI container as well; that stays unbuilt on purpose -- see PARKED.md's
+# ambient-circle entry, where "no UI until UI is necessary" is the standing
+# decision. The executor is not here either: it is the laptop, by definition.
+
+services:
+  bus:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    image: jarvis-bus:latest
+    restart: unless-stopped
+
+    # Bound to loopback, not 0.0.0.0. cloudflared runs on the host and reaches
+    # it here; nothing on the internet can, even if ufw were ever flushed.
+    # This is the third layer, after the OCI security list and ufw.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+    # The bus reads its secrets from the environment the same way it does on
+    # the laptop. .env lives on the VPS at /home/jarvis/jarvis.env, root-owned,
+    # 600, and is never in this repo.
+    env_file:
+      - /home/jarvis/jarvis.env
+
+    environment:
+      JARVIS_WEBHOOK_DEDUP_DB_PATH: /app/state/webhook.seen-messages.db
+
+    volumes:
+      # Meta redelivers a webhook it did not get a fast 200 for. Losing this
+      # file on redeploy makes every redelivery look new, which means duplicate
+      # replies to messages already answered.
+      - bus-state:/app/state
+
+    healthcheck:
+      # /status is bearer-protected, so an unauthenticated probe gets a 401 --
+      # which is still proof the app is up and routing. Checking for "a
+      # response at all" avoids putting a token in a healthcheck.
+      test: ["CMD-SHELL", "python -c \"import httpx,sys; sys.exit(0 if httpx.get('http://127.0.0.1:8000/status', timeout=5).status_code in (200,401,403) else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  bus-state:

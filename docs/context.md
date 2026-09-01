@@ -8,29 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `31c1c64 Add the job replay harness and the blueprint's facts check` on `main`, 2 ahead, 0 behind origin.
+**HEAD** `84f6d42 Let a WhatsApp message enqueue a real action, on a closed allowlist` on `main`, 3 ahead, 0 behind origin.
 
-**Working tree:** 10 changed (plus 3 untracked)
+**Working tree:** 23 changed (plus 2 untracked)
 
 ```
-  M  .gitignore
-  M  docs/board/README.md
-  M  docs/board/tasks/enqueue-classifier.md
-  M  docs/context.md
-  M  docs/state.md
-  A  docs/tasks/enqueue-classifier-crosslane-note.md
-  A  executor/handlers/command_intent.py
-  M  executor/handlers/whatsapp.py
-  A  tests/executor/test_command_intent.py
-  M  tests/executor/test_whatsapp_handler.py
+  A  .dockerignore
+   M bus/main.py
+  M  docs/board/tasks/phase4-prep.md
+  A  docs/tasks/phase4-runbook.md
+   M executor/poller.py
+  A  infra/.gitignore
+  A  infra/README.md
+  A  infra/docker/Dockerfile
+  A  infra/docker/compose.yaml
+  A  infra/docker/requirements-bus.txt
+  A  infra/scripts/harden.sh
+  A  infra/scripts/install-cloudflared.sh
+  ...and 11 more
 ```
 
-**Offline suite:** 1129 passed, 9 deselected, 2 warnings in 50.02s _(recorded 2026-09-02)_
+**Offline suite:** 1166 passed, 9 deselected, 10 warnings in 57.43s _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `84f6d42` Let a WhatsApp message enqueue a real action, on a closed allowlist  _(2026-09-02)_
 - `31c1c64` Add the job replay harness and the blueprint's facts check  _(2026-09-02)_
 - `0ff4e1a` Give the four orphaned job kinds a worker that can actually claim them  _(2026-09-02)_
 - `e4129df` Fold Ali's ten answers into the board, blueprint and state  _(2026-09-01)_
@@ -38,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `bf15f79` Close the Meta token rotation and the FL Studio convention on Ali's instruction  _(2026-09-01)_
 - `3695c05` Cover three untested voice CLIs, make the schema drift detector able to fail, and reconcile the docs  _(2026-09-01)_
 - `52e2c03` push  _(2026-09-01)_
-- `37c51d4` Fix two live-verification bugs: wrong whisper-server binary, and force voice replies to stay in English  _(2026-08-31)_
 
 <!-- END GENERATED -->
 

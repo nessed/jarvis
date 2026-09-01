@@ -1,0 +1,21 @@
+# Server-side dependencies only: what bus/, router/ and db/ actually import.
+#
+# Every version here is copied verbatim from the repo's requirements.txt. If
+# one drifts, the container runs a different library from the tests that vetted
+# it, which is the whole failure mode this comment exists to prevent. Diff the
+# two when either changes.
+#
+# Deliberately absent: torch, torchaudio, kokoro, openwakeword, pipecat-ai,
+# silero-vad, sounddevice, soundfile, onnxruntime, pyflp, psutil, pywinauto,
+# mem0ai, ollama, sqlite-vec. All executor-side, none importable from the three
+# packages this image copies, and torch alone would more than double the image.
+#
+# bus-offbox-packaging is the task that should replace this file with an
+# extras split in one place, rather than a second list to keep in step.
+
+fastapi==0.116.1
+uvicorn==0.35.0
+httpx==0.28.1
+supabase==2.18.1
+openai==1.99.9
+python-dotenv==1.1.1

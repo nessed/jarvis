@@ -1,0 +1,42 @@
+# Build context is the repo root (see infra/docker/compose.yaml), so this file
+# has to live here rather than beside the Dockerfile.
+#
+# The Dockerfile only COPYs bus/, router/ and db/, so this is the second guard
+# rather than the only one. It matters anyway: without it the daemon uploads
+# the whole tree as build context first, including voice/whisper/ (a multi-GB
+# build tree with the model and the FlexML runtime in it) and Ali's wake-word
+# recordings. That is minutes of upload and personal audio crossing a boundary
+# it has no business crossing, on every build.
+
+.git/
+.gitignore
+.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.pytest-basetemp/
+.pytest-typing-diagnosis/
+
+# Secrets and local state. None of this may ever enter an image layer.
+.env
+*.db
+*.db-*
+*.seen-messages.db
+*.mem0-history.db
+.executor-heartbeat
+
+# Executor-side and laptop-only. Nothing the bus imports lives here.
+voice/
+executor/
+ingest/
+memory/
+tools/
+tests/
+docs/
+infra/terraform/
+scripts/
+
+# Build artifacts and logs
+*.log
+*.zip
+node_modules/
