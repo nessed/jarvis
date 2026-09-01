@@ -8,32 +8,30 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `c4cc48d Make the inspector read the two .flp files PyFLP gives up on` on `main`, 7 ahead, 0 behind origin.
+**HEAD** `10c736c Make the multi-session workflow enforce itself` on `main`, 8 ahead, 0 behind origin.
 
-**Working tree:** 24 changed (plus 6 untracked)
+**Working tree:** 10 changed (plus 6 untracked)
 
 ```
-  A  .claude/hooks/_harness.py
-  A  .claude/hooks/harness_guard.py
-  A  .claude/hooks/harness_prompt.py
-  A  .claude/hooks/harness_session_start.py
-  A  .claude/hooks/harness_stop.py
-  M  .claude/settings.json
-  M  .githooks/pre-commit
-   M .gitignore
-  M  CLAUDE.md
-  M  agents.md
-  A  docs/board/HANDOFF.md
-  M  docs/board/README.md
-  ...and 12 more
+  M  .gitignore
+  MM docs/board/USER-TASKS.md
+   M docs/board/tasks/stt-groq-fallback.md
+  M  docs/board/tasks/wakeword-fp-monitor.md
+   M docs/state.md
+  A  docs/tasks/wakeword-fp-report.md
+   M executor/handlers/whatsapp.py
+   M requirements.txt
+  M  tests/voice/test_listen_wakeword.py
+  M  voice/listen_wakeword.py
 ```
 
-**Offline suite:** 1289 passed, 9 deselected, 10 warnings in 64.61s (0:01:04) _(recorded 2026-09-02)_
+**Offline suite:** 1289 passed, 9 deselected, 10 warnings in 71.31s (0:01:11) _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `10c736c` Make the multi-session workflow enforce itself  _(2026-09-02)_
 - `c4cc48d` Make the inspector read the two .flp files PyFLP gives up on  _(2026-09-02)_
 - `6bd3ad4` Apply Ali's blueprint corrections, and keep one line the audit was wrong about  _(2026-09-02)_
 - `10be80b` Give the router a ledger that outlives one call, and let /status see it  _(2026-09-02)_
@@ -41,7 +39,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `84f6d42` Let a WhatsApp message enqueue a real action, on a closed allowlist  _(2026-09-02)_
 - `31c1c64` Add the job replay harness and the blueprint's facts check  _(2026-09-02)_
 - `0ff4e1a` Give the four orphaned job kinds a worker that can actually claim them  _(2026-09-02)_
-- `e4129df` Fold Ali's ten answers into the board, blueprint and state  _(2026-09-01)_
 
 <!-- END GENERATED -->
 

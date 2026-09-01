@@ -33,6 +33,10 @@ test_projects/
 # Wake-word recordings of Ali's voice (voice/record_wakeword.py). Personal data:
 # never committed, never uploaded.
 voice/wakeword_clips/
+# Wake-word false-positive session logs. Scores and timestamps only, never
+# audio -- but they are a record of when Ali was at his desk, so they are
+# his and they stay local. See voice/listen_wakeword.py --log.
+voice/logs/
 
 # Host-troubleshooting artifacts. Driver backups, OEM installers and energy
 # reports: multi-MB vendor binaries with no place in this repo's history.

@@ -12,7 +12,9 @@ test wrote down.
 
 from __future__ import annotations
 
+import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -542,3 +544,305 @@ def test_the_model_key_is_the_shipped_models_filename_stem() -> None:
     model filename, so a rename here silently stops every detection."""
     assert MODEL_KEY == "hey_jarvis_v0.1"
     assert Path(f"{MODEL_KEY}.onnx").stem == MODEL_KEY
+
+
+# ---------------------------------------------------------------------------
+# The session log
+#
+# U4 is the last unmeasured Phase 3 number: how often "Hey JARVIS" fires when
+# Ali did not say it. The session is his; these tests cover everything around
+# it, so his part is one command and one sentence afterwards.
+# ---------------------------------------------------------------------------
+
+
+def run_listen_with_log(
+    scores,
+    log_path,
+    *,
+    threshold: float = DEFAULT_THRESHOLD,
+    seconds: float | None = 30.0,
+    interrupt_after: int | None = None,
+    device=None,
+):
+    """``run_listen``, plus a real log file under ``tmp_path``."""
+    clock = FakeClock()
+    scores = list(scores)
+    stream = FakeStream(
+        clock, frames=max(len(scores), 1), interrupt_after=interrupt_after
+    )
+    model = FakeModel(scores)
+
+    stamps = iter(
+        datetime(2026, 9, 2, 3, 0, i % 60, tzinfo=UTC) for i in range(1, 500)
+    )
+
+    code = listen(
+        threshold,
+        device,
+        False,
+        seconds,
+        load_model=lambda: model,
+        open_stream=lambda _dev: stream,
+        clock=clock,
+        log_path=log_path,
+        open_log=lambda path: listen_wakeword.DetectionLog(path, now=lambda: next(stamps)),
+    )
+    return code, listen_wakeword.read_log(log_path)
+
+
+def test_a_session_writes_a_header_and_a_footer(tmp_path: Path) -> None:
+    log = tmp_path / "wake.jsonl"
+
+    _code, records = run_listen_with_log([0.1], log)
+
+    assert [r["event"] for r in records] == ["session_start", "session_end"]
+    assert records[0]["threshold"] == DEFAULT_THRESHOLD
+    assert records[0]["model"] == MODEL_KEY
+    assert records[-1]["detections"] == 0
+
+
+def test_each_detection_is_one_line_with_its_score(tmp_path: Path) -> None:
+    log = tmp_path / "wake.jsonl"
+
+    _code, records = run_listen_with_log([0.91, 0.0, 0.0], log)
+
+    hits = [r for r in records if r["event"] == "detection"]
+    assert len(hits) == 1
+    assert hits[0]["score"] == 0.91
+    assert "at" in hits[0] and "elapsed_seconds" in hits[0]
+
+
+def test_the_log_never_contains_audio(tmp_path: Path) -> None:
+    """This runs for hours in Ali's room. A log that captured sound would be a
+    recording of his life; blueprint 5 is explicit that wake-word audio never
+    leaves the moment."""
+    log = tmp_path / "wake.jsonl"
+
+    run_listen_with_log([0.9], log)
+
+    body = log.read_text(encoding="utf-8")
+    for banned in ("audio", "frame", "samples", "pcm", "wav"):
+        assert banned not in body.lower()
+
+
+def test_ctrl_c_still_writes_the_footer(tmp_path: Path) -> None:
+    """The exit Ali actually uses after an evening. Without a footer there is
+    no session duration, so there is no detections-per-hour."""
+    log = tmp_path / "wake.jsonl"
+
+    _code, records = run_listen_with_log([0.9, 0.0, 0.0], log, interrupt_after=2)
+
+    assert records[-1]["event"] == "session_end"
+    assert records[-1]["elapsed_seconds"] > 0
+
+
+def test_appending_a_second_session_keeps_the_first(tmp_path: Path) -> None:
+    log = tmp_path / "wake.jsonl"
+
+    run_listen_with_log([0.9], log)
+    _code, records = run_listen_with_log([0.9], log)
+
+    assert [r["event"] for r in records].count("session_start") == 2
+    assert len([r for r in records if r["event"] == "detection"]) == 2
+
+
+def test_no_log_flag_writes_no_file(tmp_path: Path) -> None:
+    run_listen([0.9])
+
+    assert list(tmp_path.iterdir()) == []
+
+
+# --- reading a log back -------------------------------------------------------
+
+
+def _log_lines(*records: dict) -> str:
+    return "\n".join(json.dumps(r) for r in records) + "\n"
+
+
+def test_a_half_written_final_line_is_skipped_not_fatal(tmp_path: Path) -> None:
+    """Expected, not exceptional: the process can be killed mid-flush. Losing
+    hours of good data over one truncated line would be the wrong trade."""
+    log = tmp_path / "wake.jsonl"
+    log.write_text(
+        _log_lines(
+            {"event": "session_start", "threshold": 0.5},
+            {"event": "detection", "score": 0.7},
+        )
+        + '{"event": "detec',
+        encoding="utf-8",
+    )
+
+    records = listen_wakeword.read_log(log)
+
+    assert [r["event"] for r in records] == ["session_start", "detection"]
+
+
+def test_blank_lines_and_non_records_are_ignored(tmp_path: Path) -> None:
+    log = tmp_path / "wake.jsonl"
+    log.write_text(
+        '\n{"event": "session_start"}\n\n[1, 2]\n{"no_event": true}\n', encoding="utf-8"
+    )
+
+    assert listen_wakeword.read_log(log) == [{"event": "session_start"}]
+
+
+def test_the_summary_reports_detections_per_hour() -> None:
+    records = [
+        {"event": "session_start", "threshold": 0.5},
+        {"event": "detection", "score": 0.6},
+        {"event": "detection", "score": 0.8},
+        {"event": "session_end", "elapsed_seconds": 7200.0, "detections": 2},
+    ]
+
+    summary = listen_wakeword.summarise(records)
+
+    assert "listening     2.00 hours (7200s)" in summary
+    assert "detections    2" in summary
+    assert "rate          1.00 per hour" in summary
+
+
+def test_two_sessions_are_summed_not_spanned() -> None:
+    """A log appended to over three evenings is three sessions. Dividing by
+    the wall-clock gap between the first and last would divide by the nights
+    in between and report a false-positive rate near zero."""
+    records = [
+        {"event": "session_start", "threshold": 0.5},
+        {"event": "detection", "score": 0.6},
+        {"event": "session_end", "elapsed_seconds": 1800.0},
+        {"event": "session_start", "threshold": 0.5},
+        {"event": "session_end", "elapsed_seconds": 1800.0},
+    ]
+
+    summary = listen_wakeword.summarise(records)
+
+    assert "sessions      2" in summary
+    assert "listening     1.00 hours (3600s)" in summary
+    assert "rate          1.00 per hour" in summary
+
+
+def test_a_session_with_no_footer_is_counted_and_flagged() -> None:
+    records = [
+        {"event": "session_start", "threshold": 0.5},
+        {"event": "detection", "score": 0.6},
+    ]
+
+    summary = listen_wakeword.summarise(records)
+
+    assert "(1 with no end record)" in summary
+    assert "rate          n/a" in summary
+
+
+def test_the_histogram_prints_empty_buckets_too() -> None:
+    """The shape of the tail is the point. Hiding empty buckets makes a
+    cluster at 0.5 look identical to one at 0.9."""
+    records = [
+        {"event": "session_start", "threshold": 0.5},
+        {"event": "detection", "score": 0.95},
+        {"event": "session_end", "elapsed_seconds": 3600.0},
+    ]
+
+    summary = listen_wakeword.summarise(records)
+
+    assert "0.0-0.1     0" in summary
+    assert "0.9-1.0     1  #" in summary
+
+
+def test_a_score_of_exactly_one_lands_in_the_top_bucket() -> None:
+    records = [
+        {"event": "session_start"},
+        {"event": "detection", "score": 1.0},
+        {"event": "session_end", "elapsed_seconds": 3600.0},
+    ]
+
+    assert "0.9-1.0     1  #" in listen_wakeword.summarise(records)
+
+
+def test_an_empty_log_says_so_rather_than_dividing_by_zero() -> None:
+    assert listen_wakeword.summarise([]) == "No session found in this log."
+
+
+def test_every_threshold_used_across_sessions_is_reported() -> None:
+    records = [
+        {"event": "session_start", "threshold": 0.5},
+        {"event": "session_end", "elapsed_seconds": 60.0},
+        {"event": "session_start", "threshold": 0.3},
+        {"event": "session_end", "elapsed_seconds": 60.0},
+    ]
+
+    assert "threshold     0.3, 0.5" in listen_wakeword.summarise(records)
+
+
+# --- the CLI ------------------------------------------------------------------
+
+
+def test_summary_reads_a_log_and_opens_no_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An agent runs this afterwards, possibly on a machine with no mic."""
+    log = tmp_path / "wake.jsonl"
+    log.write_text(
+        _log_lines(
+            {"event": "session_start", "threshold": 0.5},
+            {"event": "detection", "score": 0.6},
+            {"event": "session_end", "elapsed_seconds": 3600.0},
+        ),
+        encoding="utf-8",
+    )
+
+    def explode(*_a, **_k):  # pragma: no cover - must not run
+        raise AssertionError("--summary must not touch a device")
+
+    monkeypatch.setattr(listen_wakeword, "listen", explode)
+    monkeypatch.setattr(listen_wakeword, "list_devices", explode)
+
+    assert main(["--summary", str(log)]) == 0
+    assert "rate          1.00 per hour" in capsys.readouterr().out
+
+
+def test_summary_on_a_missing_log_is_an_error_not_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--summary", str(tmp_path / "nope.jsonl")]) == 1
+    assert "no log at" in capsys.readouterr().err
+
+
+def test_the_log_flag_reaches_listen(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    seen: dict = {}
+    monkeypatch.setattr(
+        listen_wakeword, "listen", lambda *a, **k: seen.update(args=a, kwargs=k) or 0
+    )
+
+    main(["--log", str(tmp_path / "w.jsonl")])
+
+    assert seen["kwargs"]["log_path"] == tmp_path / "w.jsonl"
+
+
+def test_bare_log_and_summary_flags_default_to_the_same_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--log` then `--summary` with no path must read what was just written."""
+    seen: dict = {}
+    monkeypatch.setattr(
+        listen_wakeword, "listen", lambda *a, **k: seen.update(kwargs=k) or 0
+    )
+    main(["--log"])
+
+    read: dict = {}
+    monkeypatch.setattr(
+        listen_wakeword, "summarise_file", lambda p: read.update(path=p) or 0
+    )
+    main(["--summary"])
+
+    assert seen["kwargs"]["log_path"] == read["path"]
+    assert read["path"] == listen_wakeword.DEFAULT_LOG_DIR / "wakeword.jsonl"
+
+
+def test_no_log_flag_leaves_log_path_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict = {}
+    monkeypatch.setattr(
+        listen_wakeword, "listen", lambda *a, **k: seen.update(kwargs=k) or 0
+    )
+
+    main([])
+
+    assert seen["kwargs"]["log_path"] is None

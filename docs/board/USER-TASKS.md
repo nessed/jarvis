@@ -25,10 +25,25 @@ once in a batched handoff, and only ones that newly became actionable.
 - **U3 — Sleep/wake probe.** Send a WhatsApp message with the lid closed,
   wake the laptop, confirm the reply arrives. The one Phase 0 criterion
   with no evidence. You said you'd do it later (1 Sep) — whenever.
-- **U4 — Wake-word false-positive day.** After `wakeword-fp-monitor`
-  lands: run the one command it gives you, leave it listening while you
-  work/talk normally for a few hours, then tell an agent "read the FP
-  log". Closes the last Phase 3 measurement.
+- **U4 — Wake-word false-positive day.** Ready now — `wakeword-fp-monitor`
+  landed 2 Sep 2026. Run this, then live your evening and Ctrl+C when you
+  are done:
+
+  ```
+  .venv\Scripts\python.exe voice/listen_wakeword.py --seconds 0 --log
+  ```
+
+  Then say **"read the wake word log"** to an agent. That is the whole task.
+
+  It records a timestamp and a score per firing and nothing else — no audio
+  is captured or written. The log is gitignored (`voice/logs/`).
+
+  Worth a second evening at `--threshold 0.3`: if 0.3 is quiet enough in your
+  room, the wake word gets much easier to trigger from across it.
+
+  Closes the last unmeasured Phase 3 number. What only you can answer: of the
+  firings logged, how many were you actually saying it?
+  See `docs/tasks/wakeword-fp-report.md`.
 - **U5 — The ten-question memory review** (blueprint 1.4, Phase 1's real
   acceptance gate). Only after `backfill-run` completes: ask JARVIS ten
   things it should know, delete what's wrong via `tools/review_facts.py`,
@@ -47,5 +62,16 @@ once in a batched handoff, and only ones that newly became actionable.
 - **U9 — Mistral 403** (optional, low value): one logged-in look at
   admin.mistral.ai → workspace limits to see why chat 403s. Or ignore and
   answer Q6 accordingly.
+- **U11 — One code-switched voice note, whisper-server off** (2 min,
+  sensory). The Groq STT fallback is live and word-perfect on English, but
+  the production language hint is forced `ur`, and on a pure-English test
+  clip that came back as garbage. That is the documented trade
+  (`voice/config.py`), and a synthetic English clip is not how you talk — so
+  it proves nothing either way about your real messages. Stop
+  whisper-server, send one normal Urdu/English voice note, and say whether
+  the reply shows it understood you. If forced `ur` degrades the cloud tier
+  the way it degrades English, the fallback gets its own language setting
+  instead of inheriting the local backend's. Which way that goes is a
+  judgement about your own speech.
 - **U10 — UI-TARS second Windows account** (Phase 5, parked until you
   care): create it, log in once, babysit the first runs.
