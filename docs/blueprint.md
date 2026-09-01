@@ -35,7 +35,7 @@ Hand-use only, no API keys from consumer subs. For scripting Gemini, use Google 
 
 ### Groq **[UPDATED — limits are per-model now, TPD is the real ceiling]**
 The report's "30 RPM / 6,000 TPM / 14,400 req/day across all models" is stale. Current published limits are **per model**, with tokens-per-day caps the report never mentioned:
-- llama-3.1-8b-instant: still the permissive one, ~14,400 RPD — this is where the old headline number came from.
+- ~~llama-3.1-8b-instant: still the permissive one, ~14,400 RPD~~ **[CORRECTED 2 Sep 2026, approved by Ali via QUESTIONS.md Q10a]** Groq announced this model's deprecation on 17 June 2026, alongside llama-3.3-70b-versatile, and names `openai/gpt-oss-20b` as the migration target for it (console.groq.com/docs/deprecations, re-checked 2 Sep 2026). The permissive 8B lane the old headline number came from no longer exists, so Groq's real ceiling here is the gpt-oss line below. **Do not set `GROQ_DEFAULT_MODEL` to a retired ID.**
 - gpt-oss-120b / 20b: ~30 RPM, **1,000 RPD, 8K TPM, 200K TPD** (Aug 2026 snapshot). At 2K tokens per call that's ~100 real calls/day, not 1,000.
 - Limits remain org-level; extra keys don't help. Cached tokens don't count against limits — keep system prompts stable.
 - **Read `x-ratelimit-*` response headers at runtime instead of hardcoding numbers.** They rot in weeks.
@@ -43,7 +43,7 @@ The report's "30 RPM / 6,000 TPM / 14,400 req/day across all models" is stale. C
 - Best at: low-latency chat, STT, small-model tool loops on the 8B lane.
 
 ### Cerebras **[UPDATED — minor corrections]**
-1M tokens/day free and the 8K context cap both confirmed. Corrections: recent doc snapshots put free tier at **5 RPM / 30K TPM** (report said ~15 RPM), and the catalogue is confirmed narrowed to gpt-oss-120b and GLM-4.7. Don't hardcode a model name. Best at: batch/overnight volume where 8K context fits.
+**[CORRECTED 2 Sep 2026, approved by Ali via QUESTIONS.md Q10a]** The open free tier is gone. Cerebras replaced it with a one-time **$5 trial credit** that requires a payment method and expires, with paid self-serve above it (multiple pricing trackers, re-checked 2 Sep 2026; they date the change to mid-2026 — 21 July in one, 17 August in the 27 Aug audit — so treat the *date* as approximate and the *fact* as settled). Two further corrections: it never served GLM — the catalogue is OpenAI gpt-oss, Meta Llama and Alibaba Qwen — and the 8K context cap and per-minute limits are numbers to read at runtime, not to hardcode. Treat Cerebras as **trial/credit cost class, not free**, which is exactly the distinction the routing pattern above orders by. Best at: batch volume where 8K context fits, for as long as the credit lasts.
 
 ### Google AI Studio (Gemini) **[UNCHANGED]**
 Flash/Flash-Lite free tier for long-context + vision. Free prompts may train Google's models — don't send private memory content here.
@@ -54,7 +54,11 @@ Flash/Flash-Lite free tier for long-context + vision. Free prompts may train Goo
 - Caveat: mid-2026 snapshots show **zero free DeepSeek or Gemini variants** on the roster — old guides referencing `deepseek-r1:free` etc. are dead. The roster rotates; verify before depending on any specific `:free` ID.
 
 ### NVIDIA NIM — build.nvidia.com **[NEW — the report missed this entirely]**
-Free NVIDIA Developer Program account, no card, OpenAI-compatible endpoint (`integrate.api.nvidia.com/v1`), **100+ hosted open models at ~40 RPM** — including **DeepSeek V4**, Llama, Qwen, GLM, Nemotron. New open-weight drops land here fast (GLM appeared ~2 weeks after release). This means DeepSeek-class inference at $0 before you ever touch the paid DeepSeek key. Free endpoints get throttled/rotated, so treat it as a routing lane with fallback, not a guarantee. 200 RPM raise can be requested.
+Free NVIDIA Developer Program account, no card, OpenAI-compatible endpoint (`integrate.api.nvidia.com/v1`), **100+ hosted open models at ~40 RPM** — including **DeepSeek V4**, Llama, Qwen, GLM, Nemotron. New open-weight drops land here fast (GLM appeared ~2 weeks after release). This means DeepSeek-class inference at $0 before you ever touch the paid DeepSeek key. Free endpoints get throttled/rotated, so treat it as a routing lane with fallback, not a guarantee.
+
+**[RECONCILED 2 Sep 2026, approved by Ali via QUESTIONS.md Q10a]** NIM is **geo-blocked from Pakistan**, which §1.3 already said while the routing chain still listed it as a lane. Both cannot be true from one machine. The reconciliation: NIM is not reachable from the laptop and is therefore not a laptop routing lane; it stays a candidate for the Phase 4 VPS, which is not in Pakistan. Independently of geography, `CLAUDE.md`'s non-negotiables forbid NIM from ever seeing private memory content, so it is never an extraction or embedding target anywhere.
+
+On the 40 RPM ceiling: the 27 Aug audit recommended deleting the "200 RPM raise can be requested" line on the strength of an 11 May 2026 staff comment. **Re-checked 2 Sep 2026 and kept instead** — current NVIDIA developer-forum threads are developers applying for exactly that 40→200 upgrade, and pricing trackers describe it as available on request. It is a request, not an entitlement; NVIDIA publishes no guaranteed quota, so the account's real ceiling is whatever the response headers say at runtime.
 
 ### Mistral La Plateforme free tier **[NEW — spare lane]**
 Free experiment tier, roughly 1 req/sec with TPM in the tens of thousands per tested snapshots (~50K TPM measured May 2026). Worth grabbing a key as another lane in the router. Check current license terms; some trial keys restrict commercial use (irrelevant for a personal build).
@@ -77,20 +81,51 @@ Free experiment tier, roughly 1 req/sec with TPM in the tens of thousands per te
 
 **Budget math at $2–5/mo:** $3 ≈ 4.5M output tokens off-peak on Flash (input nearly free with caching). A single-user assistant doing a few hundred routed calls/day lands well under $2/mo. Your PKR 3,000 ceiling is nowhere in sight.
 
-**Caveat:** DeepSeek has signaled further price changes without publishing rates or dates. Also international payment from Pakistan for the DeepSeek platform may need a workaround (their platform takes cards; verify yours works before architecting around it — if it doesn't, DeepSeek via OpenRouter paid credit is the fallback route, small markup).
+**Peak windows are weekdays only [CORRECTED 2 Sep 2026, approved by Ali via QUESTIONS.md Q10a]:** 01:00-04:00 and 06:00-10:00 UTC, **Monday through Friday**. All of Saturday and Sunday is off-peak, roughly 79% of the week at the cheap rate (re-verified against DeepSeek's pricing docs and two independent trackers, 2 Sep 2026). `router/routing.py` already implements the weekday gate, so the omission here was a documentation gap, not a code one.
 
-### The routing pattern **[UPDATED]**
-Fallback chain on the VPS, simple priority list + 429 backoff (a LiteLLM proxy or ~100 lines of your own code):
-1. **Groq** — latency-sensitive chat, STT, small tool loops
-2. **Cerebras** — batch volume under 8K context
-3. **NVIDIA NIM** — DeepSeek-class free inference, wide model coverage
-4. **Gemini Flash (AI Studio)** — long context + vision, free
-5. **OpenRouter `openrouter/free`** — rotating spare capacity
-6. **DeepSeek V4-Flash (paid, prefer off-peak)** — overflow + long-context reasoning
-7. **Claude Max (subscription)** — the smart agentic executor, invoked as `claude -p` jobs, not as a router target (implemented 26 August 2026 as `tools/consult.py`, the second-opinion path for judgment calls — see `agents.md`)
-8. **Claude API key** — capped, emergencies only
+**Caveat:** ~~DeepSeek has signaled further price changes without publishing rates or dates.~~ **[RESOLVED 2 Sep 2026, approved by Ali via QUESTIONS.md Q10a]** That caveat described the 6 Aug 2026 warning, which the 13 Aug announcement and the 16 Aug 16:00 UTC effective date settled; the rates above are the ones that took effect. Also international payment from Pakistan for the DeepSeek platform may need a workaround (their platform takes cards; verify yours works before architecting around it — if it doesn't, DeepSeek via OpenRouter paid credit is the fallback route, small markup).
+
+### The routing pattern **[UPDATED 2 Sep 2026, rewritten by Ali via QUESTIONS.md Q10b]**
+
+The blueprint does not enumerate rungs or state a rung count. Provider
+membership and ordering live in `providers.yaml`; live reachability lives in
+`docs/state.md`. Both are generated from the running config, not maintained
+by hand here.
+
+What the blueprint fixes is the shape, not the roster:
+
+- Rungs are ordered by cost class first (free-tier, then trial/credit, then
+  paid), and within a class by measured p50 latency for the task profile.
+- A rung is eligible only if it has a configured key AND a verified 200 within
+  the current verification window. Configured-but-unverified is not eligible.
+- `route(task_profile)` reorders within a cost class only. It never promotes a
+  paid rung above a free one that is eligible; urgency does that, explicitly
+  and per-job.
+- A rung that returns 401/402/403 enters cooldown and surfaces the denial. It
+  does not silently fall through to paid work.
+- Removing a provider is a `providers.yaml` edit plus a `state.md` line. It is
+  never a blueprint edit.
+
+`docs/state.md` carries two lists: routable, and configured-but-not-routable
+with a reason and a date per entry.
 
 Read rate-limit headers at runtime; never hardcode a provider's published numbers. Spread load across providers, not extra keys (org-level limits everywhere).
+
+Two implementation notes, both settled and built:
+
+- **Claude Max is not a router target.** It is invoked as `claude -p` jobs —
+  implemented 26 August 2026 as `tools/consult.py`, the second-opinion path
+  for judgment calls (see `agents.md`). The Claude API key stays capped and
+  emergency-only.
+- **The cooldown ledger is process-lifetime** (Q10c, 1 Sep 2026), and the
+  process that routes — the executor, not the bus — is the one that reports
+  provider health to `/status`. Built 2 Sep 2026; see `docs/state.md`.
+
+Four clauses above describe behaviour the code does not have yet: the
+verification window, cost-class-then-p50 ordering, 401/402/403 surfacing, and
+the generated `providers.yaml` / `state.md` lists. They are named as router
+work in `docs/board/tasks/blueprint-corrections.md`, not silently softened to
+match today's code.
 
 ---
 
@@ -116,7 +151,13 @@ All holds: amd/whisper.cpp fork for NPU-offloaded STT (Urdu/English stays on Whi
 ## 3. Always-on presence **[UPDATED]**
 
 - **VPS/laptop split unchanged:** VPS holds webhook receiver, FastAPI bus, job queue, scheduler, web UI, light LLM calls. Laptop is the executor for files, FL/PyFLP, NPU inference, UIA, local memory.
-- **WhatsApp responsiveness — approved 29 Aug 2026.** The Meta webhook stays validate/deduplicate/**enqueue-only**. The laptop runs a dedicated responsive poller which claims only `whatsapp_webhook` jobs, and a separate background poller which claims every other registered kind, including `distill_memory`; the background poller alone seeds the distillation chain. This makes slow offline work unable to occupy the reply worker before it can emit Meta's typing cue. The launcher supervises both processes independently. The unfiltered poller CLI remains available for diagnostics and backward compatibility.
+- **WhatsApp responsiveness — approved 29 Aug 2026, worker set corrected 2 Sep 2026 (QUESTIONS.md Q2 = A).** The Meta webhook stays validate/deduplicate/**enqueue-only**. The laptop runs **three** independently supervised pollers, each restricted to a disjoint set of job kinds:
+
+  - `whatsapp-worker` — `whatsapp_webhook` only, the reply path.
+  - `background-worker` — `distill_memory` only. It alone seeds the distillation chain and maintains the batch heartbeat.
+  - `action-worker` — `flp_sort`, `system_control`, `zoom_join_meeting`, `whatsapp_desktop_send_message`. An **optional** child: its death leaves desktop actions unclaimed and leaves text and voice replies untouched.
+
+  The reason is unchanged and is why the action kinds got their own worker rather than being folded into the background one: slow offline work must not occupy the reply worker before it can emit Meta's typing cue, and a desktop action that takes a second must not queue behind a 130s Ollama extraction. ~~a separate background poller which claims every other registered kind~~ was never true of the code — `--kind` took exactly one value until 2 Sep 2026, so the four action kinds had no consumer at all. The unfiltered poller CLI remains available for diagnostics and backward compatibility.
 - **Oracle Cloud Always Free — confirmed, still the winner.** 2 OCPU / 12GB Ampere A1 (1,500 OCPU-hrs + 9,000 GB-hrs/mo), 200GB block storage, 10TB egress. The Aug 18 2026 enforcement date has passed — provision new instances at 2/12 from day one and you're clean. 2/12 is ample for this stack. ARM capacity shortages in some regions still apply; retry or pick a quieter region. Cost: PKR 0.
 - **Hetzner CX22 (~PKR 1,240/mo) stays the paid fallback.** Fly/Railway/Cloudflare notes unchanged.
 - **Modern Standby / no-WoL constraint unchanged:** `powercfg` stay-awake-on-AC profile when jobs are expected, durable queue so sleeping just delays execution.
@@ -252,7 +293,7 @@ not a new phase.
 Each phase: what you build, what "done" looks like, what it depends on.
 
 ### Phase 0 — Harden the bus (days)
-**Build:** HMAC verification on the Meta webhook, bearer token on FastAPI, durable job queue (Supabase table: id, payload, status, checkpoint, created_at), structured logs, `/status` endpoint. **[NEW]** Also: create all API keys now (Groq, Cerebras, Gemini AI Studio, OpenRouter, NVIDIA NIM, Mistral, DeepSeek) and drop a minimal router module with the 8-rung fallback chain into the bus, reading rate-limit headers. One evening of work, and every later phase gets model access for free.
+**Build:** HMAC verification on the Meta webhook, bearer token on FastAPI, durable job queue (Supabase table: id, payload, status, checkpoint, created_at), structured logs, `/status` endpoint. **[NEW]** Also: create all API keys now (Groq, Cerebras, Gemini AI Studio, OpenRouter, NVIDIA NIM, Mistral, DeepSeek) and drop a minimal router module with the fallback chain into the bus (**[CORRECTED 2 Sep 2026 via QUESTIONS.md Q10b]** the rung *count* is not a blueprint fact — see "The routing pattern" above; the roster lives in `providers.yaml`), reading rate-limit headers. One evening of work, and every later phase gets model access for free.
 **Done when:** a WhatsApp message survives the laptop being asleep and executes on wake; unauthorized webhook calls bounce; you can watch a job move queued → running → done in logs.
 
 ### Phase 1 — Persistent memory (1–2 weeks)
@@ -309,9 +350,11 @@ Hard rules that never bend:
 
 **0.5 Bus hardening — CLI agent, one session.** HMAC-SHA256 verification of `X-Hub-Signature-256` on the webhook (bad sig → 403 + log), bearer-token middleware on every non-webhook route, JSON-lines structured logging with request IDs, `/status` endpoint (queue depth, last job, per-provider health), and converting any inline "do the work" code into enqueue-only.
 
-**0.6 Router module — CLI agent, same session.** `providers.yaml` with the 8 rungs (endpoint, key env-var, priority, default model), one client via the OpenAI SDK with base_url swap per provider, 429/5xx backoff that reads `retry-after` and `x-ratelimit-*` headers, a cooldown ledger so a limited provider gets skipped instead of hammered, a `route(task_profile)` entry point (latency / batch / long-context / vision / reasoning profiles reorder the rungs), and a DeepSeek off-peak gate: non-urgent DeepSeek-bound jobs wait for off-peak UTC windows unless flagged urgent. Pytest that fakes a 429 cascade down the whole chain.
+**0.6 Router module — CLI agent, same session.** `providers.yaml` with the rungs (endpoint, key env-var, priority, default model) — **[CORRECTED 2 Sep 2026 via QUESTIONS.md Q10b]** no count is stated here; adding or removing a provider is a `providers.yaml` edit plus a `state.md` line, never a blueprint edit, one client via the OpenAI SDK with base_url swap per provider, 429/5xx backoff that reads `retry-after` and `x-ratelimit-*` headers, a cooldown ledger so a limited provider gets skipped instead of hammered, a `route(task_profile)` entry point (latency / batch / long-context / vision / reasoning profiles reorder the rungs), and a DeepSeek off-peak gate: non-urgent DeepSeek-bound jobs wait for off-peak UTC windows unless flagged urgent. Pytest that fakes a 429 cascade down the whole chain.
 
 **0.7 Prove it — you, 10 min.** Laptop asleep, WhatsApp it from your phone, wake it, watch the job go queued → running → done in the logs. Then curl the webhook with no signature and confirm the 403.
+
+**0.8 Facts check — CLI agent, scheduled.** The blueprint's own anti-rot pass, and the only thing standing between this file and the drift it has already suffered. Re-verify the claims that expire — DeepSeek rates and peak windows, free-model rosters and retirements, free-tier terms, promo expiries, the Agent SDK pause — and write a one-page diff report naming every claim that moved, with its source and date. Built as `tools/facts_check.py`. Numbered here rather than left in "Ongoing" on Ali's Q10b answer, 1 Sep 2026: it had been an ungated aspiration since the blueprint was written, and in that time Groq retired the 8B lane, Cerebras abolished its free tier and DeepSeek repriced — none of which this file noticed.
 
 ### Phase 1 — Memory
 
@@ -319,7 +362,7 @@ Hard rules that never bend:
 
 **1.2 Choosing the corpus — you, one sitting.** Decide the ingest list: which notes folders, which WhatsApp chats. Export chats from your phone (per-chat → Export, no media), drop the .txt files into `ingest/`. Nothing enters memory that you didn't put in this folder — that's the privacy boundary, and it's yours to hold.
 
-**1.3 Backfill pipeline — CLI agent.** Chunker (per-message for chats, ~500-token chunks for notes), local batch embedding (free), Mem0 fact-extraction through the existing local Ollama runtime using constrained JSON-schema structured decoding. NVIDIA NIM is geo-blocked from Pakistan, and Gemini's free tier may train on prompts, so neither may receive private memory content. Resumable job: the checkpoint is the manifest's **content hash plus a chunk index** (`BackfillCheckpoint(manifest_sha256, next_chunk_index)` in `ingest/pipeline.py`), so an interrupted backfill continues instead of restarting. Amended from "file + offset" on Ali's Q3 answer, 1 Sep 2026: hashing is rename-safe and tamper-evident, and its one cost -- editing an already-ingested file invalidates its checkpoint, so that file restarts at chunk 0 and is re-remembered -- is acceptable for this corpus.
+**1.3 Backfill pipeline — CLI agent.** Chunker (per-message for chats, ~500-token chunks for notes), local batch embedding (free), Mem0 fact-extraction through the existing local Ollama runtime **[CORRECTED 2 Sep 2026, approved by Ali via QUESTIONS.md Q10a]** using the `json_object` response format with pydantic validation and one retry — not constrained JSON-schema structured decoding. That is what shipped and what the code does. NVIDIA NIM is geo-blocked from Pakistan, and Gemini's free tier may train on prompts, so neither may receive private memory content. Resumable job: the checkpoint is the manifest's **content hash plus a chunk index** (`BackfillCheckpoint(manifest_sha256, next_chunk_index)` in `ingest/pipeline.py`), so an interrupted backfill continues instead of restarting. Amended from "file + offset" on Ali's Q3 answer, 1 Sep 2026: hashing is rename-safe and tamper-evident, and its one cost -- editing an already-ingested file invalidates its checkpoint, so that file restarts at chunk 0 and is re-remembered -- is acceptable for this corpus.
 
 **1.4 Wire in + review — agent, then you.** Agent makes every inbound message do recall() before the model call and remember() after. Then you interrogate it: ask ten things it should know from the backfill. Wrong or creepy facts → you delete them and tell the agent which pattern to exclude (e.g. stop extracting "facts" from forwarded memes). The agent cannot judge whether a remembered fact about your life is right; that check is permanently yours.
 
@@ -362,7 +405,9 @@ Hard rules that never bend:
 
 ### Ongoing
 
-**CLI agent, scheduled:** a monthly facts-check job — re-verify the Agent SDK pause, DeepSeek rates, free-model rosters, promo expiries, and write you a one-page diff report. Plus log triage, dependency bumps, and new job types as you invent them.
+**[MOVED 2 Sep 2026 to a numbered Phase 0 deliverable, approved by Ali via QUESTIONS.md Q10b]** The monthly facts-check job is **0.8**, above. It sat in "Ongoing" from the beginning and produced nothing for months, while the very claims it was meant to re-verify went stale inside this file — two of the provider corrections applied on 2 Sep 2026 were already wrong on the day the blueprint was written. A deliverable with no number is not gated, and this is the blueprint's only defence against its own rot.
+
+**CLI agent, scheduled:** log triage, dependency bumps, and new job types as you invent them.
 **You:** read the report, rotate any burnt keys, and make the call when memory or automation does something weird.
 
 ---

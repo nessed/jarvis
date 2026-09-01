@@ -1,6 +1,6 @@
 ---
 id: blueprint-corrections
-status: ready
+status: done
 lane: AUTO
 priority: 2
 phase: docs
@@ -98,4 +98,147 @@ sources cited in the Log here.
 
 ## Log
 
-_(empty)_
+**2 Sep 2026 — done. Documentation only; no code changed.**
+
+All three letters of Q10 applied, plus the §3 worker sentence added to this
+task by `action-worker`.
+
+### b — Ali's §3.3, verbatim
+
+`docs/blueprint.md`'s enumerated 8-rung list under "The routing pattern" is
+replaced by his text exactly as written in `QUESTIONS.md` Q10b. Two
+implementation notes are appended *below* his text, not woven into it, so the
+verbatim block stays verbatim: Claude Max is not a router target
+(`tools/consult.py`), and the cooldown ledger is process-lifetime with the
+executor reporting health (Q10c, built the same day).
+
+Two further places stated a rung count and now do not — `0.6`'s
+"`providers.yaml` with the 8 rungs" and Phase 0's "8-rung fallback chain".
+His own rule is that removing a provider is a `providers.yaml` edit plus a
+`state.md` line, never a blueprint edit; a count in two other paragraphs
+would have made that false on the next roster change.
+
+**The four deltas stand, unimplemented, and are named in this task's body
+above.** They were not softened to match today's code:
+
+| §3.3 clause | Where it goes |
+|---|---|
+| verification window | `router-eligibility-window` (needs Q11) |
+| cost class then measured p50 | `router-cost-class-ordering` |
+| 401/402/403 cools down *and surfaces* | fold into `router-cooldown-ledger` — **that task shipped 2 Sep without this half**; 402 still `continue`s rather than surfacing |
+| generated `providers.yaml` / `state.md` lists | `provider-status-generator` |
+
+`state.md`'s two lists (routable, configured-but-not-routable with a reason
+and a date) were deliberately **not** hand-written here. §3.3 says they are
+generated; hand-maintaining them would break the rule in the act of obeying
+it. `provider-status-generator` owns them.
+
+### b — the facts check is now 0.8
+
+Moved out of "Ongoing" into a numbered Phase 0 deliverable. The argument
+writes itself from this very task: two of the provider claims corrected
+below were already false on the day the blueprint was written, and nothing
+noticed for months. The tool exists (`tools/facts_check.py`, built by the
+parallel lane the same day).
+
+### The §3 worker sentence
+
+"a separate background poller which claims every other registered kind" was
+never true of the code — `--kind` took exactly one value until 2 Sep 2026, so
+the four action kinds had no consumer at all. Replaced with the three-worker
+set that shipped (Q2 = A), keeping the sentence's original reason intact,
+because that reason is exactly why the action kinds got their own worker.
+
+### a — five factual corrections, each re-verified today
+
+The task's Step 5 says to re-verify before writing, since the audit is from
+27 Aug. That mattered: **one of the audit's recommendations was wrong.**
+
+1. **Groq's 8B lane.** `llama-3.1-8b-instant` deprecation was announced
+   17 June 2026 alongside `llama-3.3-70b-versatile`; Groq names
+   `openai/gpt-oss-20b` as its replacement. The "~14,400 RPD permissive lane"
+   the old headline number came from no longer exists.
+   Source: console.groq.com/docs/deprecations, re-checked 2 Sep 2026.
+2. **Cerebras' free tier is gone**, replaced by a one-time $5 trial credit
+   that needs a payment method and expires. It also never served GLM — the
+   catalogue is OpenAI gpt-oss, Meta Llama, Alibaba Qwen. Sources disagree on
+   the date (21 July per one tracker, 17 August per the audit), so the text
+   says mid-2026 and treats the fact, not the day, as settled. Recorded as
+   **trial/credit cost class, not free**, which is the distinction Ali's own
+   ordering rule turns on.
+3. **DeepSeek peak windows are weekdays only** — 01:00-04:00 and 06:00-10:00
+   UTC, Monday to Friday; all weekend is off-peak, ~79% of the week cheap.
+   Verified against DeepSeek's pricing docs and two independent trackers.
+   `router/routing.py` already had the weekday gate, so this was a docs gap,
+   not a code bug.
+4. **The DeepSeek price caveat is resolved and marked so.** It described the
+   6 Aug warning, which the 13 Aug announcement and 16 Aug 16:00 UTC
+   effective date settled.
+5. **NIM reconciled.** §1.3 said geo-blocked from Pakistan while the routing
+   chain listed it as a lane; both cannot be true from one machine. Written
+   as: not a laptop lane, still a Phase 4 VPS candidate, and never an
+   extraction or embedding target anywhere regardless of geography
+   (`CLAUDE.md` non-negotiable 3).
+6. **1.3's extraction sentence** now says `json_object` + pydantic + one
+   retry, which is what shipped.
+
+### Where the audit was wrong, and what I did instead
+
+§3.8 said to **delete** "200 RPM raise can be requested" from the NIM
+section, on the strength of an 11 May 2026 NVIDIA staff comment that no
+increase was available.
+
+Re-checked 2 Sep 2026: NVIDIA's own developer forums currently carry multiple
+threads of developers applying for exactly that 40→200 RPM upgrade, and
+pricing trackers describe it as available on request. **So the line was kept
+and qualified** rather than deleted — it is a request, not an entitlement,
+NVIDIA publishes no guaranteed quota, and the account's real ceiling is
+whatever the response headers say at runtime.
+
+This is a deviation from the letter of §3.8, which Ali approved. It is what
+Step 5 asks for — "re-verify each claim against a current source before
+writing it; anything might have moved again" — and deleting a currently-true
+line would have been the drift this task exists to remove. Flagging it here
+rather than burying it: if Ali wants the line gone anyway, that is a one-line
+edit.
+
+### Not touched
+
+`docs/blueprint.md` lines naming "Pipecat + Silero VAD" are Q12's, still
+unanswered. Left alone.
+
+### Board bookkeeping deferred — `README.md` is claimed by another lane
+
+Two board edits this task would normally make itself are **not applied**:
+marking `blueprint-corrections` done in NEXT, and filing
+`router-denial-surfacing` for `board-audit`. `docs/board/README.md` is held by
+`CORE/agent-harness` (claim `0ba606f0`), which is rewriting `CLAUDE.md`,
+`agents.md`, the pre-commit hook and the claim tool itself.
+
+A first attempt edited it anyway — `work_board_claim.py claim` reports a
+conflict on stdout and still exits 0, so a `claim && edit` shell chain runs
+the edit. Reverted immediately with `git checkout --`, and the file is
+byte-identical to HEAD. Worth naming because that exit code makes the
+documented "check `list` first, do not proceed on a conflict" protocol easy to
+follow and still get wrong, and `agent-harness` owns that tool right now.
+
+**`router-denial-surfacing` needs a home.** Blueprint §3.3 says a rung
+returning 401/402/403 cools down **and surfaces the denial**.
+`router-cooldown-ledger` shipped 2 Sep with only the cooldown half: 402 still
+`continue`s down the chain instead of surfacing, and the 401/403 carve-out is
+still Mistral-only (`router/routing.py`). Whoever next holds the board files
+it.
+
+### Verification
+
+Documentation only — no code, no tests changed by this task.
+
+```
+.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp
+1166 passed, 9 deselected, 10 warnings
+```
+
+```
+git diff --stat docs/blueprint.md
+docs/blueprint.md | 65 +++++++++++++++++++++++++++++++++++++++-------------
+```

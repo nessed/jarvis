@@ -8,32 +8,25 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `34b4bc0 Write the whole Oracle side of Phase 4 before the account exists` on `main`, 4 ahead, 0 behind origin.
+**HEAD** `10be80b Give the router a ledger that outlives one call, and let /status see it` on `main`, 5 ahead, 0 behind origin.
 
-**Working tree:** 15 changed
+**Working tree:** 5 changed
 
 ```
-  M  .gitignore
-  M  bus/main.py
-  M  docs/board/README.md
-  M  docs/board/tasks/pytest-addopts.md
-  M  docs/board/tasks/router-cooldown-ledger.md
-  M  docs/context.md
-  M  docs/state.md
-  M  executor/poller.py
-  M  router/__init__.py
-  A  router/health_report.py
-  M  router/routing.py
-  M  tests/executor/test_poller.py
-  ...and 3 more
+  M  docs/blueprint.md
+  M  docs/board/tasks/blueprint-corrections.md
+   M docs/board/tasks/pyflp-parse-failures.md
+   M tools/flp_inspect.py
+   M tools/work_board_claim.py
 ```
 
-**Offline suite:** 1166 passed, 9 deselected, 10 warnings in 53.62s _(recorded 2026-09-02)_
+**Offline suite:** 1166 passed, 9 deselected, 10 warnings in 56.42s _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `10be80b` Give the router a ledger that outlives one call, and let /status see it  _(2026-09-02)_
 - `34b4bc0` Write the whole Oracle side of Phase 4 before the account exists  _(2026-09-02)_
 - `84f6d42` Let a WhatsApp message enqueue a real action, on a closed allowlist  _(2026-09-02)_
 - `31c1c64` Add the job replay harness and the blueprint's facts check  _(2026-09-02)_
@@ -41,7 +34,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `e4129df` Fold Ali's ten answers into the board, blueprint and state  _(2026-09-01)_
 - `94551a3` Replace plan.md with a self-serve work board under docs/board/  _(2026-09-01)_
 - `bf15f79` Close the Meta token rotation and the FL Studio convention on Ali's instruction  _(2026-09-01)_
-- `3695c05` Cover three untested voice CLIs, make the schema drift detector able to fail, and reconcile the docs  _(2026-09-01)_
 
 <!-- END GENERATED -->
 
