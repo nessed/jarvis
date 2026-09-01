@@ -8,32 +8,30 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `e4129df Fold Ali's ten answers into the board, blueprint and state` on `main`, in sync with origin.
+**HEAD** `0ff4e1a Give the four orphaned job kinds a worker that can actually claim them` on `main`, 1 ahead, 0 behind origin.
 
-**Working tree:** 17 changed (plus 2 untracked)
+**Working tree:** 10 changed (plus 4 untracked)
 
 ```
-  M  docs/board/QUESTIONS.md
-  M  docs/board/README.md
-  M  docs/board/tasks/action-worker.md
-  M  docs/board/tasks/blueprint-corrections.md
-   M docs/board/tasks/replay-harness.md
-  M  docs/board/tasks/voice-loop.md
-  A  docs/consults/2026-09-02-pipecat-fit/prompt.md
-  A  docs/consults/2026-09-02-pipecat-fit/response.md
-  A  docs/consults/2026-09-02-pipecat-fit/verdict.json
-  M  docs/context.md
-  M  docs/plan.md
-  M  docs/state.md
-  ...and 5 more
+  M docs/board/tasks/enqueue-classifier.md
+  M  docs/board/tasks/facts-check-tool.md
+  M  docs/board/tasks/replay-harness.md
+  A  docs/tasks/facts-check-reports/2026-09-02.md
+   M executor/handlers/whatsapp.py
+   M tests/executor/test_whatsapp_handler.py
+  A  tests/tools/test_facts_check.py
+  A  tests/tools/test_replay_job.py
+  A  tools/facts_check.py
+  A  tools/replay_job.py
 ```
 
-**Offline suite:** 1023 passed, 9 deselected, 2 warnings in 54.76s _(recorded 2026-09-02)_
+**Offline suite:** 1129 passed, 9 deselected, 2 warnings in 53.51s _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `0ff4e1a` Give the four orphaned job kinds a worker that can actually claim them  _(2026-09-02)_
 - `e4129df` Fold Ali's ten answers into the board, blueprint and state  _(2026-09-01)_
 - `94551a3` Replace plan.md with a self-serve work board under docs/board/  _(2026-09-01)_
 - `bf15f79` Close the Meta token rotation and the FL Studio convention on Ali's instruction  _(2026-09-01)_
@@ -41,7 +39,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `52e2c03` push  _(2026-09-01)_
 - `37c51d4` Fix two live-verification bugs: wrong whisper-server binary, and force voice replies to stay in English  _(2026-08-31)_
 - `51e3a84` Wire voice notes into the WhatsApp handler and run whisper-server as a managed process  _(2026-08-30)_
-- `0391f3f` Land desktop automation, the typing-cue fix, and NPU voice STT  _(2026-08-29)_
 
 <!-- END GENERATED -->
 
