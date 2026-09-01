@@ -8,32 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `6bd3ad4 Apply Ali's blueprint corrections, and keep one line the audit was wrong about` on `main`, 6 ahead, 0 behind origin.
+**HEAD** `c4cc48d Make the inspector read the two .flp files PyFLP gives up on` on `main`, 7 ahead, 0 behind origin.
 
-**Working tree:** 13 changed (plus 4 untracked)
+**Working tree:** 24 changed (plus 6 untracked)
 
 ```
-  M .claude/settings.json
-   M .githooks/pre-commit
-   M CLAUDE.md
-  M  docs/blockers/pyflp-channel-groups-indexerror.md
-   M docs/board/USER-TASKS.md
-  M  docs/board/tasks/pyflp-parse-failures.md
-   M docs/board/tasks/stt-groq-fallback.md
-   M docs/state.md
-  A  docs/tasks/pyflp-parse-failures-report.md
-   M executor/handlers/whatsapp.py
-  M  tests/tools/test_flp_inspect.py
-  M  tools/flp_inspect.py
-  ...and 1 more
+  A  .claude/hooks/_harness.py
+  A  .claude/hooks/harness_guard.py
+  A  .claude/hooks/harness_prompt.py
+  A  .claude/hooks/harness_session_start.py
+  A  .claude/hooks/harness_stop.py
+  M  .claude/settings.json
+  M  .githooks/pre-commit
+   M .gitignore
+  M  CLAUDE.md
+  M  agents.md
+  A  docs/board/HANDOFF.md
+  M  docs/board/README.md
+  ...and 12 more
 ```
 
-**Offline suite:** 1210 passed, 9 deselected, 10 warnings in 67.91s (0:01:07) _(recorded 2026-09-02)_
+**Offline suite:** 1289 passed, 9 deselected, 10 warnings in 64.61s (0:01:04) _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `c4cc48d` Make the inspector read the two .flp files PyFLP gives up on  _(2026-09-02)_
 - `6bd3ad4` Apply Ali's blueprint corrections, and keep one line the audit was wrong about  _(2026-09-02)_
 - `10be80b` Give the router a ledger that outlives one call, and let /status see it  _(2026-09-02)_
 - `34b4bc0` Write the whole Oracle side of Phase 4 before the account exists  _(2026-09-02)_
@@ -41,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `31c1c64` Add the job replay harness and the blueprint's facts check  _(2026-09-02)_
 - `0ff4e1a` Give the four orphaned job kinds a worker that can actually claim them  _(2026-09-02)_
 - `e4129df` Fold Ali's ten answers into the board, blueprint and state  _(2026-09-01)_
-- `94551a3` Replace plan.md with a self-serve work board under docs/board/  _(2026-09-01)_
 
 <!-- END GENERATED -->
 
@@ -53,6 +53,13 @@ kinds), `enqueue-classifier` (WhatsApp text becomes action jobs), and
 `router-cooldown-ledger` (process-lifetime cooldowns, and `/status` now serves
 the ledger of the process that actually routes). Work the NEXT order in
 `docs/board/README.md`; do not ask what is next.
+
+**The multi-session harness landed 2 Sep.** Hooks in `.claude/hooks/`
+register each terminal as a lane, refuse writes to a live peer's claimed
+files, gate `git commit` on `git-commit`, deliver peer messages, and keep the
+board loop running after `go`/`resume`. Panes opened before it landed keep
+the old rules until reopened. `python tools/work_board_claim.py status` says
+what every terminal is doing. Brief: `docs/tasks/agent-harness.md`.
 
 **Three things are Ali's, and only these:**
 

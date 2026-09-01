@@ -19,7 +19,11 @@ if [ ! -x "$PY" ]; then
 fi
 
 echo "pre-commit: running full offline suite..." >&2
-OUTPUT=$("$PY" -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp 2>&1)
+# One scratch dir per lane: two panes running the suite against the same
+# --basetemp corrupt each other's tmp_path fixtures, which looks exactly like
+# a flaky suite (observed 2 Sep 2026). JARVIS_LANE is exported by the
+# SessionStart hook; a shell without it lands on the plain directory.
+OUTPUT=$("$PY" -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp-$JARVIS_LANE 2>&1)
 STATUS=$?
 
 if [ $STATUS -ne 0 ]; then

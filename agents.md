@@ -92,6 +92,15 @@ stop regardless of how obvious the substitution seems.
   schema — names every implementer of it in its report, including test doubles
   that live in files the lane does not own. Disjoint ownership means the lane
   cannot edit them; it does not mean the lane may ignore them.
+- **A cross-lane need is a message, not a note.** When you need a change in
+  a file another live session holds, send it: `python
+  tools/work_board_claim.py message --to <lane> "..."` (their inbox is
+  delivered by the hooks before their next task) or `SendMessage` when
+  `ListAgents` lists them. Say what you need and the one-line fix. A
+  markdown note in `docs/tasks/` that nobody is told about is undelivered:
+  on 2 Sep 2026 one sat unread while a finished lane waited to commit. If
+  the two of you disagree, one runs `tools/consult.py` with both positions
+  and both act on the verdict.
 
 ## How we work
 
@@ -132,6 +141,9 @@ stop regardless of how obvious the substitution seems.
 - Never report to the user with nothing new to say. If the only content of a
   report would be that something is still running or still unchanged, do not
   send it — keep working, or wait, and report when the state actually moves.
+- **Interrupt the user once, at the end.** The batched handoff goes to
+  `docs/board/HANDOFF.md` (overwrite it; it is this week's, not history)
+  followed by one `PushNotification`. Nothing else pings the user.
 - When a task fails the same way twice, stop retrying it. Write
   `docs/blockers/<slug>.md` with the exact reproduction, the exact failure, what
   was already tried, and the single thing the user would have to do to unblock

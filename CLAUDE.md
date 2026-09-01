@@ -27,6 +27,10 @@ opening them as an optional first step.
    component choices, dependency selection and phase ordering are decisions —
    never substitute one.
 6. Subagent lanes run on **Opus 5** (Ali's standing instruction, 1 Sep 2026).
+7. The hooks in `.claude/hooks/` register every session as a lane, enforce
+   file claims, keep the board loop running after `go`/`resume`, and deliver
+   peer messages. `python tools/work_board_claim.py status` says what every
+   terminal is doing. See "The loop is a mechanism" in the board README.
 
 ## Non-negotiable
 
@@ -66,17 +70,20 @@ never hand-edit claim state.
 ## Commands
 
 ```
-.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp   # full offline suite; required before any commit
+.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp-$JARVIS_LANE   # full offline suite; required before any commit
 .venv\Scripts\python.exe -m pytest -q -m live tests/live                           # phase acceptance probes
 .venv\Scripts\python.exe tools/consult.py "question" [--file P] [--cmd "..."]      # second opinion; every Class B stop
 .venv\Scripts\python.exe tools/repoint_webhook.py                                  # re-point Meta at the current tunnel
 .venv\Scripts\python.exe tools/context_status.py --check                          # is context.md's status block current
 ```
 
-The full-suite command needs `-p no:cacheprovider --basetemp=.pytest-basetemp`
-on this machine: the system `TEMP` directory is locked down, and pytest's
-default scratch/cache dirs land there and fail with `PermissionError` without
-those flags. `.githooks/pre-commit` already uses this form.
+The full-suite command needs `-p no:cacheprovider --basetemp=...` on this
+machine: the system `TEMP` directory is locked down, and pytest's default
+scratch/cache dirs land there and fail with `PermissionError` without those
+flags. The `-$JARVIS_LANE` suffix gives each session its own scratch dir;
+two panes sharing one produced a fake flaky suite on 2 Sep 2026. The
+SessionStart hook exports `JARVIS_LANE`; `.githooks/pre-commit` uses the
+same form.
 
 The pre-commit hook in `.githooks/pre-commit` runs the full offline suite and
 refuses a red commit. If it is not firing, run

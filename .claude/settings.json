@@ -7,6 +7,7 @@
       "Bash(.venv\\\\Scripts\\\\python.exe tools/consult.py:*)",
       "Bash(.venv/Scripts/python.exe tools/repoint_webhook.py:*)",
       "Bash(.venv\\\\Scripts\\\\python.exe tools/repoint_webhook.py:*)",
+      "Bash(python tools/work_board_claim.py:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
@@ -19,6 +20,57 @@
       "Read(./memory.db)",
       "Bash(rm -rf:*)",
       "Bash(git config --global:*)"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP": "200"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/harness_session_start.py\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/harness_prompt.py\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/harness_guard.py\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/harness_stop.py\"",
+            "timeout": 20
+          }
+        ]
+      }
     ]
   }
 }

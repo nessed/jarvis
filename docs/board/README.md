@@ -22,7 +22,14 @@ anything:
 3. Claim the task file **and** every file/resource its frontmatter lists:
    `python tools/work_board_claim.py claim --role <CORE|BUILD> --work-item <id> --file docs/board/tasks/<id>.md --file <each file> [--resource <each>]`
    Claiming the task file is what makes task pickup mutually exclusive.
-   A claim conflict means someone has it — go back to step 1.
+   A claim conflict on the *task file* means someone has it — go back to
+   step 1. A conflict on one of its *other* files means a peer holds
+   something you need: **message them, do not wait and do not touch it.**
+   `python tools/work_board_claim.py message --to <lane> "<what you need
+   and the one-line fix you propose>"` (or `SendMessage` if `ListAgents`
+   shows them). They apply it or release the file; if you two disagree on
+   the fix, either runs `tools/consult.py` with both positions attached and
+   both act on the verdict. Meanwhile take the next task.
    (`--role` is `CORE` or `BUILD` only — a task's `lane:` field is an
    autonomy category, never a claim role; only literal `CORE` may claim
    `git-commit`.)
@@ -34,10 +41,34 @@ anything:
 7. **Go back to step 1. Do not stop, do not ask "what next".**
 
 Stop only when: (a) every remaining task is `blocked` or `USER` — then run
-`board-audit` once, and if it finds nothing, write one batched handoff and
-stop; or (b) you hit a genuine Class C wall not already covered by
+`board-audit` once, and if it finds nothing, write the batched handoff to
+`docs/board/HANDOFF.md`, send **one** `PushNotification` saying it exists,
+and stop; or (b) you hit a genuine Class C wall not already covered by
 `QUESTIONS.md` — add it there with a recommendation, mark the task
 `blocked`, and continue with the next task.
+
+## The loop is a mechanism, not a request
+
+Since 2 Sep 2026 the hooks in `.claude/hooks/` run this loop for you:
+
+- **Start:** every session is registered as a lane (`lane-1`, `lane-2`, …)
+  and told which peers are alive, what they hold, and whether the previous
+  session in this terminal died holding claims — those are inherited, so
+  after a crash the user only reopens the terminal and says `resume`.
+- **`go` / `resume`:** the only words that switch loop mode on. Any other
+  prompt switches it off, so a session the user is talking to is never
+  dragged into the board.
+- **Stop:** in loop mode, trying to end the turn while a task is `ready`
+  and unclaimed hands you that task instead (README order; a task a dead
+  lane left `in-progress` comes first; a task handed to you three times
+  without progress is skipped — mark it `blocked`). Inbox messages from
+  peers are delivered before any task.
+- **Every edit:** a write to a file a *live* peer has claimed is refused
+  with the holder's lane and the message command. `git commit` needs the
+  `git-commit` resource; `git stash` is refused outright.
+- **`python tools/work_board_claim.py status`** answers "what is every
+  terminal doing" in plain text. A third terminal opened just to ask that
+  is a lane too, but stays out of the loop unless told `go`.
 
 Parallel work: independent `ready` tasks may be dispatched to subagent
 lanes per `agents.md` (disjoint claims, briefs in `docs/tasks/`, BUILD does

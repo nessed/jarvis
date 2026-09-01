@@ -36,9 +36,16 @@ python tools/work_board_claim.py release CLAIM_ID
 `CORE` and `BUILD` are coordination labels, not path ownership. A successful
 claim grants the holder temporary exclusive authority for the named paths and
 resources; every existing directory is therefore covered by the same rule.
-Never edit the claim registry directly. The tool prunes a claim only when its
-configured stale timeout has passed and its recorded PID is dead; there is no
-renew command.
+Never edit the claim registry directly.
+
+**Liveness is real since 2 Sep 2026.** Every claim records the Claude
+session that made it (`JARVIS_SESSION_ID`, exported by the SessionStart
+hook), and the PreToolUse hook heartbeats that session on every tool call.
+A claim is dropped when its session has been silent for 30 minutes, never
+by age while the session is alive. A claim with no session id is a
+pre-harness one and keeps the old 24h age rule. The same hook *enforces*
+file claims: a write to a path a live peer holds is refused. Resource
+claims are still convention, except `git-commit`, which the hook checks.
 
 ---
 
@@ -70,9 +77,10 @@ regardless of file ownership. **None of the below is mechanically enforced by
 `tools/work_board_claim.py`** — `--resource KEY` records a claim honestly, but
 nothing stops a process that never calls it from using Ollama, the mic, or
 provider capacity concurrently, the same convention-only gap
-`executor/heartbeat.py`'s `--force` override already has. File collisions are
-the one thing the tool enforces mechanically; resource collisions still
-depend on every lane actually calling `claim` first. Independently reviewed
+`executor/heartbeat.py`'s `--force` override already has. File collisions and
+`git-commit` are enforced mechanically by `.claude/hooks/harness_guard.py`;
+the other resource collisions still depend on every lane actually calling
+`claim` first. Independently reviewed
 2026-08-28 (`docs/tasks/review-work-board.md`): also worth knowing, the
 tool's PID-liveness check on a claim is close to decorative in practice — the
 recorded PID is the short-lived `claim` subprocess, which has already exited
@@ -106,12 +114,15 @@ check.
 - **Physical I/O.** The microphone, the speakers, and keyboard focus cannot be
   shared. `voice-loop`, `stt-benchmark`, `uia-app-scripts`, `uitars-install`.
 - **git.** One role commits. Two agents committing into one working tree lose
-  work.
+  work. Enforced: the guard hook refuses `git commit` from a session that
+  has not claimed `git-commit`, and from anyone while a live peer holds it.
 
 ### Verification and live-route resources
 
-- Claim `test-workspace` before a full suite or any command using
-  `.pytest-basetemp`; lanes must not share the same scratch directory.
+- Each session has its own scratch directory, `.pytest-basetemp-$JARVIS_LANE`
+  (the documented command and the pre-commit hook both use it). Two panes
+  sharing one produced a fake flaky suite on 2 Sep 2026. `test-workspace`
+  now only matters for a shell without `JARVIS_LANE` exported.
 - Claim `pre-commit` when changing its hook or invoking a commit, because it
   regenerates context status and runs the full offline suite. CORE alone claims
   `git-commit` and commits.
