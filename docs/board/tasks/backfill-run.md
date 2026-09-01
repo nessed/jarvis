@@ -1,10 +1,10 @@
 ---
 id: backfill-run
-status: in-progress
+status: blocked
 lane: AUTO
 priority: 1
 phase: 1
-blocked-on: none
+blocked-on: mem0-extraction-not-schema-constrained
 files: docs/tasks/backfill-run-report.md (run artifacts only; code changes only if Q3=B)
 resources: ollama-extract (EXCLUSIVE — executor stopped, whole window), test-workspace
 ---
@@ -51,4 +51,20 @@ Phase 1's remaining gate is then U5, which is Ali's.
 
 ## Log
 
-_(empty)_
+**2 Sep 2026 — attempted in the approved window, blocked.** Three runs, each
+failing further along: extraction timeout (90s default), then embedding
+timeout (15s default, queued behind the 8B generation), then unusable JSON
+from the model. Root cause and the one-line unblock:
+
+    docs/blockers/mem0-extraction-not-schema-constrained.md
+
+Blueprint 1.3 specifies constrained JSON-schema decoding; `mem0_wrapper.py`
+validates after the fact instead. Schema-constrained decoding was verified to
+hold at every real chunk size (4/4 valid, 26-29s each) on synthetic input.
+
+Fixing it means editing `memory/mem0_wrapper.py`, which this task's own gate
+excludes (`code changes only if Q3=B`; Ali answered Q3=A). Needs its own task.
+
+**Nothing was left half-done.** Checkpoint unchanged at `next_chunk_index: 1`,
+memory unchanged at 230 facts, nothing written to `ingest/data/`. The run
+resumes cleanly once unblocked.

@@ -78,3 +78,9 @@ Never. Log entry per pass; status stays `ready`.
   - Not done: no fresh blueprint-vs-tree diff. The blueprint was rewritten
     the same day by `blueprint-corrections`, so a diff against it would have
     been measuring this session's own edits. Next pass should do a real one.
+  - **Process slip, recorded:** this pass ran `git add docs/board/`, which
+    swept `docs/board/tasks/backfill-run.md` — a file another live lane holds
+    a claim on — into the commit. One line, their own `ready` → `in-progress`
+    marker, so nothing was lost or overwritten. But `git add <directory>`
+    does not respect claims, and a directory-wide add is how a lane commits
+    another lane's half-written work without noticing. Stage explicit paths.

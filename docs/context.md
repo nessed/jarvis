@@ -8,31 +8,23 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `be19942 Give voice a cloud STT tier, and the database a migration runner` on `main`, in sync with origin.
+**HEAD** `89cba3f Rebuild NEXT from the task files, and file what the day turned up` on `main`, in sync with origin.
 
-**Working tree:** 12 changed
+**Working tree:** 3 changed
 
 ```
-  M  docs/board/HANDOFF.md
-  M  docs/board/README.md
-  A  docs/board/tasks/action-outcome-reply.md
+  A  docs/blockers/mem0-extraction-not-schema-constrained.md
   M  docs/board/tasks/backfill-run.md
   M  docs/board/tasks/board-audit.md
-  A  docs/board/tasks/distill-chain-stall.md
-  A  docs/board/tasks/provider-status-generator.md
-  A  docs/board/tasks/router-cost-class-ordering.md
-  A  docs/board/tasks/router-denial-surfacing.md
-  A  docs/board/tasks/router-eligibility-window.md
-  A  docs/board/tasks/router-unresolvable-model-rungs.md
-  M  docs/context.md
 ```
 
-**Offline suite:** 1289 passed, 9 deselected, 10 warnings in 99.43s (0:01:39) _(recorded 2026-09-02)_
+**Offline suite:** 1289 passed, 9 deselected, 10 warnings in 58.06s _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `89cba3f` Rebuild NEXT from the task files, and file what the day turned up  _(2026-09-02)_
 - `be19942` Give voice a cloud STT tier, and the database a migration runner  _(2026-09-02)_
 - `e4125d4` Reduce the wake-word false-positive test to one command  _(2026-09-02)_
 - `10c736c` Make the multi-session workflow enforce itself  _(2026-09-02)_
@@ -40,7 +32,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `6bd3ad4` Apply Ali's blueprint corrections, and keep one line the audit was wrong about  _(2026-09-02)_
 - `10be80b` Give the router a ledger that outlives one call, and let /status see it  _(2026-09-02)_
 - `34b4bc0` Write the whole Oracle side of Phase 4 before the account exists  _(2026-09-02)_
-- `84f6d42` Let a WhatsApp message enqueue a real action, on a closed allowlist  _(2026-09-02)_
 
 <!-- END GENERATED -->
 
