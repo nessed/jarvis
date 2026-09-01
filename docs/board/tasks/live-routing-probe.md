@@ -13,6 +13,34 @@ resources: provider-account (spends real allowance)
 
 ## Gate
 
+**Answered 1 Sep 2026 — values given, but U2 is NOT done. Still blocked.**
+Ali said "pasted" and supplied the five lines, but a key-name check of the
+repo-root `.env` on 1 Sep found **none of the five keys present** (file
+exists, 1271 bytes; names checked, no values read):
+
+```
+GROQ_DEFAULT_MODEL         present=False
+CEREBRAS_DEFAULT_MODEL     present=False
+NVIDIA_DEFAULT_MODEL       present=False
+GEMINI_DEFAULT_MODEL       present=False
+CLAUDE_API_DEFAULT_MODEL   present=False
+```
+
+Re-check that before starting. Running the probe now would only re-prove
+the known gap, which is exactly what this gate exists to prevent.
+
+When it does land, three values differ
+from what `state.md` researched on 28 Aug, so this probe is now the only
+thing that establishes whether they serve:
+
+- `GROQ_DEFAULT_MODEL=openai/gpt-oss-120b` (researched value was the 20b)
+- `GEMINI_DEFAULT_MODEL=gemini-3.6-flash` (researched value was 2.5-flash)
+- `CEREBRAS_DEFAULT_MODEL=` blank on purpose — expect the rung to be
+  skipped with `cerebras: no model configured`, not to 402
+
+Report those three by name in the result, and update `state.md`'s model-ID
+table to Ali's values rather than the researched ones.
+
 U2 (the five `*_DEFAULT_MODEL` lines in `.env`). Before that, the probe
 can only re-prove the known gap.
 

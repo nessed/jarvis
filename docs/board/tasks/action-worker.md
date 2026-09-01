@@ -1,10 +1,10 @@
 ---
 id: action-worker
-status: blocked
+status: ready
 lane: AUTO
 priority: 1
 phase: 2
-blocked-on: Q2
+blocked-on: none
 files: tools/start_jarvis.py, tests/tools/test_start_jarvis.py, executor/poller.py (hot), tests/executor/test_poller.py, docs/state.md
 resources: none offline; live proof claims live-jobs-table
 ---
@@ -12,6 +12,9 @@ resources: none offline; live proof claims live-jobs-table
 # action-worker — a poller that can actually claim the action kinds
 
 ## Gate
+
+**Answered 1 Sep 2026 — Q2 = A.** Third worker, as written. No re-scope,
+no schema change. The gate text below is kept for context.
 
 Q2. Written assuming answer A (third worker). If Ali picks B (priority
 column), this task is re-scoped by whoever processes the answer — B also

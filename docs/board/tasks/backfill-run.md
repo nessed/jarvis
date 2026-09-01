@@ -1,10 +1,10 @@
 ---
 id: backfill-run
-status: blocked
+status: ready
 lane: AUTO
 priority: 1
 phase: 1
-blocked-on: Q3, Q4
+blocked-on: none
 files: docs/tasks/backfill-run-report.md (run artifacts only; code changes only if Q3=B)
 resources: ollama-extract (EXCLUSIVE — executor stopped, whole window), test-workspace
 ---
@@ -12,6 +12,15 @@ resources: ollama-extract (EXCLUSIVE — executor stopped, whole window), test-w
 # backfill-run — finish blueprint 1.3
 
 ## Gate
+
+**Answered 1 Sep 2026 — Q3 = A, Q4 = go.** Checkpoints stay content-hash
+and the blueprint was amended to match, so **there is no conform step**:
+the code is correct as it stands. Corpus confirmed: `ingest/data/` as it
+stands is the whole opt-in, nothing outside it is read.
+
+Window: **overnight, and explicitly not Saturday morning.** Hold
+`ollama-extract` for the full run and expect JARVIS to be text-dumb
+throughout.
 
 Q3 (checkpoint semantics settled — if B, conform the code first as its own
 step with tests) and Q4 (corpus confirmed + a no-replies window). The

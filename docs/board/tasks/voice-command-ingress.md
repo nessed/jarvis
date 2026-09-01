@@ -4,7 +4,7 @@ status: blocked
 lane: AUTO
 priority: 2
 phase: 3
-blocked-on: Q7, voice-loop
+blocked-on: voice-loop
 files: bus/main.py (hot), tests/bus/, voice/loop.py, tests/voice/test_loop.py
 resources: none offline
 ---
@@ -12,6 +12,11 @@ resources: none offline
 # voice-command-ingress — the desk loop reaches the queue
 
 ## Gate
+
+**Answered 1 Sep 2026 — Q7 = A, narrowed.** `POST /command`, bearer-authed,
+**enqueue-only**: it writes a job and returns its id. It must not execute
+inline, and must not grow a synchronous execution path later. The worker
+stays the only thing that runs jobs. Still blocked on `voice-loop`.
 
 Q7 (endpoint vs direct enqueue) and `voice-loop` landed (it leaves the
 seam this fills).

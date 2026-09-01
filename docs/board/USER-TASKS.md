@@ -4,11 +4,24 @@ Things only you can do — hands, ears, accounts, cards. No order except
 where noted. Agents: never nag about these individually; mention at most
 once in a batched handoff, and only ones that newly became actionable.
 
-- **U1 — Answer `QUESTIONS.md`.** One message makes 6 agent tasks ready
-  immediately and 3 more behind their build dependencies.
-  Highest-leverage 10 minutes available.
-- **U2 — Paste the 5 model-ID lines into `.env`** (exact lines in Q5).
-  2 minutes. Unblocks `live-routing-probe`.
+- **U1 — Answer `QUESTIONS.md`. Done 1 Sep 2026** — all 10 answered in one
+  message; 6 tasks went `ready`, 2 more shed their `Q` gate.
+  Q9 and Q10b were followed up and closed the same day — Q9 approved with
+  the orphan row carved out for your review, Q10b answered with your own
+  §3.3 text.
+
+  **One new question, Q11**, falls out of that §3.3: it makes a rung
+  eligible only with "a verified 200 within the current verification
+  window", and the window has no duration. Recommendation is in the file
+  — "24h + eligible-but-last" takes it. Blocks one new router task, and
+  nothing that is currently `ready`.
+- **U2 — Paste the 5 model-ID lines into `.env`. Still open.** Ali gave the
+  values on 1 Sep (his own, differing from the researched set: Groq 120b
+  not 20b, Gemini 3.6-flash not 2.5-flash, Cerebras deliberately blank)
+  and said "pasted" — but a key-name check of the repo-root `.env` that
+  day found none of the five keys present. 2 minutes. Unblocks
+  `live-routing-probe`, which is the only thing that proves the new IDs
+  serve.
 - **U3 — Sleep/wake probe.** Send a WhatsApp message with the lid closed,
   wake the laptop, confirm the reply arrives. The one Phase 0 criterion
   with no evidence. You said you'd do it later (1 Sep) — whenever.

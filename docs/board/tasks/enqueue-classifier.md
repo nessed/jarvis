@@ -4,7 +4,7 @@ status: blocked
 lane: AUTO
 priority: 1
 phase: 2
-blocked-on: Q1, Q2, action-worker
+blocked-on: action-worker
 files: executor/handlers/whatsapp.py (hot), tests/executor/test_whatsapp_handler.py, docs/state.md
 resources: none offline; live proof uses the live inbound route
 ---
@@ -12,6 +12,19 @@ resources: none offline; live proof uses the live inbound route
 # enqueue-classifier — WhatsApp text becomes real action jobs
 
 ## Gate
+
+**Answered 1 Sep 2026 — Q1 = yes, Q2 = A.** The allowlist is fixed and
+closed:
+
+- `system_control` — allowed
+- `zoom_join_meeting` — allowed
+- `flp_sort` — **excluded** (no convention yet)
+- `whatsapp_desktop_send_message` — **excluded**
+
+Anything classified destructive replies with a confirm-first message and
+enqueues nothing. Adding a kind to this list needs a new Q, not judgment.
+Still blocked on `action-worker` landing — a producer without a consumer is
+the failure mode this gate exists to prevent.
 
 Q1 (consent + which kinds are allowlisted) and `action-worker` landed —
 shipping a producer whose jobs queue forever is the failure mode plan.md

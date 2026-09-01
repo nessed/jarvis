@@ -1,10 +1,10 @@
 ---
 id: router-cooldown-ledger
-status: blocked
+status: ready
 lane: AUTO
 priority: 2
 phase: 0
-blocked-on: Q10c
+blocked-on: none
 files: router/routing.py (hot), tests/router/test_routing.py (area-hot), executor/handlers/whatsapp.py (hot), executor/poller.py (hot), bus/status.py, bus/main.py (hot), docs/state.md
 resources: none offline
 ---
@@ -12,6 +12,9 @@ resources: none offline
 # router-cooldown-ledger — a ledger that outlives one call
 
 ## Gate
+
+**Answered 1 Sep 2026 — Q10c = yes.** Process-lifetime scope, executor
+(not bus) reports provider health. Build as specified.
 
 Q10c: Ali blesses process-lifetime scope with the executor reporting
 provider health. This is the one router job that was Class C — the

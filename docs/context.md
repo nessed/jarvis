@@ -8,32 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `bf15f79 Close the Meta token rotation and the FL Studio convention on Ali's instruction` on `main`, in sync with origin.
+**HEAD** `94551a3 Replace plan.md with a self-serve work board under docs/board/` on `main`, 1 ahead, 0 behind origin.
 
-**Working tree:** 30 changed
+**Working tree:** 15 changed
 
 ```
-  M  CLAUDE.md
-  M  agents.md
-  M  docs/blockers/tool-result-injection.md
-  A  docs/board/PARKED.md
-  A  docs/board/QUESTIONS.md
-  A  docs/board/README.md
-  A  docs/board/USER-TASKS.md
-  A  docs/board/tasks/action-worker.md
-  A  docs/board/tasks/backfill-run.md
-  A  docs/board/tasks/blueprint-corrections.md
-  A  docs/board/tasks/board-audit.md
-  A  docs/board/tasks/bus-offbox-packaging.md
-  ...and 18 more
+  M  docs/blueprint.md
+  M  docs/board/QUESTIONS.md
+  M  docs/board/README.md
+  M  docs/board/USER-TASKS.md
+  M  docs/board/tasks/action-worker.md
+  M  docs/board/tasks/backfill-run.md
+  M  docs/board/tasks/blueprint-corrections.md
+  M  docs/board/tasks/db-maintenance.md
+  M  docs/board/tasks/enqueue-classifier.md
+  M  docs/board/tasks/live-routing-probe.md
+  M  docs/board/tasks/router-cooldown-ledger.md
+  M  docs/board/tasks/stt-groq-fallback.md
+  ...and 3 more
 ```
 
-**Offline suite:** 976 passed, 9 deselected, 2 warnings in 50.68s _(recorded 2026-09-01)_
+**Offline suite:** 976 passed, 9 deselected, 2 warnings in 51.42s _(recorded 2026-09-01)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `94551a3` Replace plan.md with a self-serve work board under docs/board/  _(2026-09-01)_
 - `bf15f79` Close the Meta token rotation and the FL Studio convention on Ali's instruction  _(2026-09-01)_
 - `3695c05` Cover three untested voice CLIs, make the schema drift detector able to fail, and reconcile the docs  _(2026-09-01)_
 - `52e2c03` push  _(2026-09-01)_
@@ -41,21 +42,29 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `51e3a84` Wire voice notes into the WhatsApp handler and run whisper-server as a managed process  _(2026-08-30)_
 - `0391f3f` Land desktop automation, the typing-cue fix, and NPU voice STT  _(2026-08-29)_
 - `4f39697` Land the voice runtime, the fact-review path, and an FLP project inspector  _(2026-08-29)_
-- `221ce33` Record this session's lane briefs and consult exchanges  _(2026-08-29)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-**The work board moved: `docs/board/` (built 1 Sep 2026).** `plan.md` is
-demoted to lane rules. Agents self-select from `docs/board/README.md`'s
-NEXT list — 8 tasks ready now, headline `voice-loop` (the last unbuilt
-Phase 3 piece). Do not ask Ali what is next.
+**Ali answered all 10 of `QUESTIONS.md` on 1 Sep.** 13 tasks are `ready`;
+work the board's NEXT order and do not ask what is next. Headline picks:
+`action-worker` (newly unblocked, and `enqueue-classifier` waits on it) and
+`voice-loop`.
 
-**Waiting on Ali, batched:** answer `docs/board/QUESTIONS.md` (10
-questions, one message, makes 6 agent tasks ready at once) and the checklist in
-`docs/board/USER-TASKS.md` (U2 `.env` model lines is 2 minutes; U3
-sleep/wake probe he deferred — don't nag).
+**Ali rewrote blueprint §3.3 himself** (recorded verbatim in Q10b). The
+blueprint stops enumerating rungs; roster and reachability move to
+`providers.yaml` and `state.md`. Four clauses of it are ahead of the code —
+`blueprint-corrections` applies the text and names the deltas, and
+`board-audit` files them as router tasks.
+
+**Two things still open:**
+
+- **U2 is not done.** Ali gave the five model IDs and said "pasted", but a
+  key-name check found none of them in `.env`. `live-routing-probe` stays
+  blocked.
+- **Q11** — how long the new "verification window" is. Recommendation
+  filed; blocks only the new `router-eligibility-window` task.
 
 **Standing constraint:** the FLP writing half stays unbuilt — no
 mixer-sorting convention exists and the placeholder ruleset is unapproved;

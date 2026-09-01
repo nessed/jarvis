@@ -111,6 +111,25 @@ Gemini's `gemini-2.0-flash` shut down 1 June 2026; current free-tier Flash
 models include `gemini-2.5-flash` and `gemini-2.5-flash-lite`
 ([ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models)).
 
+**Superseded by Ali's own values, 1 Sep 2026 (Q5).** He chose different IDs
+from the researched set above and they are what must be pasted — do not
+paste the 28 Aug values:
+
+```
+GROQ_DEFAULT_MODEL=openai/gpt-oss-120b
+GEMINI_DEFAULT_MODEL=gemini-3.6-flash
+CEREBRAS_DEFAULT_MODEL=
+NVIDIA_DEFAULT_MODEL=
+CLAUDE_API_DEFAULT_MODEL=claude-sonnet-5
+```
+
+The gap above is still live: a key-name check on 1 Sep found none of the
+five keys in `.env`. Neither `openai/gpt-oss-120b` nor `gemini-3.6-flash`
+has been verified against a provider model list or a live call — they are
+Ali's instruction, and `live-routing-probe` is what turns them into
+evidence. The blank Cerebras value is deliberate (Q6): it makes that rung a
+skipped loop iteration rather than a 402.
+
 ## Open blockers
 
 1. **No opted-in backfill.** No corpus has completed the fact-extraction and

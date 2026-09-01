@@ -26,7 +26,11 @@ exists; anything destructive replies with a confirm-first message.
 
 Unblocks: `enqueue-classifier`.
 
-**Answer:** _pending_
+**Answer (1 Sep 2026): yes, with the recommended per-kind allowlist.**
+Allowlisted: `system_control`, `zoom_join_meeting`. Excluded: `flp_sort`
+(stays out until a convention exists), `whatsapp_desktop_send_message`.
+Anything destructive replies with a confirm-first message rather than
+enqueueing. No kind joins this list by agent judgment.
 
 ## Q2 — Worker topology for the four action kinds
 
@@ -43,7 +47,8 @@ extraction — the exact starvation the split exists to prevent.
 
 Unblocks: `action-worker`, and with Q1 `enqueue-classifier`.
 
-**Answer:** _pending_
+**Answer (1 Sep 2026): A — third worker.** `action-worker` polls only the
+four action kinds. No schema change.
 
 ## Q3 — Backfill checkpoint: amend blueprint or conform code?
 
@@ -57,7 +62,9 @@ restarts it from chunk 0 and re-remembers everything).
 
 Must be settled before `backfill-run`.
 
-**Answer:** _pending_
+**Answer (1 Sep 2026): A — amend the blueprint to content-hash.** Applied
+to `docs/blueprint.md` 1.3 in this same pass; the code is unchanged and
+`backfill-run` needs no conform step.
 
 ## Q4 — Backfill go signal
 
@@ -68,7 +75,10 @@ Ollama, so JARVIS is text-dumb while it runs.
 
 Unblocks: `backfill-run`, then U5 (your ten-question review).
 
-**Answer:** _pending_
+**Answer (1 Sep 2026): go.** `ingest/data/` as it stands is the final
+ingest list. Window: **overnight — explicitly not Saturday morning.**
+`backfill-run` schedules itself for an overnight window and holds the
+`ollama-extract` resource for the whole run.
 
 ## Q5 — Provider model IDs (paste, don't discuss)
 
@@ -88,7 +98,29 @@ CLAUDE_API_DEFAULT_MODEL=claude-sonnet-5
 keeps the rung.) Say "pasted" when done — that's U2, and it unblocks
 `live-routing-probe`.
 
-**Answer:** _pending_
+**Answer (1 Sep 2026): pasted — with Ali's own values, which supersede the
+28 Aug researched set above and in `state.md`:**
+
+```
+GROQ_DEFAULT_MODEL=openai/gpt-oss-120b
+GEMINI_DEFAULT_MODEL=gemini-3.6-flash
+CEREBRAS_DEFAULT_MODEL=
+NVIDIA_DEFAULT_MODEL=
+CLAUDE_API_DEFAULT_MODEL=claude-sonnet-5
+```
+
+Three differ from the recommendation: Groq is the 120b not the 20b, Gemini
+is 3.6-flash not 2.5-flash, and Cerebras is deliberately blank (see Q6).
+These are Ali's values, not research output — `live-routing-probe` is what
+establishes which of them actually serve, and it must report the changed
+IDs by name.
+
+**But the paste has not landed.** A key-name check of the repo-root `.env`
+the same day found none of the five keys present (the file exists and is
+1271 bytes; key names checked, no values read or printed). So **U2 is not
+done and `live-routing-probe` stays `blocked`.** Either the lines went
+somewhere other than the repo-root `.env`, or the paste is still to come.
+Whoever confirms it re-runs the key-name check and flips the task.
 
 ## Q6 — Cerebras and Mistral rungs
 
@@ -102,7 +134,17 @@ plan activation (your dashboard, U9).
 - C: leave both as-is (dead rungs mid-chain; the 402/403 handling is
   already fixed, so they just waste a hop).
 
-**Answer:** _pending_
+**Answer (1 Sep 2026): split — Cerebras C, Mistral A.**
+Cerebras: leave the rung as-is. No blueprint edit, no card.
+Mistral: leave in place pending U9.
+
+Consequence, verified in code rather than assumed: with
+`CEREBRAS_DEFAULT_MODEL` blank the rung is still admitted by `_configured()`
+(it declares no `model_env`, so the guard at `router/routing.py:255` does
+not gate it), then skipped inside `route()` at `router/routing.py:216` with
+`cerebras: no model configured`. That is a skipped loop iteration — no HTTP
+call, no 402, and no cooldown entry. Cheaper than the 402 path C described.
+Nothing to build; recorded so a later agent does not "fix" the blank.
 
 ## Q7 — How does voice reach the queue?
 
@@ -114,7 +156,10 @@ Phase 4; direct enqueue doesn't.
 
 Unblocks: `voice-command-ingress`.
 
-**Answer:** _pending_
+**Answer (1 Sep 2026): A, narrowed — `POST /command`, enqueue-only.**
+The endpoint enqueues and returns a job id. It must not execute a command
+inline, and must not grow a synchronous execution path later; the worker
+remains the only thing that runs jobs.
 
 ## Q8 — Cloud STT fallback ownership
 
@@ -126,7 +171,8 @@ change). B: grow the router an audio lane (shared-interface change, big).
 
 Unblocks: `stt-groq-fallback`.
 
-**Answer:** _pending_
+**Answer (1 Sep 2026): A — voice owns its own small Groq STT client.**
+No router change; the router stays chat-completions-only.
 
 ## Q9 — Live database maintenance approval
 
@@ -139,7 +185,18 @@ that's why migration 0002 once sat unapplied). **Recommend `psycopg`
 
 Unblocks: `db-maintenance`.
 
-**Answer:** _pending_
+**Answer (1 Sep 2026): driver = `psycopg[binary]`** (v3). That settles the
+component decision.
+
+**Approval (1 Sep 2026, follow-up): yes — with the orphan row shown first.**
+
+- Migration runner + ledger: approved, may write live schema.
+- Retention/index pass: approved.
+- Orphaned `queue-durability-probe-` row: **do not delete.** Report it to
+  Ali — id, kind, status, age, payload shape — and stop there. Deletion is
+  a separate approval.
+
+`db-maintenance` is `ready`.
 
 ## Q10 — Blueprint housekeeping (one blanket yes/no)
 
@@ -157,5 +214,73 @@ Approve agents applying, in one pass (`blueprint-corrections` task):
   think about it. Unblocks: `router-cooldown-ledger`.
 
 **Recommend: yes to all three.**
+
+**Answer (1 Sep 2026): a — yes. c — yes. b — rewrite requested.**
+
+- **a** approved: apply the §3.7 + §3.8 factual corrections.
+- **c** approved: cooldown ledger is **process-lifetime**, with the
+  executor (not the bus) reporting provider health. Unblocks
+  `router-cooldown-ledger`.
+- **b** — Ali wrote the replacement himself (1 Sep 2026). Apply this
+  **verbatim**; it is his text, not a draft to improve:
+
+  ### §3.3 Routing chain
+
+  The blueprint does not enumerate rungs or state a rung count. Provider
+  membership and ordering live in `providers.yaml`; live reachability lives in
+  `docs/state.md`. Both are generated from the running config, not maintained
+  by hand here.
+
+  What the blueprint fixes is the shape, not the roster:
+
+  - Rungs are ordered by cost class first (free-tier, then trial/credit, then
+    paid), and within a class by measured p50 latency for the task profile.
+  - A rung is eligible only if it has a configured key AND a verified 200 within
+    the current verification window. Configured-but-unverified is not eligible.
+  - `route(task_profile)` reorders within a cost class only. It never promotes a
+    paid rung above a free one that is eligible; urgency does that, explicitly
+    and per-job.
+  - A rung that returns 401/402/403 enters cooldown and surfaces the denial. It
+    does not silently fall through to paid work.
+  - Removing a provider is a `providers.yaml` edit plus a `state.md` line. It is
+    never a blueprint edit.
+
+  `docs/state.md` carries two lists: routable, and configured-but-not-routable
+  with a reason and a date per entry.
+
+  It replaces the enumerated 8-rung list under "The routing pattern"
+  (`docs/blueprint.md:82-93`). Four parts of it describe behaviour the code
+  does not have yet — see the delta list in `blueprint-corrections`. Those
+  are **not** this task's job; the task edits the blueprint only, and names
+  the deltas in its Log so they become router work.
+
+**Derived question — Q11 below.**
+
+## Q11 — What is "the current verification window"?
+
+Ali's §3.3 (Q10b) makes a rung eligible only with "a configured key AND a
+verified 200 within the current verification window. Configured-but-
+unverified is not eligible." The window has no duration, and nothing in
+`router/` measures one today — there is no `last_verified`, no
+`verification_window`, no `cost_class`, and no p50 latency anywhere
+(grepped 1 Sep, zero hits).
+
+Two things need a number or a rule:
+
+1. **How long is the window?** **Recommend 24h**, refreshed by any 200 the
+   router already sees in normal traffic, plus `live-routing-probe` as the
+   cold-start refresher. Shorter means a quiet provider drops out of the
+   chain for no reason; longer and "verified" stops meaning much.
+2. **What happens at cold start**, when nothing has a fresh 200 — most
+   obviously right after a reboot? **Recommend: treat an unverified rung as
+   eligible-but-last within its cost class**, rather than ineligible.
+   Strict reading of §3.3 empties the chain entirely and JARVIS answers
+   nothing until a probe runs.
+
+Say "24h + eligible-but-last" to take both, or give your own.
+
+Blocks: the eligibility half of `router-eligibility-window` (new task).
+Does not block `blueprint-corrections`, which applies your §3.3 text as
+written regardless.
 
 **Answer:** _pending_

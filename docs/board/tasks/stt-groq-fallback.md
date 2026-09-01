@@ -1,10 +1,10 @@
 ---
 id: stt-groq-fallback
-status: blocked
+status: ready
 lane: AUTO
 priority: 3
 phase: 3
-blocked-on: Q8
+blocked-on: none
 files: voice/stt_fallback.py, tests/voice/test_stt_fallback.py, voice/whisper/, executor/handlers/whatsapp.py (hot, wiring only)
 resources: provider-account (live proof)
 ---
@@ -12,6 +12,9 @@ resources: provider-account (live proof)
 # stt-groq-fallback — cloud STT when the NPU path is down
 
 ## Gate
+
+**Answered 1 Sep 2026 — Q8 = A.** Voice owns its own small Groq STT
+client. The router is not touched and stays chat-completions-only.
 
 Q8 (recommended: voice owns its own Groq STT client, no router change).
 
