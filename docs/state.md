@@ -130,8 +130,12 @@ models include `gemini-2.5-flash` and `gemini-2.5-flash-lite`
    - ~~Real guinea-pig `.flp` files.~~ **Done.** A real project is now in
      `test_projects/` (gitignored, copy only). Parsing it exposed a second,
      independent PyFLP failure — see the note below.
-   - **The dictated mixer-sorting convention.** `apply_rules()` runs on a
-     placeholder ruleset. Guessing it is out of scope.
+   - **The dictated mixer-sorting convention. Closed unanswered by Ali,
+     1 Sep 2026.** He closed the question without dictating one, so
+     `apply_rules()` still runs on a placeholder ruleset **that nobody
+     approved**. The blocker is therefore no longer *waiting on him* — but the
+     gap it names is unchanged, and guessing the convention is still out of
+     scope. Do not build the FLP writing half against the placeholder.
 
    Evidence and the full history: `docs/blockers/pyflp-python-312.md`.
    **New, separate from the above:** parsing the real project raises

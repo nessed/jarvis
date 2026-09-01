@@ -394,8 +394,9 @@ in the comment.
   the dispatch brief flagged). `tests/status/test_live_queue_status.py`'s
   fake client was rewritten to model real filter/count semantics instead of
   canned per-field responses; 4 → 9 tests.
-- `executor/flp/sort.py` — `flp-real-mixer-convention` (blocked on Ali) is all
-  that's left. ~~`flp-write-path-guard`~~, ~~`flp-diff-report-emission`~~,
+- `executor/flp/sort.py` — `flp-real-mixer-convention` is **closed unanswered**
+  (Ali, 1 Sep 2026). Nothing here is dispatchable: the writing half needs a
+  convention that does not exist and may not be guessed. All ~~`flp-write-path-guard`~~, ~~`flp-diff-report-emission`~~,
   ~~`flp-stale-module-docstrings`~~ all done.
 
 ---
@@ -446,9 +447,9 @@ Batch these into one sitting where possible.
 
 | id | what he has to do |
 |---|---|
-| `flp-real-mixer-convention` | 2–3 real `.flp` copies into `test_projects/`, and dictate what "sorted" means — order, prefixes, colours, routing groups. Colours and routing are not implemented at all today; only renames. |
+| ~~`flp-real-mixer-convention`~~ | **Closed on Ali's instruction, 1 Sep 2026, with no convention dictated.** Do not re-surface it and do not re-dispatch it. It is closed as a *question*, not as a *gap*: `apply_rules()` still runs on an unapproved placeholder ruleset, so the FLP **writing** half stays unbuilt. Inferring a convention from the 26-project audit, from `outroagain`'s DRUMS/BASS/INSTRUMENTS/CHOPS/VOX1-8 layout, or from the placeholder itself is **substituting a decision** — a Class C stop under `agents.md`, and it writes to Ali's real project files, which is not recoverable. Reading `.flp` files is unaffected and still fine. |
 | ~~`pywinauto-app-handlers` / `uia-app-scripts`~~ | **Answered 2026-08-29**, via a personal-context agent of Ali's. Apps and end states now live in `docs/tasks/laptop-system-control.md` (power/wifi/bluetooth/display, scheduled tasks, printing, files, process-kill — CLI/API, no UIA) and `docs/tasks/pywinauto-zoom-whatsapp.md` (Zoom's native-dialog join tail, WhatsApp Desktop send-as-personal-number — the actual UIA targets). Both briefed and in flight. |
-| `queue-sleep-wake-probe` | Send a message with the lid closed, wake, confirm. **The one Phase 0 criterion with no evidence anywhere.** |
+| `queue-sleep-wake-probe` | Send a message with the lid closed, wake, confirm. **The one Phase 0 criterion with no evidence anywhere.** Ali has said he will do this later (1 Sep 2026) — still open, but stop raising it in handoffs until he brings it up. |
 | `finish-1.3-backfill-run` | Confirm `ingest/data/` is the intended final ingest list, and give a window where he expects no replies. The run monopolises Ollama. |
 | `1.4-review-loop` | Ask it ten things, delete what is wrong, name exclusion patterns. **Phase 1's actual acceptance gate.** Needs three jobs landed first: `finish-1.3-backfill-run`, `fact-review-and-forget-api`, `ingest-noise-filter`. |
 | `oracle-provision` | Signup, identity, card, region pick, then the OCI API key. Over-limit instances auto-terminate since 18 Aug, so "exactly 2 OCPU / 12GB" is load-bearing. |
