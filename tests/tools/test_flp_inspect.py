@@ -344,3 +344,263 @@ def test_one_unreadable_project_does_not_abort_the_batch(
     assert exit_code == 1
     assert "FAILED to read bad.flp: IndexError: list index out of range" in captured.err
     assert "=== good.flp ===" in captured.out
+
+
+# --- the raw event walker -----------------------------------------------------
+#
+# Pure byte logic, so it is covered here on 3.12 rather than in the realflp
+# sandbox. Every fixture below is bytes this file builds itself; no .flp is
+# read and PyFLP is never imported.
+
+
+def _event(event_id: int, payload: bytes = b"") -> bytes:
+    """One FLP event. The id band fixes the width; above 191 it is varint-sized."""
+    if event_id < 192:
+        return bytes([event_id]) + payload
+    size, out = len(payload), bytearray([event_id])
+    while True:
+        byte = size & 0x7F
+        size >>= 7
+        out.append(byte | (0x80 if size else 0))
+        if not size:
+            break
+    return bytes(out) + payload
+
+
+def _flp(*events: bytes) -> bytes:
+    """A minimal .flp: an FLhd header then an FLdt chunk of events."""
+    body = b"".join(events)
+    return (
+        b"FLhd" + (6).to_bytes(4, "little") + b"\x00" * 6
+        + b"FLdt" + len(body).to_bytes(4, "little") + body
+    )
+
+
+def _utf16(text: str) -> bytes:
+    return text.encode("utf-16-le") + b"\x00\x00"
+
+
+def test_the_walker_reads_each_id_band_at_its_own_width() -> None:
+    data = _flp(
+        _event(1, b"\x07"),                    # < 64  -> one byte
+        _event(64, b"\x02\x00"),               # < 128 -> two bytes
+        _event(128, b"\x01\x00\x00\x00"),      # < 192 -> four bytes
+        _event(192, b"hello"),                  # >= 192 -> varint-sized
+    )
+
+    assert fi.walk_events(data) == [
+        (1, b"\x07"),
+        (64, b"\x02\x00"),
+        (128, b"\x01\x00\x00\x00"),
+        (192, b"hello"),
+    ]
+
+
+def test_the_walker_handles_a_multi_byte_varint_length() -> None:
+    payload = b"x" * 300  # needs two varint bytes
+    events = fi.walk_events(_flp(_event(200, payload)))
+
+    assert events == [(200, payload)]
+
+
+def test_a_file_with_no_event_chunk_yields_nothing() -> None:
+    assert fi.walk_events(b"FLhd" + b"\x00" * 20) == []
+
+
+def test_the_walker_stops_at_a_payload_longer_than_the_file() -> None:
+    """The whole point is being handed damaged files: stop, never raise."""
+    truncated = _flp(_event(192, b"good")) + bytes([200, 0x40])  # claims 64 bytes
+
+    assert fi.walk_events(truncated) == [(192, b"good")]
+
+
+def test_the_walker_stops_on_an_unterminated_varint() -> None:
+    dangling = _flp(_event(192, b"good")) + bytes([200, 0x80, 0x80])
+
+    assert fi.walk_events(dangling) == [(192, b"good")]
+
+
+def test_the_walker_keeps_everything_before_the_damage() -> None:
+    data = _flp(*(_event(192, b"ok") for _ in range(5))) + bytes([201, 0x7F])
+
+    assert len(fi.walk_events(data)) == 5
+
+
+# --- recovery -----------------------------------------------------------------
+
+
+def test_recovery_maps_each_sample_path_to_its_channel() -> None:
+    data = _flp(
+        _event(fi.CHANNEL_NEW_ID, b"\x00\x00"),
+        _event(fi.SAMPLE_PATH_ID, _utf16(r"C:\kicks\Kick.wav")),
+        _event(fi.CHANNEL_NEW_ID, b"\x01\x00"),
+        _event(fi.SAMPLE_PATH_ID, _utf16(r"C:\snares\Snare.wav")),
+    )
+
+    samples, channels = fi.recover_samples(data)
+
+    assert samples == {0: r"C:\kicks\Kick.wav", 1: r"C:\snares\Snare.wav"}
+    assert channels == 2
+
+
+def test_recovery_counts_channels_that_carry_no_sample() -> None:
+    """A plugin channel has no sample path. It is still a channel."""
+    data = _flp(
+        _event(fi.CHANNEL_NEW_ID, b"\x00\x00"),
+        _event(fi.CHANNEL_NEW_ID, b"\x01\x00"),
+        _event(fi.SAMPLE_PATH_ID, _utf16(r"C:\a.wav")),
+    )
+
+    samples, channels = fi.recover_samples(data)
+
+    assert channels == 2
+    assert samples == {1: r"C:\a.wav"}
+
+
+def test_one_undecodable_path_does_not_cost_the_others() -> None:
+    """prayon dies on exactly this: an odd-length utf-16 payload."""
+    data = _flp(
+        _event(fi.CHANNEL_NEW_ID, b"\x00\x00"),
+        _event(fi.SAMPLE_PATH_ID, b"\x00\x00\x00@\x06\x00@\x02\x00"),  # 9 bytes, odd
+        _event(fi.CHANNEL_NEW_ID, b"\x01\x00"),
+        _event(fi.SAMPLE_PATH_ID, _utf16(r"C:\good.wav")),
+    )
+
+    samples, channels = fi.recover_samples(data)
+
+    assert samples == {1: r"C:\good.wav"}
+    assert channels == 2
+
+
+def test_a_sample_path_before_any_channel_is_ignored() -> None:
+    data = _flp(_event(fi.SAMPLE_PATH_ID, _utf16(r"C:\orphan.wav")))
+
+    assert fi.recover_samples(data) == ({}, 0)
+
+
+def test_an_empty_sample_path_is_not_recorded() -> None:
+    data = _flp(
+        _event(fi.CHANNEL_NEW_ID, b"\x00\x00"),
+        _event(fi.SAMPLE_PATH_ID, b"\x00\x00"),
+    )
+
+    assert fi.recover_samples(data) == ({}, 1)
+
+
+# --- the playlist diagnosis ---------------------------------------------------
+
+
+def test_an_eighty_byte_multiple_is_named_as_a_stride_pyflp_does_not_know() -> None:
+    """The measured cause of all 7 PARTIAL projects: an 80-byte item stride."""
+    message = fi._playlist_diagnosis(
+        ["Cannot parse event ArrangementID.Playlist as event size 8240 is not a "
+         "multiple of struct size(s) [32, 60]"]
+    )
+
+    assert message is not None
+    assert "8240 bytes" in message
+    assert "103 items at 80 bytes each" in message
+    assert "Clips are NOT reported" in message
+
+
+def test_a_size_matching_no_known_stride_says_exactly_that() -> None:
+    message = fi._playlist_diagnosis(
+        ["Cannot parse event ArrangementID.Playlist as event size 77 is not a "
+         "multiple of struct size(s) [32, 60]"]
+    )
+
+    assert message is not None
+    assert "a multiple of no known item stride" in message
+
+
+def test_unrelated_warnings_produce_no_diagnosis() -> None:
+    assert fi._playlist_diagnosis(["VSTPluginEvent: Unknown marker 12 detected."]) is None
+    assert fi._playlist_diagnosis([]) is None
+
+
+# --- rendering a degraded read ------------------------------------------------
+
+
+def _recovered(**overrides: object) -> fi.ProjectReport:
+    fields = dict(
+        path="C:/projects/outroforest.flp",
+        parsed=False,
+        clip_count=0,
+        tracks_used=0,
+        clips=(),
+        samples_without_clip=(r"C:\kicks\Kick.wav",),
+        warnings=("PyFLP could not parse this project (UnicodeDecodeError: ...)",),
+        recovered=True,
+        channel_count=24,
+    )
+    fields.update(overrides)
+    return fi.ProjectReport(**fields)  # type: ignore[arg-type]
+
+
+def test_a_recovered_project_never_prints_a_clip_count() -> None:
+    """Zero clips here means "unreadable", not "this project has none". The
+    two must never look the same to someone reading the output by eye."""
+    rendered = fi.render(_recovered())
+
+    assert "clips across" not in rendered
+    assert "[RECOVERED" in rendered
+    assert "partial read: 24 channels, 1 sample paths, no playlist" in rendered
+
+
+def test_recovered_samples_are_labelled_as_recovered_not_as_unpaired() -> None:
+    rendered = fi.render(_recovered())
+
+    assert "samples recovered from the raw event stream" in rendered
+    assert "not paired to a clip" not in rendered
+
+
+def test_a_normally_parsed_project_still_reads_the_same() -> None:
+    rendered = fi.render(_report(clips=(_clip(kind="drums"),)))
+
+    assert "1 clips across 1 playlist tracks" in rendered
+    assert "RECOVERED" not in rendered
+
+
+def test_the_cli_reports_recovered_projects_on_stderr_and_exits_two(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A recovered file is a result, not a failure -- but a batch that exited 0
+    over one would be the silent narrowing this tool is not allowed to do."""
+    target = tmp_path / "outroforest.flp"
+    target.write_bytes(b"")
+    monkeypatch.setattr(fi, "inspect_project", lambda path: _recovered(path=str(path)))
+
+    exit_code = fi.main([str(target)])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "1 of 1 project(s) were recovered" in captured.err
+    assert "outroforest.flp" in captured.err
+
+
+def test_a_clean_batch_still_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    target = tmp_path / "song.flp"
+    target.write_bytes(b"")
+    monkeypatch.setattr(fi, "inspect_project", lambda path: _report(path=str(path)))
+
+    assert fi.main([str(target)]) == 0
+    assert "recovered" not in capsys.readouterr().err
+
+
+def test_a_hard_failure_still_outranks_a_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Exit 1 means "a file was not read at all", which is worse news than 2."""
+    (tmp_path / "a.flp").write_bytes(b"")
+    (tmp_path / "b.flp").write_bytes(b"")
+
+    def mixed(path: Path) -> fi.ProjectReport:
+        if path.name == "a.flp":
+            raise IndexError("boom")
+        return _recovered(path=str(path))
+
+    monkeypatch.setattr(fi, "inspect_project", mixed)
+
+    assert fi.main([str(tmp_path)]) == 1

@@ -76,3 +76,64 @@ flattened in FL Studio before export as a workaround, or whether a patched
 `channel.py` is warranted — the same kind of targeted fix Lane A already used
 once for the interpreter side, not a reason to avoid it here, but a decision
 for whoever picks this up rather than assumed.
+
+---
+
+## Update, 2 September 2026 — reproduced, understood, and worked around
+
+Reproduced deliberately across every `.flp` copy on this machine, not once.
+`spaceship demo.flp` still raises exactly as recorded above:
+
+```
+channels_iter  IndexError: list index out of range  @ channel.py:1586 in __iter__
+```
+
+**It is not the only failure of its kind.** `outroagain_2.flp` fails on the
+same operation with a different exception:
+
+```
+channels_iter  KeyError: <ChannelID.Type: 21>  @ _events.py:505 in first
+```
+
+and `games_3.flp` raises `NoModelsFound` at `channel.py:1596` because that
+project genuinely has no channels (53 events in total — it is an empty
+project, not a damaged one). So `project.channels` has at least three distinct
+ways to fail on real files, and the group `IndexError` is one of them.
+
+### The consequence is smaller than it looked
+
+Every channel fact this repo actually needs — the iid and the sample path —
+is on the raw event stream, which never touches channel grouping.
+`tools/flp_inspect.py` has read them that way since it was written
+(`_samples_by_channel`), and it recovers the full set on all three projects:
+
+| project | `project.channels` | channels off the event stream |
+|---|---|---|
+| `spaceship demo.flp` | `IndexError` | 22 |
+| `outroagain_2.flp` | `KeyError` | 58 |
+| `babydon'tgetsomad_8.flp` | 247 | 247 |
+
+The last row is the control: where PyFLP's iteration works, the event stream
+agrees with it exactly.
+
+### So what is still blocked
+
+Only what genuinely needs PyFLP's channel *objects* — anything reading a
+channel's plugin state, volume, panning or group membership. Nothing in this
+repo does today. `executor/flp/sort.py` works on the mixer, not on channels,
+and it is exercised end to end against a real file by
+`tests/flp/test_flp_real.py`.
+
+### Still not done, deliberately
+
+No guarded lookup was added around PyFLP's own `groups[groupnum]`, because
+there is nothing to guard it *in* — the crash is inside PyFLP's `__iter__`,
+and reaching it would mean patching the installed package. `agents.md` and
+this task's rules both make that a component change and a stop-and-report, and
+the event-stream route makes it unnecessary anyway.
+
+The upstream write-up worth filing is in
+`docs/tasks/pyflp-parse-failures-report.md`.
+
+**Status: no longer blocking. Downgraded from a blocker to a known PyFLP
+limitation with a working route around it.**

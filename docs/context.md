@@ -8,24 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `10be80b Give the router a ledger that outlives one call, and let /status see it` on `main`, 5 ahead, 0 behind origin.
+**HEAD** `6bd3ad4 Apply Ali's blueprint corrections, and keep one line the audit was wrong about` on `main`, 6 ahead, 0 behind origin.
 
-**Working tree:** 5 changed
+**Working tree:** 13 changed (plus 4 untracked)
 
 ```
-  M  docs/blueprint.md
-  M  docs/board/tasks/blueprint-corrections.md
-   M docs/board/tasks/pyflp-parse-failures.md
-   M tools/flp_inspect.py
-   M tools/work_board_claim.py
+  M .claude/settings.json
+   M .githooks/pre-commit
+   M CLAUDE.md
+  M  docs/blockers/pyflp-channel-groups-indexerror.md
+   M docs/board/USER-TASKS.md
+  M  docs/board/tasks/pyflp-parse-failures.md
+   M docs/board/tasks/stt-groq-fallback.md
+   M docs/state.md
+  A  docs/tasks/pyflp-parse-failures-report.md
+   M executor/handlers/whatsapp.py
+  M  tests/tools/test_flp_inspect.py
+  M  tools/flp_inspect.py
+  ...and 1 more
 ```
 
-**Offline suite:** 1166 passed, 9 deselected, 10 warnings in 56.42s _(recorded 2026-09-02)_
+**Offline suite:** 1210 passed, 9 deselected, 10 warnings in 67.91s (0:01:07) _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `6bd3ad4` Apply Ali's blueprint corrections, and keep one line the audit was wrong about  _(2026-09-02)_
 - `10be80b` Give the router a ledger that outlives one call, and let /status see it  _(2026-09-02)_
 - `34b4bc0` Write the whole Oracle side of Phase 4 before the account exists  _(2026-09-02)_
 - `84f6d42` Let a WhatsApp message enqueue a real action, on a closed allowlist  _(2026-09-02)_
@@ -33,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `0ff4e1a` Give the four orphaned job kinds a worker that can actually claim them  _(2026-09-02)_
 - `e4129df` Fold Ali's ten answers into the board, blueprint and state  _(2026-09-01)_
 - `94551a3` Replace plan.md with a self-serve work board under docs/board/  _(2026-09-01)_
-- `bf15f79` Close the Meta token rotation and the FL Studio convention on Ali's instruction  _(2026-09-01)_
 
 <!-- END GENERATED -->
 

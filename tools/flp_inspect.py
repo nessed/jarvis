@@ -37,6 +37,7 @@ empty-enum guard that breaks PyFLP. See ``docs/state.md``.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import sys
@@ -98,7 +99,14 @@ class Clip:
 
 @dataclass(frozen=True)
 class ProjectReport:
-    """Everything read out of one project. Read-only; nothing here was written."""
+    """Everything read out of one project. Read-only; nothing here was written.
+
+    ``parsed`` means PyFLP read the file. ``recovered`` means it did not, and
+    what follows came from :func:`recover_samples` walking the raw event
+    stream instead — a strictly smaller set of facts. The two are separate
+    fields rather than one status string because a caller that forgets to
+    check gets ``parsed=False``, which is the safe reading.
+    """
 
     path: str
     parsed: bool
@@ -107,6 +115,8 @@ class ProjectReport:
     clips: tuple[Clip, ...]
     samples_without_clip: tuple[str, ...]
     warnings: tuple[str, ...]
+    recovered: bool = False
+    channel_count: int | None = None
 
 
 def classify(sample: str | None) -> tuple[str, str]:
@@ -147,6 +157,133 @@ def _samples_by_channel(project: object) -> dict[int, str]:
     return samples
 
 
+# --- reading a file PyFLP will not parse -------------------------------------
+#
+# PyFLP's parse() is all-or-nothing: one malformed event aborts the whole file.
+# Two of Ali's 25 projects hit that, and both are otherwise structurally intact
+# — a hand walk reaches EOF cleanly on each (2,273 and 1,819 events). Losing a
+# whole project's sample list to one bad event is not honest degradation, so
+# these two functions read what is legible directly.
+#
+# They deliberately take bytes, not a path or a PyFLP object. That keeps them
+# pure, keeps PyFLP out of the import path, and lets the offline suite cover
+# them on 3.12 with synthetic fixtures instead of real projects.
+
+#: FLP's own event framing. The id band fixes the payload width: below 64 the
+#: event carries one byte, below 128 two, below 192 four, and from 192 up a
+#: varint length followed by that many bytes. Read off PyFLP's own parser
+#: (``_events.py``), not guessed.
+_ONE_BYTE_MAX = 64
+_TWO_BYTE_MAX = 128
+_FOUR_BYTE_MAX = 192
+
+#: Event ids used by the recovery path, taken from PyFLP's enums at the
+#: versions pinned here: ``ChannelID.New`` and ``ChannelID.SamplePath``.
+CHANNEL_NEW_ID = 64
+SAMPLE_PATH_ID = 196
+
+#: FL writes text events as UTF-16-LE from FL 12 onwards.
+_TEXT_ENCODING = "utf-16-le"
+
+
+def walk_events(data: bytes) -> "list[tuple[int, bytes]]":
+    """Split an ``.flp``'s event chunk into ``(event_id, payload)`` pairs.
+
+    Stops cleanly at the first sign of a truncated or malformed frame rather
+    than raising: the whole point of this function is being handed files that
+    are already broken somewhere. A caller gets everything up to the damage.
+    """
+    start = data.find(b"FLdt")
+    if start < 0:
+        return []
+
+    events: list[tuple[int, bytes]] = []
+    pos, end = start + 8, len(data)
+    while pos < end:
+        event_id = data[pos]
+        pos += 1
+        if event_id < _ONE_BYTE_MAX:
+            size = 1
+        elif event_id < _TWO_BYTE_MAX:
+            size = 2
+        elif event_id < _FOUR_BYTE_MAX:
+            size = 4
+        else:
+            size, shift, complete = 0, 0, False
+            while pos < end:
+                byte = data[pos]
+                pos += 1
+                size |= (byte & 0x7F) << shift
+                if not byte & 0x80:
+                    complete = True
+                    break
+                shift += 7
+            if not complete:
+                break  # varint ran off the end
+        if pos + size > end:
+            break  # payload claims more bytes than the file has
+        events.append((event_id, data[pos : pos + size]))
+        pos += size
+    return events
+
+
+def recover_samples(data: bytes) -> "tuple[dict[int, str], int]":
+    """Sample paths by channel iid, and the channel count, from raw bytes.
+
+    The salvage path for a file PyFLP refuses. Returns strictly less than a
+    real parse does — no playlist, so no clips, no track layout — which is why
+    every caller labels the result as recovered rather than folding it in
+    silently.
+    """
+    samples: dict[int, str] = {}
+    channels = 0
+    current: int | None = None
+    for event_id, payload in walk_events(data):
+        if event_id == CHANNEL_NEW_ID:
+            channels += 1
+            current = int.from_bytes(payload, "little")
+        elif event_id == SAMPLE_PATH_ID and current is not None:
+            try:
+                text = payload.decode(_TEXT_ENCODING).rstrip("\0")
+            except UnicodeDecodeError:
+                continue  # one unreadable path must not cost the others
+            if text:
+                samples[current] = text
+    return samples, channels
+
+
+_PLAYLIST_SIZE = re.compile(r"event size (\d+) is not a multiple of struct size")
+
+#: The stride every playlist event PyFLP 2.2.1 rejects turns out to be a
+#: multiple of. Measured across all 195 ``.flp`` copies on this machine: 26
+#: files carry a playlist event divisible by neither 32 nor 60 (the two sizes
+#: PyFLP knows), and every one of them divides by 80. See
+#: docs/tasks/pyflp-parse-failures-report.md.
+UNKNOWN_PLAYLIST_STRIDE = 80
+
+
+def _playlist_diagnosis(parser_warnings: "list[str]") -> str | None:
+    """Turn PyFLP's playlist complaint into something actionable, or None."""
+    for message in parser_warnings:
+        match = _PLAYLIST_SIZE.search(message)
+        if not match:
+            continue
+        size = int(match.group(1))
+        if size % UNKNOWN_PLAYLIST_STRIDE == 0:
+            return (
+                f"playlist unreadable: PyFLP 2.2.1 knows 32- and 60-byte playlist "
+                f"items, this file's event is {size} bytes, which is "
+                f"{size // UNKNOWN_PLAYLIST_STRIDE} items at {UNKNOWN_PLAYLIST_STRIDE} "
+                f"bytes each. Clips are NOT reported for this project."
+            )
+        return (
+            f"playlist unreadable: event is {size} bytes, a multiple of no known "
+            f"item stride (32, 60, or {UNKNOWN_PLAYLIST_STRIDE}). Clips are NOT "
+            f"reported for this project."
+        )
+    return None
+
+
 def inspect_project(path: Path) -> ProjectReport:
     """Parse one ``.flp`` and report its contents. Never writes to ``path``."""
     import pyflp
@@ -155,17 +292,33 @@ def inspect_project(path: Path) -> ProjectReport:
     caught: list[str] = []
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always")
-        project = pyflp.parse(path)
+        try:
+            project = pyflp.parse(path)
+        except Exception as exc:  # noqa: BLE001 - salvage rather than lose the file
+            return _recovered_report(path, exc, [str(w.message) for w in captured])
         caught = [str(w.message) for w in captured]
 
     samples = _samples_by_channel(project)
 
     clips: list[Clip] = []
+    notes: list[str] = []
     for arrangement in project.arrangements:
         if ArrangementID.Playlist not in arrangement.events.ids:
             continue
         playlist = arrangement.events.first(ArrangementID.Playlist)
-        for item in playlist:
+        try:
+            items = list(playlist)
+        except AttributeError:
+            # PyFLP refused to parse this playlist event and left the object
+            # without its data, so iterating raises. Losing the clips is
+            # unavoidable; losing the sample list with them is not. Say
+            # exactly what was dropped and carry on.
+            notes.append(
+                _playlist_diagnosis(caught)
+                or "playlist unreadable: PyFLP parsed no items from the playlist event."
+            )
+            continue
+        for item in items:
             item_index = int(item["item_index"])
             pattern_base = int(item["pattern_base"])
 
@@ -218,7 +371,33 @@ def inspect_project(path: Path) -> ProjectReport:
         tracks_used=len({clip.track_index for clip in clips}),
         clips=tuple(clips),
         samples_without_clip=orphans,
-        warnings=tuple(caught),
+        warnings=tuple(notes) + tuple(caught),
+        channel_count=len(samples) or None,
+    )
+
+
+def _recovered_report(
+    path: Path, exc: BaseException, parser_warnings: "list[str]"
+) -> ProjectReport:
+    """What can still be read once PyFLP has given up on the file."""
+    samples, channels = recover_samples(path.read_bytes())
+    note = (
+        f"PyFLP could not parse this project ({type(exc).__name__}: {exc}). "
+        f"Read the raw event stream instead and recovered {len(samples)} sample "
+        f"path(s) across {channels} channel(s). NO playlist, NO clips, NO track "
+        f"layout -- one malformed event aborts PyFLP's parse, so everything that "
+        f"needs its object model is missing from this report."
+    )
+    return ProjectReport(
+        path=str(path),
+        parsed=False,
+        clip_count=0,
+        tracks_used=0,
+        clips=(),
+        samples_without_clip=tuple(samples.values()),
+        warnings=(note,) + tuple(parser_warnings),
+        recovered=True,
+        channel_count=channels,
     )
 
 
@@ -249,10 +428,20 @@ def render(report: ProjectReport) -> str:
     """Human-readable summary. The tail end is what the user actually reads."""
     lines = [
         "",
-        f"=== {Path(report.path).name} ===",
-        f"{report.clip_count} clips across {report.tracks_used} playlist tracks",
-        "",
+        f"=== {Path(report.path).name} ==="
+        + ("   [RECOVERED -- PyFLP could not parse this file]" if report.recovered else ""),
     ]
+    if report.recovered:
+        # Never print a clip count for a recovered file. Zero clips here means
+        # "not readable", not "this project has no clips", and the two must
+        # never look the same in output Ali is reading by eye.
+        lines.append(
+            f"partial read: {report.channel_count or 0} channels, "
+            f"{len(report.samples_without_clip)} sample paths, no playlist"
+        )
+    else:
+        lines.append(f"{report.clip_count} clips across {report.tracks_used} playlist tracks")
+    lines.append("")
 
     if report.clips:
         lines.append(f"{'track':>6}  {'kind':<13}  {'pos':>8}  sample")
@@ -291,7 +480,12 @@ def render(report: ProjectReport) -> str:
 
     if report.samples_without_clip:
         lines.append("")
-        lines.append(f"  {len(report.samples_without_clip)} samples not paired to a clip:")
+        label = (
+            "samples recovered from the raw event stream"
+            if report.recovered
+            else "samples not paired to a clip"
+        )
+        lines.append(f"  {len(report.samples_without_clip)} {label}:")
         for sample in report.samples_without_clip[:10]:
             lines.append(f"    {_shorten(sample)}")
 
@@ -327,6 +521,13 @@ def discover(paths: list[str]) -> list[Path]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Sample paths come out of Ali's own filesystem and routinely carry
+    # characters cp1252 cannot encode. Without this the tool dies printing a
+    # filename rather than reporting it.
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(
         description="Report the contents of one or more .flp projects. Read-only."
     )
@@ -352,7 +553,23 @@ def main(argv: list[str] | None = None) -> int:
         for report in reports:
             print(render(report))
 
-    return 0 if len(reports) == len(projects) else 1
+    # A recovered file is a real result, not a failure -- but it is also not a
+    # clean read, and a batch that quietly exits 0 over one would be the silent
+    # narrowing this tool is not allowed to do. Say it on stderr and keep the
+    # exit code honest.
+    recovered = [r for r in reports if r.recovered]
+    if recovered:
+        print(
+            f"\n{len(recovered)} of {len(projects)} project(s) were recovered from the raw "
+            "event stream, not parsed. Their clips and track layout are missing:",
+            file=sys.stderr,
+        )
+        for report in recovered:
+            print(f"  {Path(report.path).name}", file=sys.stderr)
+
+    if len(reports) != len(projects):
+        return 1
+    return 2 if recovered else 0
 
 
 if __name__ == "__main__":
