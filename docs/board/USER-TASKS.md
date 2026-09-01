@@ -73,5 +73,16 @@ once in a batched handoff, and only ones that newly became actionable.
   the way it degrades English, the fallback gets its own language setting
   instead of inheriting the local backend's. Which way that goes is a
   judgement about your own speech.
+- **U12 — Fill `SUPABASE_DB_PASSWORD` in `.env`** (2 min, unblocks
+  `db-maintenance`'s live half). The key is already there and empty. It is
+  the database password you set when you created the Supabase project —
+  Dashboard → Project Settings → Database → Reset password if it is lost.
+  Paste it straight into `.env`, never into a chat.
+  Nothing else needs it: the REST key already in `.env` can read and write
+  rows, but it cannot run DDL, which is why `0003` cannot be applied without
+  this. The migration runner, its ledger and `0003` are built, tested and
+  committed; `.venv\Scripts\python.exe -m db.migrate --dry-run` will print
+  the plan the moment the value lands, and applying it is one command after
+  that.
 - **U10 — UI-TARS second Windows account** (Phase 5, parked until you
   care): create it, log in once, babysit the first runs.

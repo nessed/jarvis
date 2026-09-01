@@ -274,12 +274,18 @@ def build_whatsapp_webhook_handler(
         # Imported here, not at module scope: this handler runs on every
         # WhatsApp message, most of which are text, and soundfile/httpx-heavy
         # voice imports have no business loading for those.
+        #
+        # Local NPU first, Groq second, never both (Q8 = A, 1 Sep 2026). A
+        # dead whisper-server used to mean a spoken message got silence back;
+        # it now gets a cloud transcript, and a total failure raises loudly
+        # rather than passing for an empty clip. See voice/stt_fallback.py for
+        # why an empty transcript is a result and not a reason to fall back.
         from voice.audio import to_transcribable_wav
         from voice.config import whisper_language
-        from voice.whisper.server_client import WhisperServerClient
+        from voice.stt_fallback import transcribe_with_fallback
 
         wav = to_transcribable_wav(audio)
-        return WhisperServerClient().transcribe(wav, language=whisper_language())
+        return transcribe_with_fallback(wav, language=whisper_language())
 
     def _default_synthesize_voice_reply(text: str) -> bytes:
         from voice.speak import text_to_voice_note

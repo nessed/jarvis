@@ -31,3 +31,6 @@ psutil==7.2.2
 # WhatsApp Desktop send. comtypes is pywinauto's own UIA backend dependency.
 pywinauto==0.6.9
 comtypes==1.4.16
+# Migration runner (db/migrate.py). psycopg v3 named by Ali as a component
+# decision, QUESTIONS.md Q9 -- not a substitute for another driver.
+psycopg[binary]==3.3.5

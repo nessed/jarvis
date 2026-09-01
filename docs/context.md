@@ -8,29 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `10c736c Make the multi-session workflow enforce itself` on `main`, 8 ahead, 0 behind origin.
+**HEAD** `e4125d4 Reduce the wake-word false-positive test to one command` on `main`, 9 ahead, 0 behind origin.
 
-**Working tree:** 10 changed (plus 6 untracked)
+**Working tree:** 13 changed
 
 ```
-  M  .gitignore
-  MM docs/board/USER-TASKS.md
-   M docs/board/tasks/stt-groq-fallback.md
-  M  docs/board/tasks/wakeword-fp-monitor.md
-   M docs/state.md
-  A  docs/tasks/wakeword-fp-report.md
-   M executor/handlers/whatsapp.py
-   M requirements.txt
-  M  tests/voice/test_listen_wakeword.py
-  M  voice/listen_wakeword.py
+  A  db/migrate.py
+  A  db/migrations/0003_jobs_indexes_and_retention.sql
+  M  docs/board/USER-TASKS.md
+   M docs/board/tasks/backfill-run.md
+  M  docs/board/tasks/db-maintenance.md
+  M  docs/board/tasks/stt-groq-fallback.md
+  M  docs/state.md
+  A  docs/tasks/deps-db-maintenance.txt
+  M  executor/handlers/whatsapp.py
+  M  requirements.txt
+  A  tests/db/test_migrate.py
+  A  tests/voice/test_stt_fallback.py
+  ...and 1 more
 ```
 
-**Offline suite:** 1289 passed, 9 deselected, 10 warnings in 71.31s (0:01:11) _(recorded 2026-09-02)_
+**Offline suite:** 1289 passed, 9 deselected, 10 warnings in 56.92s _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `e4125d4` Reduce the wake-word false-positive test to one command  _(2026-09-02)_
 - `10c736c` Make the multi-session workflow enforce itself  _(2026-09-02)_
 - `c4cc48d` Make the inspector read the two .flp files PyFLP gives up on  _(2026-09-02)_
 - `6bd3ad4` Apply Ali's blueprint corrections, and keep one line the audit was wrong about  _(2026-09-02)_
@@ -38,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `34b4bc0` Write the whole Oracle side of Phase 4 before the account exists  _(2026-09-02)_
 - `84f6d42` Let a WhatsApp message enqueue a real action, on a closed allowlist  _(2026-09-02)_
 - `31c1c64` Add the job replay harness and the blueprint's facts check  _(2026-09-02)_
-- `0ff4e1a` Give the four orphaned job kinds a worker that can actually claim them  _(2026-09-02)_
 
 <!-- END GENERATED -->
 
