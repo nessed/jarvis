@@ -96,53 +96,50 @@ Whoever receives answers (in chat or as edits to `QUESTIONS.md`):
 
 ## NEXT — priority order
 
-Rewritten 1 Sep 2026 after Ali answered `QUESTIONS.md`. Six tasks came off the
-blocked list; two more shed their `Q` gate and now wait only on a sibling
-task. One, `live-routing-probe`, stayed blocked: its gate was U2 and the
-paste has not reached `.env` yet. `voice-loop` went back to blocked on
-2 Sep — see Q12. Ali's Q10b answer also implies four new
-router tasks that `board-audit` should file — see item 13.
+Rewritten 2 Sep 2026 by `board-audit`, from the task files themselves rather
+than by hand. Seven tasks landed that day — `action-worker`,
+`enqueue-classifier`, `router-cooldown-ledger`, `blueprint-corrections`,
+`stt-groq-fallback` and, from the parallel lanes, `replay-harness`,
+`facts-check-tool`, `pyflp-parse-failures`, `phase4-prep`,
+`wakeword-fp-monitor` and `agent-harness` — and seven new ones were filed
+from what they found.
+
+Phase 2's producer/consumer gap is closed: WhatsApp text becomes real action
+jobs and a worker claims them. The open weight has moved to the **router**
+(four tasks implementing Ali's §3.3, which the blueprint now states and the
+code does not yet do) and to **memory**, which is the one genuinely broken
+system — see item 1.
 
 Ready now:
 
-1. `blueprint-corrections` — a, b and c all approved; b is Ali's own §3.3
-   text, applied verbatim, documentation only
-2. `phase4-prep` — write all Oracle/VPS scripts before the account exists
-3. `pyflp-parse-failures` — diagnose the 2 hard + 7 partial `.flp` failures
-4. `stt-groq-fallback` — voice owns a small Groq STT client (Q8=A)
-5. `wakeword-fp-monitor` — logging + report so Ali's FP test is one command
-6. `backfill-run` — **overnight window only** (Q4); takes `ollama-extract`
-   exclusively and stops the executor, so it cannot overlap anything else
-   touching Ollama
-7. `pytest-addopts` — barrier task; run only when nothing else is mid-run
-   Now also carries a second defect: the fixed `--basetemp` collides
-   between concurrent lanes and produces phantom test failures
-8. `db-maintenance` — approved to write live schema; the orphan row is
-   **reported, not deleted**
-9. `board-audit` — recurring; also the fallback when nothing else is ready.
-   **Run it next for the four router tasks** Ali's §3.3 implies:
-   `router-eligibility-window` (needs Q11), `router-cost-class-ordering`,
-   `provider-status-generator`, and folding 401/402/403 surfacing into
-   `router-cooldown-ledger`
-   Also file `action-outcome-reply`: an enqueued action replies "queued as job X" but never reports its outcome. Needs a `reply_to` on the action payload and the action handlers sending — wider than `enqueue-classifier`'s scope allowed
-   Also file `router-unresolvable-model-rungs`: `groq` and `cerebras` sort to the front of every request and are silently skipped, because their `default_model` is an unresolved `${...}` placeholder that `_configured()`'s model guard does not cover
+1. `distill-chain-stall` — the memory path is down. 98 dead-lettered `distill_memory` rows, then one
+   ripe row unclaimed since 30 Aug. The reply path is healthy; this is not
+2. `action-outcome-reply` — an enqueued action says "queued as job X" and never says whether it worked
+3. `router-denial-surfacing` — §3.3 says a 401/402/403 cools down **and surfaces**. Only the cooldown
+   shipped; 402 still falls through, possibly to a paid rung
+4. `router-unresolvable-model-rungs` — `groq` and `cerebras` sort to the front of every request and are silently
+   skipped — unresolved `${...}` default_model, uncaught by `_configured()`
+5. `router-cost-class-ordering` — §3.3's cost-class-then-p50 ordering. `providers.yaml` has a static int and
+   no `cost_class`; Cerebras being trial-not-free already breaks the old model
+6. `provider-status-generator` — §3.3's two generated lists. `blueprint-corrections` left them empty on
+   purpose rather than hand-write what the spec says is generated
+7. `pytest-addopts` — **barrier** — run only when `work_board_claim.py list` is empty. Also
+   carries the fixed-`--basetemp` collision, partly addressed by `agent-harness`
+8. `board-audit` — recurring; the fallback when nothing else is ready
 
 Blocked, in the order they'll matter once unblocked:
 
-10. `voice-loop` — **Q12**, raised 2 Sep. Stopped before build on its own
-    Constraints clause: Pipecat's local transport needs `pyaudio`, its Kokoro
-    service needs `kokoro-onnx`, and its wake word is a transcript regex
-    rather than the acoustic openWakeWord gate — five of six stages would be
-    custom subclasses. Stop-and-report, not a substitution. See
-    `docs/tasks/voice-loop-report.md`
-11. `live-routing-probe` — U2. Ali gave the five model IDs but a key-name
-    check of `.env` found none of them present; the probe would only
-    re-prove the known gap until they land
-12. `voice-command-ingress` — Q7 answered (enqueue-only `POST /command`);
-    waits on `voice-loop`, so now behind Q12 as well
-13. `vps-harden-deploy` (U7, after `phase4-prep`)
-14. `bus-offbox-packaging` (after `enqueue-classifier` + `vps-harden-deploy`)
-15. `cloud-routine-wire` (U8, after `bus-offbox-packaging`)
+9. `db-maintenance` — **U12**. Runner, ledger and `0003` are built, tested and committed;
+   `SUPABASE_DB_PASSWORD` is an empty placeholder so the DDL cannot be applied
+10. `voice-loop` — **Q12** — drop Pipecat from the desk loop? Recommendation filed
+11. `router-eligibility-window` — **Q11** — how long the verification window is
+12. `live-routing-probe` — **U2**. Now costing something measurable: the ladder collapses to
+    `openrouter/free`, which answered a JSON prompt with `User Safety: safe`
+    on two of four probes
+13. `voice-command-ingress` — waits on `voice-loop`, so behind Q12
+14. `vps-harden-deploy` — **U7**, after `phase4-prep` (done)
+15. `bus-offbox-packaging` — after `vps-harden-deploy`
+16. `cloud-routine-wire` — **U8**, after `bus-offbox-packaging`
 
 USER items live in `USER-TASKS.md`. Decisions live in `QUESTIONS.md`.
 Deliberately-not-being-done items live in `PARKED.md` — read it before

@@ -1,6 +1,6 @@
 ---
 id: backfill-run
-status: ready
+status: in-progress
 lane: AUTO
 priority: 1
 phase: 1
