@@ -74,46 +74,44 @@ router tasks that `board-audit` should file — see item 13.
 
 Ready now:
 
-1. `enqueue-classifier` — WhatsApp text becomes real action jobs. Unblocked
-   2 Sep by `action-worker`; the allowlist is fixed at `system_control` +
-   `zoom_join_meeting`, nothing else
-2. `replay-harness` — replay real job payloads through real handlers
-3. `router-cooldown-ledger` — process-lifetime ledger + real /status health (Q10c)
-4. `blueprint-corrections` — a, b and c all approved; b is Ali's own §3.3
+1. `replay-harness` — replay real job payloads through real handlers
+2. `router-cooldown-ledger` — process-lifetime ledger + real /status health (Q10c)
+3. `blueprint-corrections` — a, b and c all approved; b is Ali's own §3.3
    text, applied verbatim, documentation only
-5. `facts-check-tool` — the blueprint's own anti-rot check, never built
-6. `phase4-prep` — write all Oracle/VPS scripts before the account exists
-7. `pyflp-parse-failures` — diagnose the 2 hard + 7 partial `.flp` failures
-8. `stt-groq-fallback` — voice owns a small Groq STT client (Q8=A)
-9. `wakeword-fp-monitor` — logging + report so Ali's FP test is one command
-10. `backfill-run` — **overnight window only** (Q4); takes `ollama-extract`
-    exclusively and stops the executor, so it cannot overlap anything else
-    touching Ollama
-11. `pytest-addopts` — barrier task; run only when nothing else is mid-run
-12. `db-maintenance` — approved to write live schema; the orphan row is
+4. `facts-check-tool` — the blueprint's own anti-rot check, never built
+5. `phase4-prep` — write all Oracle/VPS scripts before the account exists
+6. `pyflp-parse-failures` — diagnose the 2 hard + 7 partial `.flp` failures
+7. `stt-groq-fallback` — voice owns a small Groq STT client (Q8=A)
+8. `wakeword-fp-monitor` — logging + report so Ali's FP test is one command
+9. `backfill-run` — **overnight window only** (Q4); takes `ollama-extract`
+   exclusively and stops the executor, so it cannot overlap anything else
+   touching Ollama
+10. `pytest-addopts` — barrier task; run only when nothing else is mid-run
+11. `db-maintenance` — approved to write live schema; the orphan row is
     **reported, not deleted**
-13. `board-audit` — recurring; also the fallback when nothing else is ready.
+12. `board-audit` — recurring; also the fallback when nothing else is ready.
     **Run it next for the four router tasks** Ali's §3.3 implies:
     `router-eligibility-window` (needs Q11), `router-cost-class-ordering`,
     `provider-status-generator`, and folding 401/402/403 surfacing into
     `router-cooldown-ledger`
+    Also file `action-outcome-reply`: an enqueued action replies "queued as job X" but never reports its outcome. Needs a `reply_to` on the action payload and the action handlers sending — wider than `enqueue-classifier`'s scope allowed
 
 Blocked, in the order they'll matter once unblocked:
 
-14. `voice-loop` — **Q12**, raised 2 Sep. Stopped before build on its own
+13. `voice-loop` — **Q12**, raised 2 Sep. Stopped before build on its own
     Constraints clause: Pipecat's local transport needs `pyaudio`, its Kokoro
     service needs `kokoro-onnx`, and its wake word is a transcript regex
     rather than the acoustic openWakeWord gate — five of six stages would be
     custom subclasses. Stop-and-report, not a substitution. See
     `docs/tasks/voice-loop-report.md`
-15. `live-routing-probe` — U2. Ali gave the five model IDs but a key-name
+14. `live-routing-probe` — U2. Ali gave the five model IDs but a key-name
     check of `.env` found none of them present; the probe would only
     re-prove the known gap until they land
-16. `voice-command-ingress` — Q7 answered (enqueue-only `POST /command`);
+15. `voice-command-ingress` — Q7 answered (enqueue-only `POST /command`);
     waits on `voice-loop`, so now behind Q12 as well
-17. `vps-harden-deploy` (U7, after `phase4-prep`)
-18. `bus-offbox-packaging` (after `enqueue-classifier` + `vps-harden-deploy`)
-19. `cloud-routine-wire` (U8, after `bus-offbox-packaging`)
+16. `vps-harden-deploy` (U7, after `phase4-prep`)
+17. `bus-offbox-packaging` (after `enqueue-classifier` + `vps-harden-deploy`)
+18. `cloud-routine-wire` (U8, after `bus-offbox-packaging`)
 
 USER items live in `USER-TASKS.md`. Decisions live in `QUESTIONS.md`.
 Deliberately-not-being-done items live in `PARKED.md` — read it before

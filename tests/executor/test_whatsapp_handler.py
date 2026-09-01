@@ -6,12 +6,14 @@ from types import SimpleNamespace
 import pytest
 
 from db.jobs import Job
+from executor.handlers.command_intent import CONVERSATION, CommandVerdict, PendingConfirmation
 from executor.handlers.whatsapp import (
     SYSTEM_PROMPT,
     VOICE_REPLY_LANGUAGE_NOTE,
     InboundMessage,
     SeenMessageStore,
     build_whatsapp_webhook_handler,
+    commands_enabled,
     memory_writes_enabled,
     open_default_seen_message_store,
     parse_inbound_message,
@@ -232,11 +234,20 @@ def _fake_completion_response(text: str) -> RoutedResult:
     return RoutedResult(provider="fake", model="fake-model", response=SimpleNamespace(choices=[choice]))
 
 
+# Every handler built below passes ``handle_commands=False``. These tests
+# predate the command classifier and exercise the conversational path, which
+# now runs only after the classifier has declined the message; leaving commands
+# on would add a second routed call to each one and make the assertions about
+# "the completion call" ambiguous. ``TestWhatsAppCommands`` at the bottom of
+# this file is where the classifier is turned on and exercised.
+
+
 class TestWhatsAppWebhookHandler:
     def test_no_inbound_message_is_a_silent_no_op(self) -> None:
         memory = FakeMemory([])
         sent: list[dict[str, object]] = []
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=FakeSeenStore,
             complete=lambda *_: pytest.fail("routing must not be called for a non-message webhook"),
@@ -259,6 +270,7 @@ class TestWhatsAppWebhookHandler:
 
         sent: list[dict[str, object]] = []
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=lambda: seen,
             complete=fake_complete,
@@ -294,6 +306,7 @@ class TestWhatsAppWebhookHandler:
                 return super().recall(query, **kwargs)
 
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: OrderRecordingMemory([]),
             open_seen_messages=FakeSeenStore,
             show_typing_indicator=lambda *, message_id: order.append(f"typing:{message_id}"),
@@ -309,6 +322,7 @@ class TestWhatsAppWebhookHandler:
     def test_a_typing_indicator_failure_does_not_block_the_real_reply(self) -> None:
         sent: list[dict[str, object]] = []
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: FakeMemory([]),
             open_seen_messages=FakeSeenStore,
             show_typing_indicator=lambda **_: (_ for _ in ()).throw(RuntimeError("Graph unavailable")),
@@ -338,6 +352,7 @@ class TestWhatsAppWebhookHandler:
             return _fake_completion_response("No.")
 
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=lambda: FakeSeenStore(),
             complete=fake_complete,
@@ -367,6 +382,7 @@ class TestWhatsAppWebhookHandler:
             return _fake_completion_response("No.")
 
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=lambda: FakeSeenStore(),
             complete=fake_complete,
@@ -391,6 +407,7 @@ class TestWhatsAppWebhookHandler:
             return _fake_completion_response("Sure thing.")
 
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=FakeSeenStore,
             complete=fake_complete,
@@ -406,6 +423,7 @@ class TestWhatsAppWebhookHandler:
         memory = FakeMemory([])
         sent: list[dict[str, object]] = []
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=FakeSeenStore,
             complete=lambda *_: RoutedResult(provider="fake", model="fake-model", response=object()),
@@ -420,6 +438,7 @@ class TestWhatsAppWebhookHandler:
     def test_a_message_id_already_marked_sent_is_skipped_without_doing_any_work(self) -> None:
         seen = FakeSeenStore(already_sent={"wamid.dup"})
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: pytest.fail("memory must not be touched for an already-sent message"),
             open_seen_messages=lambda: seen,
             complete=lambda *_: pytest.fail("routing must not be called for an already-sent message"),
@@ -438,6 +457,7 @@ class TestWhatsAppWebhookHandler:
         memory = FakeMemory([FakeFact("remembered thing")])
         sent: list[dict[str, object]] = []
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=FakeSeenStore,
             complete=lambda *_: _fake_completion_response("Replied anyway."),
@@ -453,6 +473,7 @@ class TestWhatsAppWebhookHandler:
     def test_memory_writes_can_be_turned_off(self) -> None:
         memory = FakeMemory([])
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=FakeSeenStore,
             complete=lambda *_: _fake_completion_response("No memory please."),
@@ -483,6 +504,7 @@ class TestWhatsAppWebhookHandler:
 
         memory = OrderRecordingMemory({"results": []})
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=FakeSeenStore,
             complete=lambda *_: _fake_completion_response("On it."),
@@ -505,6 +527,7 @@ class TestWhatsAppWebhookHandler:
 
         sent: list[dict[str, object]] = []
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: FailingMemory({"results": []}),
             open_seen_messages=lambda: seen,
             complete=lambda *_: _fake_completion_response("Still delivered."),
@@ -521,6 +544,7 @@ class TestWhatsAppWebhookHandler:
         memory = FakeMemory([])
         seen = FakeSeenStore()
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=lambda: seen,
             complete=lambda *_: (_ for _ in ()).throw(RuntimeError("provider is down")),
@@ -548,6 +572,7 @@ class TestWhatsAppVoiceNotes:
             return _fake_completion_response("Sunny all week.")
 
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: memory,
             open_seen_messages=lambda: seen,
             complete=fake_complete,
@@ -586,6 +611,7 @@ class TestWhatsAppVoiceNotes:
             return _fake_completion_response("Sure thing.")
 
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: FakeMemory([]),
             open_seen_messages=FakeSeenStore,
             complete=fake_complete,
@@ -610,6 +636,7 @@ class TestWhatsAppVoiceNotes:
             return _fake_completion_response("Sure thing.")
 
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: FakeMemory([]),
             open_seen_messages=FakeSeenStore,
             complete=fake_complete,
@@ -625,6 +652,7 @@ class TestWhatsAppVoiceNotes:
 
     def test_a_voice_note_that_transcribes_to_nothing_is_a_silent_no_op(self) -> None:
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: pytest.fail("must not recall for a blank transcript"),
             open_seen_messages=FakeSeenStore,
             download_media=lambda media_id: (b"ogg-bytes", "audio/ogg"),
@@ -642,6 +670,7 @@ class TestWhatsAppVoiceNotes:
             raise RuntimeError("whisper-server not reachable")
 
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: pytest.fail("must not recall when transcription fails"),
             open_seen_messages=lambda: seen,
             download_media=lambda media_id: (b"ogg-bytes", "audio/ogg"),
@@ -656,6 +685,7 @@ class TestWhatsAppVoiceNotes:
 
     def test_a_text_message_still_uses_the_text_sender_not_the_voice_sender(self) -> None:
         handler = build_whatsapp_webhook_handler(
+            handle_commands=False,
             open_memory=lambda: FakeMemory([]),
             open_seen_messages=FakeSeenStore,
             complete=lambda *_: _fake_completion_response("Hi."),
@@ -698,3 +728,299 @@ class TestSeenMessageStore:
             store.close()
 
         assert (tmp_path / "custom-memory.seen-messages.db").exists()
+
+
+# --- the command producer ----------------------------------------------------
+#
+# Blueprint 4.4, laptop scope: a message that is a command enqueues a job on
+# Ali's closed allowlist and says so. Everything else is untouched. The
+# classifier itself is covered in tests/executor/test_command_intent.py; what
+# is proved here is the wiring — that a verdict becomes (or does not become) a
+# real job, and that every branch ends in a reply.
+
+
+class FakePendingStore:
+    def __init__(self) -> None:
+        self.pending: dict[str, PendingConfirmation] = {}
+        self.cleared: list[str] = []
+
+    def remember(self, sender, verdict, *, now=None):
+        self.pending[sender] = PendingConfirmation(
+            sender=sender,
+            kind=verdict.kind,
+            payload=dict(verdict.payload),
+            summary=verdict.summary,
+            asked_at=now or datetime.now(UTC),
+        )
+
+    def take(self, sender, *, now=None):
+        return self.pending.pop(sender, None)
+
+    def clear(self, sender) -> None:
+        self.cleared.append(sender)
+        self.pending.pop(sender, None)
+
+    def __enter__(self) -> "FakePendingStore":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        pass
+
+
+class FakeEnqueuer:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def __call__(self, kind, payload):
+        self.calls.append((kind, dict(payload)))
+        return SimpleNamespace(id=f"job-{len(self.calls)}")
+
+
+def _action(**overrides) -> CommandVerdict:
+    base = dict(
+        decision="action",
+        kind="system_control",
+        payload={"action": "wifi.set_enabled", "args": {"enabled": False}},
+        summary="turn wifi off",
+        needs_confirmation=False,
+    )
+    base.update(overrides)
+    return CommandVerdict(**base)
+
+
+class TestWhatsAppCommands:
+    def _handler(self, verdict, *, enqueuer, pending, sent, memory=None, **kwargs):
+        return build_whatsapp_webhook_handler(
+            open_memory=lambda: memory or FakeMemory([]),
+            open_seen_messages=FakeSeenStore,
+            open_pending_confirmations=lambda: pending,
+            classify=(verdict if callable(verdict) else lambda text: verdict),
+            enqueue_action=enqueuer,
+            complete=lambda *_: _fake_completion_response("conversational reply"),
+            send_text_message=lambda **sent_kwargs: sent.append(sent_kwargs) or "wamid.reply",
+            show_typing_indicator=lambda **_: None,
+            write_memory=False,
+            **kwargs,
+        )
+
+    def test_an_allowlisted_command_is_enqueued_with_the_handlers_payload(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        handler = self._handler(_action(), enqueuer=enqueuer, pending=pending, sent=sent)
+
+        handler(_job(_text_message_payload(text="turn wifi off")))
+
+        assert enqueuer.calls == [
+            ("system_control", {"action": "wifi.set_enabled", "args": {"enabled": False}})
+        ]
+        assert sent == [{"to": "15550001111", "text": "On it: turn wifi off. Queued as job job-1."}]
+
+    def test_a_zoom_join_is_enqueued_as_its_own_kind(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        verdict = _action(
+            kind="zoom_join_meeting", payload={"meeting_id": "1234567890"}, summary="join your zoom"
+        )
+        handler = self._handler(verdict, enqueuer=enqueuer, pending=pending, sent=sent)
+
+        handler(_job(_text_message_payload(text="join my zoom meeting")))
+
+        assert enqueuer.calls == [("zoom_join_meeting", {"meeting_id": "1234567890"})]
+
+    def test_a_non_command_leaves_the_conversational_path_untouched(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        memory = FakeMemory([])
+        handler = self._handler(
+            CONVERSATION, enqueuer=enqueuer, pending=pending, sent=sent, memory=memory
+        )
+
+        handler(_job(_text_message_payload(text="how are you")))
+
+        assert enqueuer.calls == []
+        assert sent == [{"to": "15550001111", "text": "conversational reply"}]
+        assert memory.recall_calls  # recall still ran, exactly as before
+
+    def test_a_refused_kind_replies_and_enqueues_nothing(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        verdict = CommandVerdict(
+            decision="refuse", kind="flp_sort", refusal="that one needs a convention first"
+        )
+        handler = self._handler(verdict, enqueuer=enqueuer, pending=pending, sent=sent)
+
+        handler(_job(_text_message_payload(text="sort out my flp")))
+
+        assert enqueuer.calls == []
+        assert sent == [
+            {"to": "15550001111", "text": "I can't do that one — that one needs a convention first."}
+        ]
+
+    def test_a_destructive_command_asks_first_and_enqueues_nothing(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        verdict = _action(
+            payload={"action": "process.kill", "args": {"name": "chrome.exe"}},
+            summary="kill chrome",
+            needs_confirmation=True,
+        )
+        handler = self._handler(verdict, enqueuer=enqueuer, pending=pending, sent=sent)
+
+        handler(_job(_text_message_payload(text="kill chrome")))
+
+        assert enqueuer.calls == []
+        assert sent == [
+            {
+                "to": "15550001111",
+                "text": "kill chrome — that one I'd rather confirm first. Reply yes and I'll do it.",
+            }
+        ]
+        assert pending.pending["15550001111"].payload == {
+            "action": "process.kill",
+            "args": {"name": "chrome.exe"},
+        }
+
+    def test_a_yes_runs_the_pending_action(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        pending.remember("15550001111", _action(summary="kill chrome", needs_confirmation=True))
+        handler = self._handler(
+            lambda text: pytest.fail("a confirmation must not be re-classified"),
+            enqueuer=enqueuer,
+            pending=pending,
+            sent=sent,
+        )
+
+        handler(_job(_text_message_payload(text="yes", message_id="wamid.yes")))
+
+        assert enqueuer.calls == [
+            ("system_control", {"action": "wifi.set_enabled", "args": {"enabled": False}})
+        ]
+        assert sent == [{"to": "15550001111", "text": "On it: kill chrome. Queued as job job-1."}]
+
+    def test_a_no_cancels_the_pending_action(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        pending.remember("15550001111", _action(summary="kill chrome", needs_confirmation=True))
+        handler = self._handler(
+            lambda text: pytest.fail("a cancellation must not be re-classified"),
+            enqueuer=enqueuer,
+            pending=pending,
+            sent=sent,
+        )
+
+        handler(_job(_text_message_payload(text="no", message_id="wamid.no")))
+
+        assert enqueuer.calls == []
+        assert sent == [{"to": "15550001111", "text": "Cancelled — I won't kill chrome."}]
+        assert "15550001111" not in pending.pending
+
+    def test_a_bare_yes_with_nothing_pending_is_just_conversation(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        handler = self._handler(CONVERSATION, enqueuer=enqueuer, pending=pending, sent=sent)
+
+        handler(_job(_text_message_payload(text="yes")))
+
+        assert enqueuer.calls == []
+        assert sent == [{"to": "15550001111", "text": "conversational reply"}]
+
+    def test_an_unrelated_message_retires_an_outstanding_confirmation(self) -> None:
+        """A yes later in the conversation must not reach back and fire it."""
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        pending.remember("15550001111", _action(summary="kill chrome", needs_confirmation=True))
+        handler = self._handler(CONVERSATION, enqueuer=enqueuer, pending=pending, sent=sent)
+
+        handler(_job(_text_message_payload(text="what is the weather")))
+
+        assert pending.pending == {}
+        assert pending.cleared == ["15550001111"]
+        assert enqueuer.calls == []
+
+    def test_a_command_reply_is_deduped_like_any_other_reply(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        seen = FakeSeenStore()
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: FakeMemory([]),
+            open_seen_messages=lambda: seen,
+            open_pending_confirmations=lambda: pending,
+            classify=lambda text: _action(),
+            enqueue_action=enqueuer,
+            complete=lambda *_: pytest.fail("a command must not route a conversational reply"),
+            send_text_message=lambda **kwargs: sent.append(kwargs) or "wamid.reply",
+            show_typing_indicator=lambda **_: None,
+            write_memory=False,
+        )
+
+        handler(_job(_text_message_payload(text="turn wifi off", message_id="wamid.cmd")))
+
+        assert seen.mark_sent_calls == ["wamid.cmd"]
+
+    def test_a_command_turn_is_remembered_when_memory_writes_are_on(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        memory = FakeMemory([])
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: memory,
+            open_seen_messages=FakeSeenStore,
+            open_pending_confirmations=lambda: pending,
+            classify=lambda text: _action(),
+            enqueue_action=enqueuer,
+            complete=lambda *_: pytest.fail("a command must not route a conversational reply"),
+            send_text_message=lambda **kwargs: sent.append(kwargs) or "wamid.reply",
+            show_typing_indicator=lambda **_: None,
+            write_memory=True,
+        )
+
+        handler(_job(_text_message_payload(text="turn wifi off")))
+
+        assert [text for text, _ in memory.remember_calls] == [
+            "turn wifi off",
+            "On it: turn wifi off. Queued as job job-1.",
+        ]
+
+    def test_a_spoken_command_gets_a_spoken_reply_without_a_job_id_read_aloud(self) -> None:
+        enqueuer, pending = FakeEnqueuer(), FakePendingStore()
+        synthesised: list[str] = []
+        voice_sent: list[dict[str, object]] = []
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: FakeMemory([]),
+            open_seen_messages=FakeSeenStore,
+            open_pending_confirmations=lambda: pending,
+            classify=lambda text: _action(),
+            enqueue_action=enqueuer,
+            complete=lambda *_: pytest.fail("a command must not route a conversational reply"),
+            send_text_message=lambda **_: pytest.fail("a voice note must be answered by voice"),
+            show_typing_indicator=lambda **_: None,
+            download_media=lambda media_id: (b"ogg-bytes", "audio/ogg"),
+            transcribe_audio=lambda audio: "turn wifi off",
+            synthesize_voice_reply=lambda text: synthesised.append(text) or b"reply-ogg",
+            send_voice_note=lambda **kwargs: voice_sent.append(kwargs) or "wamid.voicereply",
+            write_memory=False,
+        )
+
+        handler(_job(_audio_message_payload()))
+
+        assert enqueuer.calls == [
+            ("system_control", {"action": "wifi.set_enabled", "args": {"enabled": False}})
+        ]
+        assert synthesised == ["On it: turn wifi off."]
+        assert "job-1" not in synthesised[0]
+        assert voice_sent == [{"to": "15550001111", "audio": b"reply-ogg"}]
+
+    def test_the_env_switch_turns_the_whole_producer_off(self) -> None:
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        handler = build_whatsapp_webhook_handler(
+            open_memory=lambda: FakeMemory([]),
+            open_seen_messages=FakeSeenStore,
+            open_pending_confirmations=lambda: pytest.fail("must not be consulted"),
+            classify=lambda text: pytest.fail("classification must not run"),
+            enqueue_action=enqueuer,
+            complete=lambda *_: _fake_completion_response("conversational reply"),
+            send_text_message=lambda **kwargs: sent.append(kwargs) or "wamid.reply",
+            show_typing_indicator=lambda **_: None,
+            write_memory=False,
+            handle_commands=False,
+        )
+
+        handler(_job(_text_message_payload(text="turn wifi off")))
+
+        assert enqueuer.calls == []
+        assert sent == [{"to": "15550001111", "text": "conversational reply"}]
+
+    def test_commands_are_on_by_default_and_the_env_var_turns_them_off(self) -> None:
+        assert commands_enabled({}) is True
+        assert commands_enabled({"JARVIS_WHATSAPP_COMMANDS": "1"}) is True
+        assert commands_enabled({"JARVIS_WHATSAPP_COMMANDS": "0"}) is False
+        assert commands_enabled({"JARVIS_WHATSAPP_COMMANDS": "off"}) is False

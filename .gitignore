@@ -11,6 +11,7 @@ memory.db
 memory.db-*
 *.mem0-history.db
 *.seen-messages.db
+*.pending-actions.db
 
 # pytest scratch and cache. The system TEMP directory is locked down on this
 # machine, so every run is forced to --basetemp here (see CLAUDE.md). Lanes use

@@ -8,29 +8,30 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `0ff4e1a Give the four orphaned job kinds a worker that can actually claim them` on `main`, 1 ahead, 0 behind origin.
+**HEAD** `31c1c64 Add the job replay harness and the blueprint's facts check` on `main`, 2 ahead, 0 behind origin.
 
-**Working tree:** 10 changed (plus 4 untracked)
+**Working tree:** 10 changed (plus 3 untracked)
 
 ```
-  M docs/board/tasks/enqueue-classifier.md
-  M  docs/board/tasks/facts-check-tool.md
-  M  docs/board/tasks/replay-harness.md
-  A  docs/tasks/facts-check-reports/2026-09-02.md
-   M executor/handlers/whatsapp.py
-   M tests/executor/test_whatsapp_handler.py
-  A  tests/tools/test_facts_check.py
-  A  tests/tools/test_replay_job.py
-  A  tools/facts_check.py
-  A  tools/replay_job.py
+  M  .gitignore
+  M  docs/board/README.md
+  M  docs/board/tasks/enqueue-classifier.md
+  M  docs/context.md
+  M  docs/state.md
+  A  docs/tasks/enqueue-classifier-crosslane-note.md
+  A  executor/handlers/command_intent.py
+  M  executor/handlers/whatsapp.py
+  A  tests/executor/test_command_intent.py
+  M  tests/executor/test_whatsapp_handler.py
 ```
 
-**Offline suite:** 1129 passed, 9 deselected, 2 warnings in 53.51s _(recorded 2026-09-02)_
+**Offline suite:** 1129 passed, 9 deselected, 2 warnings in 50.02s _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `31c1c64` Add the job replay harness and the blueprint's facts check  _(2026-09-02)_
 - `0ff4e1a` Give the four orphaned job kinds a worker that can actually claim them  _(2026-09-02)_
 - `e4129df` Fold Ali's ten answers into the board, blueprint and state  _(2026-09-01)_
 - `94551a3` Replace plan.md with a self-serve work board under docs/board/  _(2026-09-01)_
@@ -38,32 +39,37 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `3695c05` Cover three untested voice CLIs, make the schema drift detector able to fail, and reconcile the docs  _(2026-09-01)_
 - `52e2c03` push  _(2026-09-01)_
 - `37c51d4` Fix two live-verification bugs: wrong whisper-server binary, and force voice replies to stay in English  _(2026-08-31)_
-- `51e3a84` Wire voice notes into the WhatsApp handler and run whisper-server as a managed process  _(2026-08-30)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-**Board is running itself.** Work the NEXT order in `docs/board/README.md`;
-do not ask what is next. `action-worker` is done — three workers now, and the
-four action job kinds have a consumer for the first time. `enqueue-classifier`
-came off the blocked list with it and is the top `ready` item.
+**Phase 2's producer/consumer gap is closed.** `action-worker` gave the four
+action job kinds a poller (committed, `0ff4e1a`); `enqueue-classifier` gave
+`system_control` and `zoom_join_meeting` a producer, live-verified end to end
+on 2 Sep. Work the NEXT order in `docs/board/README.md`; do not ask what next.
 
-**Three things are the user's, and only these:**
+**One integration hold.** `enqueue-classifier` is finished and green in
+isolation but uncommitted: it broke one test in the `replay-harness` lane's
+still-uncommitted files, which that lane holds a claim on. Reported, not
+touched — `docs/tasks/enqueue-classifier-crosslane-note.md` has the one-line
+fix. Nothing in git is red.
 
-- **Q12 — drop Pipecat from the desk loop?** `voice-loop` stopped before
-  writing a line, on its own Constraints clause. Recommendation and the
-  consult are in `QUESTIONS.md`. This blocks `voice-loop` and
-  `voice-command-ingress` behind it.
-- **Q11** — how long the router's new "verification window" is. Blocks only
+**Three things are Ali's, and only these:**
+
+- **Q12 — drop Pipecat from the desk loop?** Blocks `voice-loop` and
+  `voice-command-ingress` behind it. Recommendation and consult filed.
+- **Q11** — how long the router's "verification window" is. Blocks only
   `router-eligibility-window`.
-- **U2** — the five model IDs are still absent as key names in `.env`. Ali
-  said "pasted"; a name-only check found none. `live-routing-probe` stays
-  blocked until they land.
+- **U2** — the five model IDs are still absent as key names in `.env`. This is
+  now costing something real: the router falls back to `openrouter/free`,
+  which returned `User Safety: safe` instead of JSON on two of four classifier
+  probes. Commands fail safe (they read as chat) but work only as reliably as
+  that rung. `live-routing-probe` stays blocked.
 
-**Standing constraint:** the FLP writing half stays unbuilt — no
-mixer-sorting convention exists and the placeholder ruleset is unapproved;
-see `docs/board/PARKED.md`. Reading `.flp`s is fine.
+**Standing constraint:** the FLP writing half stays unbuilt — no mixer-sorting
+convention exists and the placeholder ruleset is unapproved; see
+`docs/board/PARKED.md`. Reading `.flp`s is fine.
 
 ## Where facts go
 

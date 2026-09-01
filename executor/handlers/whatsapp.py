@@ -27,7 +27,19 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from bus.whatsapp_client import WhatsAppClient, WhatsAppClientConfig
-from db.jobs import Job
+from db.jobs import Job, enqueue
+from executor.handlers.command_intent import (
+    CommandVerdict,
+    PendingConfirmationStore,
+    cancelled_reply,
+    classify_command,
+    confirmation_request,
+    is_affirmative,
+    is_negative,
+    open_default_pending_confirmation_store,
+    queued_reply,
+    refusal_reply,
+)
 from memory.conversation import ConversationMemory, open_conversation_memory
 from router import RoutedResult, route
 
@@ -171,6 +183,9 @@ def open_default_seen_message_store(*, environ: Mapping[str, str] | None = None)
 
 MemoryOpener = Callable[[], ConversationMemory]
 SeenStoreOpener = Callable[[], SeenMessageStore]
+PendingStoreOpener = Callable[[], PendingConfirmationStore]
+CommandClassifier = Callable[[str], CommandVerdict]
+ActionEnqueuer = Callable[[str, Mapping[str, Any]], Job]
 Completion = Callable[[str, Sequence[Mapping[str, Any]]], RoutedResult]
 Sender = Callable[..., str]
 TypingIndicator = Callable[..., None]
@@ -195,6 +210,19 @@ def memory_writes_enabled(environ: Mapping[str, str] | None = None) -> bool:
     return settings.get("JARVIS_MEMORY_WRITES", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def commands_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether inbound messages may enqueue action jobs.
+
+    Default **on**: Ali answered Q1 "yes, with the recommended per-kind
+    allowlist" on 1 September 2026. ``JARVIS_WHATSAPP_COMMANDS=0`` turns the
+    whole producer off in one place without touching the allowlist, which is
+    what to reach for if the classifier ever starts misreading messages —
+    replies keep working, actions simply stop being enqueued.
+    """
+    settings = os.environ if environ is None else environ
+    return settings.get("JARVIS_WHATSAPP_COMMANDS", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def build_whatsapp_webhook_handler(
     *,
     open_memory: MemoryOpener = open_conversation_memory,
@@ -207,6 +235,10 @@ def build_whatsapp_webhook_handler(
     synthesize_voice_reply: VoiceSynthesizer | None = None,
     send_voice_note: Sender | None = None,
     write_memory: bool | None = None,
+    open_pending_confirmations: PendingStoreOpener = open_default_pending_confirmation_store,
+    classify: CommandClassifier | None = None,
+    enqueue_action: ActionEnqueuer | None = None,
+    handle_commands: bool | None = None,
 ) -> Callable[[Job], None]:
     """Return a plain ``JobHandler`` closure wiring cue -> recall -> route -> send -> remember.
 
@@ -266,6 +298,76 @@ def build_whatsapp_webhook_handler(
     voice_synthesizer = synthesize_voice_reply or _default_synthesize_voice_reply
     voice_sender = send_voice_note or _default_send_voice_note
     write_memory = memory_writes_enabled() if write_memory is None else write_memory
+    action_enqueuer = enqueue_action or (lambda kind, payload: enqueue(kind, dict(payload)))
+    classifier = classify or (lambda text: classify_command(text, complete=completion))
+    commands_on = commands_enabled() if handle_commands is None else handle_commands
+
+    def _command_reply(sender: str, text: str, *, spoken: bool) -> str | None:
+        """The reply if this message was a command or a confirmation, else ``None``.
+
+        ``None`` means "not mine" and sends the message down the unchanged
+        conversational path. Every other return value is a reply that must be
+        delivered — a command that produces silence is indistinguishable from
+        a broken executor, which is the failure this path exists to avoid.
+        """
+        with open_pending_confirmations() as pending_store:
+            if is_negative(text):
+                pending = pending_store.take(sender)
+                return cancelled_reply(pending.summary) if pending is not None else None
+            if is_affirmative(text):
+                pending = pending_store.take(sender)
+                if pending is None:
+                    # A bare "yes" answering something conversational. Nothing
+                    # is pending, so nothing runs.
+                    return None
+                job = action_enqueuer(pending.kind, pending.payload)
+                logger.info(
+                    "confirmed action enqueued (kind=%s, job=%s)", pending.kind, job.id
+                )
+                return queued_reply(pending.summary, job.id, spoken=spoken)
+            # Any other message retires an outstanding confirmation. Ali has
+            # moved on; a "yes" later in the conversation must not reach back
+            # and fire something he was no longer talking about.
+            pending_store.clear(sender)
+
+            verdict = classifier(text)
+            if verdict.is_refusal:
+                return refusal_reply(verdict.refusal)
+            if not verdict.is_action:
+                return None
+            if verdict.needs_confirmation:
+                pending_store.remember(sender, verdict)
+                return confirmation_request(verdict.summary)
+
+        job = action_enqueuer(verdict.kind, verdict.payload)
+        logger.info("action enqueued from message (kind=%s, job=%s)", verdict.kind, job.id)
+        return queued_reply(verdict.summary, job.id, spoken=spoken)
+
+    def _deliver(
+        inbound: InboundMessage, reply: str, message_text: str, *, is_voice: bool, job_id: str
+    ) -> None:
+        """Send a command reply, dedupe it, and store the turn.
+
+        Same order and same reasoning as the conversational path below: reply
+        first, then persist, because no storage problem may delay or discard a
+        reply the user is waiting on.
+        """
+        if is_voice:
+            voice_sender(to=inbound.sender, audio=voice_synthesizer(reply))
+        else:
+            sender(to=inbound.sender, text=reply)
+        with open_seen_messages() as seen:
+            seen.mark_sent(inbound.message_id)
+        if not write_memory:
+            return
+        try:
+            with open_memory() as memory:
+                memory.remember_turn(message_text, user_id=inbound.sender, role="user")
+                memory.remember_turn(reply, user_id=inbound.sender, role="assistant")
+        except Exception as exc:
+            logger.warning(
+                "command reply sent but memory write failed (job=%s, %s)", job_id, type(exc).__name__
+            )
 
     def handle(job: Job) -> None:
         inbound = parse_inbound_message(job.payload)
@@ -316,6 +418,16 @@ def build_whatsapp_webhook_handler(
             message_text = message_text.strip()
         else:
             message_text = inbound.text
+
+        # Commands are decided before recall/routing, and on the transcript
+        # rather than the audio, so a spoken "turn wifi off" is the same
+        # command a typed one is. A message that is not a command returns
+        # None here and goes down the conversational path untouched.
+        if commands_on:
+            command_reply = _command_reply(inbound.sender, message_text, spoken=is_voice)
+            if command_reply is not None:
+                _deliver(inbound, command_reply, message_text, is_voice=is_voice, job_id=job.id)
+                return
 
         with open_memory() as memory:
             recalled = memory.recall(message_text, user_id=inbound.sender)
