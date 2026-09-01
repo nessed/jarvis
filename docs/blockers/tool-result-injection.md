@@ -328,6 +328,7 @@ evidence that they are — they were emitted as one unit.
 | 25 Aug 2026 | no | plan-mode claim only | not recorded |
 | 27 Aug 2026 | no | plan-mode claim + tooling directive, reported as one | read-only process enumeration |
 | 1 Sep 2026 | no | both, verbatim, one message | read-only `Read` + `git status` |
+| 1 Sep 2026 (2nd, board-rebuild session) | no | both, verbatim, one message | read-only 3-file `Read` batch |
 
 **Effect on the hypotheses.**
 

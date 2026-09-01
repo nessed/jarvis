@@ -66,7 +66,7 @@ stop regardless of how obvious the substitution seems.
 - Before any multi-part task, decompose the work and identify independent
   lanes. Use sequential work only for genuine dependencies.
 - Dispatch independent work to subagents. Avoid serializing work that has
-  disjoint ownership.
+  disjoint ownership. Subagent lanes run on **Opus 5** (Ali, 1 Sep 2026).
 - Do not decompose work that is smaller than the decomposition. If a unit
   touches at most two files and has no sibling lane running beside it, do it
   inline — no brief, no dispatch. A brief that takes longer to write than the
@@ -95,6 +95,14 @@ stop regardless of how obvious the substitution seems.
 
 ## How we work
 
+- **The board decides what is next, not the user.** `docs/board/README.md`
+  holds the loop: take the first `ready` task in NEXT, claim it, follow its
+  guide, verify, mark it with evidence, take the next. "What should I work
+  on?" is never a question for the user — if the board has nothing `ready`,
+  run its `board-audit` task; if that finds nothing, write one batched
+  handoff. Decisions go to `docs/board/QUESTIONS.md` with a recommendation;
+  physical/account steps go to `docs/board/USER-TASKS.md`; neither is asked
+  about piecemeal. `docs/board/PARKED.md` items are never re-proposed.
 - **Claim before acting.** Before an agent edits any file or uses an exclusive
   resource, it runs `python tools/work_board_claim.py claim` with its role,
   work item, every path it will write, and every resource it will consume.

@@ -9,17 +9,24 @@ opening them as an optional first step.
 
 1. `docs/context.md` is what is in flight right now. Read it first. Its status
    block is generated, never hand-edited.
-2. `docs/state.md` is component status: what works, what is blocked, provider
+2. **`docs/board/README.md` is the task source.** If the user gave no
+   specific task, do not ask for one and do not scan the repo for ideas: run
+   the board's loop — pick the first `ready` task in NEXT, claim it, execute
+   its guide, verify, mark it, pick the next. Keep going until everything
+   left is `blocked`/USER, then write one batched handoff. Never re-surface
+   anything in `docs/board/PARKED.md` or an answered question.
+3. `docs/state.md` is component status: what works, what is blocked, provider
    rungs, account state. Read it when you need detail beyond the current task.
-3. `docs/history/` is the frozen archive. Append-only, never edited.
+4. `docs/history/` is the frozen archive. Append-only, never edited.
 
    Where a new fact goes is decided by how fast it goes stale. See "Where a
    fact goes" in `agents.md`. Never hand-maintain a commit list, an
    "uncommitted" claim, or a test count: those are generated.
-4. `docs/blueprint.md` is the technical spec. Provider pricing, rate limits,
+5. `docs/blueprint.md` is the technical spec. Provider pricing, rate limits,
    model names and free tiers in it are claims to re-verify. Architecture,
    component choices, dependency selection and phase ordering are decisions —
    never substitute one.
+6. Subagent lanes run on **Opus 5** (Ali's standing instruction, 1 Sep 2026).
 
 ## Non-negotiable
 
@@ -37,9 +44,11 @@ opening them as an optional first step.
 
 ## Parallel work board
 
-`docs/plan.md` is a planning index, not a mutable claim board. Before any lane
-edits files or uses an exclusive live resource, claim it atomically and release
-it after verification:
+Tasks live in `docs/board/` (see above). `docs/plan.md` holds the standing
+rules — exclusive resources, hot files, cross-lane test doubles — and is not
+a task list or a mutable claim board. Before any lane edits files or uses an
+exclusive live resource, claim it atomically and release it after
+verification:
 
 ```
 python tools/work_board_claim.py claim --role CORE --work-item ITEM --file PATH [--resource KEY]

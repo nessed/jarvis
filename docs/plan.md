@@ -1,21 +1,26 @@
-# JARVIS work board
+# JARVIS lane rules (former work board)
 
-Forward tier. What is left, what it touches, and what may run beside what.
-Mapped 27 Aug 2026 from a read-only snapshot at `628b6ea`. This is a planning
-index, not a live source of truth: re-check a job's paths and dependencies
-against the current tree before claiming it.
+**Superseded as a task source, 1 Sep 2026.** Tasks now live in
+`docs/board/` — start at `docs/board/README.md`. Nothing below this file's
+Rules section is current work: the job tables are a historical planning
+snapshot (27 Aug 2026, `628b6ea`) kept for their reasoning; everything
+still worth doing from them was carried onto the board, and everything
+deliberately not being done is in `docs/board/PARKED.md`.
+
+**What stays authoritative here:** the Rules — roles, exclusive resources,
+verification/live-route resources, the hot files, and the cross-lane
+test-double index. The board's tasks reference them; `board-audit` keeps
+the test-double line numbers honest.
 
 `context.md` is this week. `state.md` is now. `history/` is done.
-`blueprint.md` is decisions. **This file is next.**
+`blueprint.md` is decisions. **`docs/board/` is next.**
 
 ## How to use this
 
-You are one of two orchestrators. Before starting anything:
-
-1. Read **Rules** below. They override any job's own note.
-2. Pick a job, inspect its current paths, and atomically claim every file and
-   external resource it will change or consume. The claim tool is authoritative;
-   this document never records live claim state.
+1. Read **Rules** below. They override any task's own note.
+2. Before acting on a board task, atomically claim its task file and every
+   file and external resource it will change or consume. The claim tool is
+   authoritative; this document never records live claim state.
 3. Release the claim ID when verification is complete. If work is interrupted,
    it remains active until a later CLI operation finds it older than its stale
    timeout **and** its recorded process ID is no longer alive.
@@ -52,6 +57,13 @@ completion report.
   commits after it has claimed `git-commit`.
 
 ### Exclusive resources
+
+**Canonical resource keys** — the claim tool only collides identical
+strings, so spelling is load-bearing. Use exactly these: `git-commit`,
+`pre-commit`, `test-workspace`, `provider-account`, `meta-webhook`,
+`cloudflare-tunnel`, `ollama-embed` (tier one below), `ollama-extract`
+(tier two below), `microphone-speakers`, `live-jobs-table`. A new
+exclusive resource gets its key added here before first use.
 
 Files are not the only thing two agents collide on. These are exclusive
 regardless of file ownership. **None of the below is mechanically enforced by
@@ -556,17 +568,10 @@ defect. All Class C.
 
 ---
 
-## In flight, 1 September 2026
+## In flight
 
-Claimed on the work board. Check `work_board_claim.py list` before touching
-any of these paths.
-
-| lane | brief | owns |
-|---|---|---|
-| `voice-cli-tests` | `docs/tasks/voice-cli-tests.md` | `tests/voice/test_{try_stt,listen_wakeword,audition_voices}.py`, and DI seams only in the three matching `voice/*.py` modules |
-| `live-schema-drift-guard` | `docs/tasks/live-schema-drift-guard.md` | `tests/db/test_jobs_integration.py` |
-
-`voice-cli-tests` exists because `voice/try_stt.py` (183 lines) landed in
-`52e2c03` with **zero** test references anywhere in `tests/`, alongside
-`voice/listen_wakeword.py` (164) and `voice/audition_voices.py` (128). Every
-other module in `voice/` already has a test file.
+Nothing via this file anymore — live pickup state is
+`work_board_claim.py list` plus `in-progress` statuses under
+`docs/board/tasks/`. (The two lanes formerly listed here —
+`voice-cli-tests` and `live-schema-drift-guard` — both landed in
+`3695c05` and their claims are released.)
