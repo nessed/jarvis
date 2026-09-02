@@ -14,8 +14,11 @@ only when it has to.
 
 ## State
 
-Phase 3 of 6. Phases 0 and 1 are done; 2 and 3 are largely done and 3 has been
-verified end to end against real WhatsApp.
+Six phases. Phase 0 is complete and verified. Phase 3 has been verified end to
+end against real WhatsApp, voice included, which puts it further along than
+Phase 1 — memory works and is running, but nothing of mine has been ingested
+into it yet, and that's the part only I can start. Phase 2 waits on one
+decision of mine as well.
 
 Working:
 
@@ -24,15 +27,32 @@ Working:
   redelivery created a duplicate job in production.
 - Durable queue with atomic claim, checkpoint, complete, retry, backoff,
   per-job timeout and dead-letter. Both migrations are applied live.
-- Two independently supervised workers on the laptop: one only takes WhatsApp
-  messages, one only runs the slow background memory work. Neither can starve
-  the other.
-- Groq, Gemini, DeepSeek and OpenRouter in the router, free tiers first.
+- Three independently supervised workers on the laptop, each restricted to
+  its own job kinds so none can starve another: one takes WhatsApp messages,
+  one runs the slow background memory work, one runs desktop actions. The
+  third is optional — if it dies, replies keep working and only desktop
+  actions go unclaimed.
+- A router that orders rungs by what they cost before anything else — free,
+  then trial credit, then paid — and by measured latency within a tier. A rung
+  that answers 401/402/403 gets cooled down and surfaced; it can't quietly
+  hand the bill to a paid rung. Which rungs are usable is generated into
+  `docs/state.md`, not typed by hand.
 - Local memory, wired into conversations. A message recalls context, routes,
   replies, then stores the turn. Recalled memory is injected as a *user*
   message inside a fence, never as a system instruction — it used to be the
   latter, which meant anything a sender got remembered came back wearing my
   role.
+- **Messages become actions.** A WhatsApp message is classified, and an
+  allowlisted command becomes a real queued job that a worker claims and runs.
+  The model proposes and constants dispose: an action has to exist in the
+  handler's own table, and whether it needs confirmation is read from that
+  table, never from the model. Destructive ones ask first.
+- **An action says how it went.** You get "on it, queued as job X", then a
+  second message with the result — including when it failed or dead-lettered,
+  which is the case where silence was worst.
+- Memory distils itself in the background. Conversation turns get folded into
+  Mem0 facts by a self-re-enqueuing job chain that yields to live work, so a
+  55-second extraction can never sit in front of a reply.
 - **Voice, both directions.** A WhatsApp voice note is downloaded, decoded,
   transcribed locally on this laptop's NPU, and answered with a synthesised
   voice note. Confirmed working on my own phone.
@@ -48,18 +68,21 @@ Working:
 
 Not working yet:
 
-- **Most of the above has no way to be triggered.** `flp_sort`,
-  `system_control`, `zoom_join_meeting` and `whatsapp_desktop_send_message` are
-  all registered handlers, but the only two things that create jobs are the
-  WhatsApp webhook and the memory chain re-queuing itself. Nothing classifies
-  an incoming message into "sort my FLP" or "join this Zoom". That classifier
-  is the next real piece of work.
+- **`flp_sort` still has no producer.** The classifier that turns a message
+  into a job deliberately allowlists only `system_control` and
+  `zoom_join_meeting`; FL Studio sorting is excluded on purpose, because I
+  haven't dictated the mixer-sorting convention it would follow. Asking gets a
+  refusal with a reason rather than silence.
+- **Nobody has watched the two-message reply arrive on a real phone.** The
+  machine half is proved end to end against the live queue — a real job
+  produced a real outcome row — but the part with my thumb in it isn't.
 - The Meta app is unpublished, so only test messages get delivered.
-- Cerebras returns 402, Mistral returns 403. Both are in the router, neither
-  can take work.
-- Five providers have no model ID set in `.env`, so those rungs can't serve a
-  request. It fails safe — the router logs it and falls through — but they
-  aren't usable.
+- Three rungs are configured and can't serve a request, because their model
+  ID isn't in `.env`: Groq, Cerebras and Gemini. That leaves OpenRouter,
+  Mistral and DeepSeek as the whole ladder. They no longer fail quietly —
+  a rung that can't name a model is kept out of the running order entirely and
+  says which variable would fix it. Cerebras is a trial credit now rather than
+  a free tier, and its own value is deliberately blank.
 - The tunnel is a Cloudflare Quick Tunnel, so the URL dies whenever cloudflared
   or the laptop stops. The launcher mints a new one and re-points Meta
   automatically, but nothing receives messages while the laptop is off.
@@ -137,7 +160,7 @@ commit if anything is red.
 ## Tests
 
 ```
-.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp
+.venv\Scripts\python.exe -m pytest -q
 ```
 
 That's the offline suite. No network, deterministic, and it has to pass before
@@ -145,10 +168,20 @@ anything gets committed. Anything needing a real service — Supabase, Ollama,
 Meta, a GUI app, the FL Studio sandbox — sits behind a pytest marker and is
 deselected by default, so there is nothing to remember to exclude.
 
-The two extra flags aren't optional on my machine — the system TEMP directory
-is locked down, and pytest's default cache and scratch directories land there
-and die with `PermissionError` without them. The pre-commit hook uses the same
-form. If you're on a normal setup, a bare `pytest -q` works fine.
+"No network" is enforced, not hoped for: a fixture fails any test in the
+default suite that resolves a host off this machine. Loopback stays open, so
+Ollama and the local speech server still work. Five tests were quietly
+building a live Supabase client they never used, which meant a bad connection
+turned the commit gate red and looked like a regression in whatever else had
+changed that hour.
+
+It used to need two extra flags on my machine, because the system TEMP
+directory is locked down and `.pytest_cache` is owned by another Windows
+account. Those live in `pytest.ini` and `conftest.py` now, so a bare run works
+here and on a normal setup alike. A fixed `--basetemp` is deliberately *not*
+among them: pytest empties it at session start, so two terminals running the
+suite at once delete each other's temp files, which reads exactly like a flaky
+suite and isn't one.
 
 ```
 .venv\Scripts\python.exe -m pytest -q -m live tests/live

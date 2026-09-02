@@ -8,20 +8,22 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `ba80f71 Keep the commit gate off the internet` on `main`, 9 ahead, 0 behind origin.
+**HEAD** `669b47b Write this week's handoff` on `main`, in sync with origin.
 
-**Working tree:** 1 changed
+**Working tree:** 2 changed
 
 ```
-  M  docs/board/HANDOFF.md
+  M  README.md
+  M  docs/context.md
 ```
 
-**Offline suite:** 1367 passed, 9 deselected in 37.81s _(recorded 2026-09-03)_
+**Offline suite:** [32m[32m[1m1367 passed[0m, [33m9 deselected[0m[32m in 41.40s[0m[0m _(recorded 2026-09-03)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `669b47b` Write this week's handoff  _(2026-09-03)_
 - `ba80f71` Keep the commit gate off the internet  _(2026-09-03)_
 - `7647c67` Audit the board, and find backfill blocked on a contradiction  _(2026-09-03)_
 - `ec8ae8e` Let a bare pytest work, and stop two lanes deleting each other's temp files  _(2026-09-03)_
@@ -29,7 +31,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `d8b1970` Order the ladder by what a rung costs, then by how fast it actually is  _(2026-09-03)_
 - `d57beb0` Keep a rung that cannot name a model out of the ladder  _(2026-09-02)_
 - `210e07d` Stop a denied rung from quietly handing the bill to a paid one  _(2026-09-02)_
-- `fa3365a` Say what the action did, not just that it queued  _(2026-09-02)_
 
 <!-- END GENERATED -->
 
