@@ -8,31 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `843bc26 ok` on `main`, in sync with origin.
+**HEAD** `bf9efc5 Restart the distill chain, and stop one outage becoming eighty-four rows` on `main`, 1 ahead, 0 behind origin.
 
-**Working tree:** 12 changed
+**Working tree:** 18 changed
 
 ```
-  M  docs/board/QUESTIONS.md
   M  docs/board/README.md
   M  docs/board/USER-TASKS.md
-  M  docs/board/tasks/distill-chain-stall.md
+  M  docs/board/tasks/action-outcome-reply.md
+  A  docs/consults/2026-09-02-action-outcome-reply-shape/prompt.md
+  A  docs/consults/2026-09-02-action-outcome-reply-shape/response.md
+  A  docs/consults/2026-09-02-action-outcome-reply-shape/verdict.json
   M  docs/context.md
   M  docs/state.md
-  M  executor/handlers/distill.py
-  M  executor/poller.py
-  M  memory/embeddings.py
-  M  tests/executor/test_distill_handler.py
-  M  tests/executor/test_poller.py
-  M  tests/memory/test_embeddings.py
+  M  executor/app_automation/handler.py
+  A  executor/handlers/outcome.py
+  M  executor/handlers/whatsapp.py
+  A  executor/notify.py
+  ...and 6 more
 ```
 
-**Offline suite:** 1297 passed, 9 deselected, 10 warnings in 68.46s (0:01:08) _(recorded 2026-09-02)_
+**Offline suite:** 1318 passed, 9 deselected, 10 warnings in 68.86s (0:01:08) _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `bf9efc5` Restart the distill chain, and stop one outage becoming eighty-four rows  _(2026-09-02)_
 - `843bc26` ok  _(2026-09-02)_
 - `89cba3f` Rebuild NEXT from the task files, and file what the day turned up  _(2026-09-02)_
 - `be19942` Give voice a cloud STT tier, and the database a migration runner  _(2026-09-02)_
@@ -40,23 +42,23 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `10c736c` Make the multi-session workflow enforce itself  _(2026-09-02)_
 - `c4cc48d` Make the inspector read the two .flp files PyFLP gives up on  _(2026-09-02)_
 - `6bd3ad4` Apply Ali's blueprint corrections, and keep one line the audit was wrong about  _(2026-09-02)_
-- `10be80b` Give the router a ledger that outlives one call, and let /status see it  _(2026-09-02)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-**Work the NEXT order in `docs/board/README.md`.** Memory is no longer the
-broken system: `distill-chain-stall` closed the evening of 2 Sep and the
-distill chain has completed seven live jobs since. Everything `ready` is now
-the router.
+**Work the NEXT order in `docs/board/README.md`.** Two systems closed the
+evening of 2 Sep: memory (`distill-chain-stall`, seven live jobs since) and
+action outcomes (`action-outcome-reply`). Everything `ready` is now the router.
 
-**Five things are Ali's, and only these** (details in `QUESTIONS.md` /
+**Six things are Ali's, and only these** (details in `QUESTIONS.md` /
 `USER-TASKS.md`, all with recommendations):
 
 - **U13** — one `git config --global --add safe.directory` line. `.git` is
   owned by another Windows account, so *every* git command fails and four
   `test_context_status.py` tests fail with it.
+- **U14** — send one WhatsApp command, confirm **two** replies arrive. The
+  machine half is proved live; the thumb half is not.
 - **Q12** — drop Pipecat from the desk loop? Blocks `voice-loop`.
 - **Q11** — how long is the router's verification window?
 - **U2** — the five model IDs still are not in `.env`. The ladder collapses

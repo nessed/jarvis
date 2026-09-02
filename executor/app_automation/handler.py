@@ -27,6 +27,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from executor import notify
 from executor.app_automation import WindowConnector
 from executor.app_automation.whatsapp_desktop import WhatsAppMessageTarget, build_send_message
 from executor.app_automation.zoom import ZoomMeetingTarget, join_meeting
@@ -103,10 +104,20 @@ def build_app_automation_handler(
     def _handle(job: Any) -> None:
         if job.kind == ZOOM_JOIN_MEETING_JOB_KIND:
             _handle_zoom_join(job, connector, open_zoom_url)
+            detail = "joined the Zoom meeting"
         elif job.kind == WHATSAPP_DESKTOP_SEND_MESSAGE_JOB_KIND:
             _handle_whatsapp_send(job, send_whatsapp_message)
+            detail = "sent it on WhatsApp Desktop"
         else:
             raise UnknownAppAutomationJobKind(job.kind)
+        # Neither of these returns anything meaningful -- they are both pure
+        # side effects -- so unlike system_control there is nothing to render.
+        # The value here is confirmation that it happened at all, which is
+        # exactly what a UIA action cannot otherwise prove to the person who
+        # asked for it. Never echoes the payload: the message text and chat
+        # name came from the user and would be quoting them back at
+        # themselves. See executor/notify.py.
+        notify.enqueue_outcome(job, status=notify.STATUS_OK, detail=detail)
 
     return _handle
 

@@ -40,6 +40,8 @@ from executor.handlers.command_intent import (
     queued_reply,
     refusal_reply,
 )
+from executor.handlers.outcome import WHATSAPP_OUTCOME_JOB_KIND
+from executor.notify import NOTIFY_FIELD, notify_descriptor
 from memory.conversation import ConversationMemory, open_conversation_memory
 from router import RoutedResult, route
 
@@ -185,6 +187,30 @@ MemoryOpener = Callable[[], ConversationMemory]
 SeenStoreOpener = Callable[[], SeenMessageStore]
 PendingStoreOpener = Callable[[], PendingConfirmationStore]
 CommandClassifier = Callable[[str], CommandVerdict]
+
+
+def _with_outcome_notice(
+    payload: Mapping[str, Any], reply_to: str, summary: str
+) -> dict[str, Any]:
+    """The action payload, plus "and tell this person how it went".
+
+    This is the only place that knows *who* is waiting, so it is the only
+    place that can say so. Everything downstream — the action handlers and
+    the poller's dead-letter path — reads a generic ``notify`` descriptor and
+    never learns that WhatsApp is involved. See ``executor/notify.py``.
+
+    The summary is carried so the outcome can quote the same words the user
+    was already told ("On it: turn wifi off"), which is what makes the two
+    messages read as one exchange. It is a phrase this system generated about
+    an action it is about to take, not conversation text, so it may travel
+    through the hosted queue.
+    """
+    return {
+        **dict(payload),
+        NOTIFY_FIELD: notify_descriptor(
+            WHATSAPP_OUTCOME_JOB_KIND, {"reply_to": reply_to, "summary": summary}
+        ),
+    }
 ActionEnqueuer = Callable[[str, Mapping[str, Any]], Job]
 Completion = Callable[[str, Sequence[Mapping[str, Any]]], RoutedResult]
 Sender = Callable[..., str]
@@ -326,7 +352,9 @@ def build_whatsapp_webhook_handler(
                     # A bare "yes" answering something conversational. Nothing
                     # is pending, so nothing runs.
                     return None
-                job = action_enqueuer(pending.kind, pending.payload)
+                job = action_enqueuer(
+                    pending.kind, _with_outcome_notice(pending.payload, sender, pending.summary)
+                )
                 logger.info(
                     "confirmed action enqueued (kind=%s, job=%s)", pending.kind, job.id
                 )
@@ -345,7 +373,9 @@ def build_whatsapp_webhook_handler(
                 pending_store.remember(sender, verdict)
                 return confirmation_request(verdict.summary)
 
-        job = action_enqueuer(verdict.kind, verdict.payload)
+        job = action_enqueuer(
+            verdict.kind, _with_outcome_notice(verdict.payload, sender, verdict.summary)
+        )
         logger.info("action enqueued from message (kind=%s, job=%s)", verdict.kind, job.id)
         return queued_reply(verdict.summary, job.id, spoken=spoken)
 

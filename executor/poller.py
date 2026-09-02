@@ -44,6 +44,11 @@ from executor.handlers.distill import (
 )
 from executor.handlers.whatsapp import build_whatsapp_webhook_handler
 from executor.heartbeat import clear as clear_heartbeat, touch as touch_heartbeat
+from executor import notify
+from executor.handlers.outcome import (
+    WHATSAPP_OUTCOME_JOB_KIND,
+    build_whatsapp_outcome_handler,
+)
 from executor.system_control.handler import build_system_control_handler
 from router import RoutedResult, current_shared_router, route
 from router.health_report import material_state, write as write_provider_health
@@ -98,6 +103,10 @@ _app_automation_handler = build_app_automation_handler()
 
 DEFAULT_HANDLERS: dict[str, HandlerRegistration] = {
     WHATSAPP_JOB_KIND: HandlerRegistration(build_whatsapp_webhook_handler()),
+    # Belongs to whatsapp-worker, not action-worker: it is the process that
+    # already holds the Graph client and token, and the action worker needs
+    # neither. See executor/handlers/outcome.py.
+    WHATSAPP_OUTCOME_JOB_KIND: HandlerRegistration(build_whatsapp_outcome_handler()),
     "flp_sort": HandlerRegistration(build_flp_sort_handler()),
     "system_control": HandlerRegistration(build_system_control_handler()),
     ZOOM_JOIN_MEETING_JOB_KIND: HandlerRegistration(_app_automation_handler),
@@ -221,19 +230,53 @@ def poll_once(
             type(exc).__name__,
             job.id,
         )
-        return fail(
-            job.id,
-            f"executor handler failed permanently ({_describe_failure(exc)})",
+        return _settled_failure(
+            job,
+            fail(
+                job.id,
+                f"executor handler failed permanently ({_describe_failure(exc)})",
+                repository=repository,
+            ),
+            _describe_failure(exc),
             repository=repository,
         )
     except Exception as exc:
-        return retry_or_dead_letter(
-            job.id,
-            f"executor handler failed ({_describe_failure(exc)})",
-            backoff_seconds(job.attempts),
+        return _settled_failure(
+            job,
+            retry_or_dead_letter(
+                job.id,
+                f"executor handler failed ({_describe_failure(exc)})",
+                backoff_seconds(job.attempts),
+                repository=repository,
+            ),
+            _describe_failure(exc),
             repository=repository,
         )
     return complete(job.id, repository=repository)
+
+
+def _settled_failure(
+    job: Job, outcome: Job, description: str, *, repository: JobRepository | None
+) -> Job:
+    """Notify on a job that has failed for the last time, then return it.
+
+    Silence is worst exactly here. A user who asked for something and got "on
+    it" is owed the bad news more than the good, and this is the only place
+    that knows the job has stopped being retried.
+
+    Two conditions, both load-bearing. **Terminal only:** a row that went back
+    to ``queued`` will run again, and a message per retry would be three
+    messages for one action. **Descriptor only:** ``enqueue_outcome`` is a
+    no-op unless the payload carries a notify descriptor, which is what keeps
+    this generic machinery from learning that WhatsApp exists — the poller
+    reads a payload field, and something else entirely decides what that field
+    means.
+    """
+    if getattr(outcome, "status", None) in {"failed", "dead_letter"}:
+        notify.enqueue_outcome(
+            job, status=notify.STATUS_FAILED, detail=description, repository=repository
+        )
+    return outcome
 
 
 def _describe_failure(exc: BaseException) -> str:

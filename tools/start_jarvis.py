@@ -365,6 +365,17 @@ ACTION_JOB_KINDS = (
     "whatsapp_desktop_send_message",
 )
 
+#: The kinds ``whatsapp-worker`` owns. ``whatsapp_outcome`` is here and not in
+#: ``ACTION_JOB_KINDS`` on purpose: it is the *reply* an action produces, and
+#: sending it needs the Graph client and token this worker already holds and
+#: ``action-worker`` deliberately does not. An outcome may therefore queue
+#: behind a reply this worker is routing, which is the right way round — the
+#: message the user is waiting on goes first.
+WHATSAPP_JOB_KINDS = (
+    "whatsapp_webhook",
+    "whatsapp_outcome",
+)
+
 
 def spawn_workers(supervisor: Supervisor, python: str, interval: str) -> None:
     """Start the three supervised pollers, each restricted to its own kinds.
@@ -380,7 +391,7 @@ def spawn_workers(supervisor: Supervisor, python: str, interval: str) -> None:
     """
     supervisor.spawn(
         "whatsapp-worker",
-        [python, "-m", "executor.poller", "--kind", "whatsapp_webhook",
+        [python, "-m", "executor.poller", "--kind", *WHATSAPP_JOB_KINDS,
          "--no-heartbeat", "--interval", interval],
         LOG_DIR / "whatsapp-worker.out.log",
     )

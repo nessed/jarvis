@@ -776,6 +776,26 @@ class FakeEnqueuer:
         return SimpleNamespace(id=f"job-{len(self.calls)}")
 
 
+def _enqueued(kind: str, action_payload: dict, *, summary: str) -> tuple[str, dict]:
+    """What the enqueuer should see: the handler's payload, plus who to tell.
+
+    The action fields must survive untouched — that is what these tests were
+    always about — and the ``notify`` descriptor rides alongside them. It is
+    the only place in the system that knows a WhatsApp user is waiting; see
+    executor/notify.py.
+    """
+    return (
+        kind,
+        {
+            **action_payload,
+            "notify": {
+                "kind": "whatsapp_outcome",
+                "payload": {"reply_to": "15550001111", "summary": summary},
+            },
+        },
+    )
+
+
 def _action(**overrides) -> CommandVerdict:
     base = dict(
         decision="action",
@@ -810,7 +830,11 @@ class TestWhatsAppCommands:
         handler(_job(_text_message_payload(text="turn wifi off")))
 
         assert enqueuer.calls == [
-            ("system_control", {"action": "wifi.set_enabled", "args": {"enabled": False}})
+            _enqueued(
+                "system_control",
+                {"action": "wifi.set_enabled", "args": {"enabled": False}},
+                summary="turn wifi off",
+            )
         ]
         assert sent == [{"to": "15550001111", "text": "On it: turn wifi off. Queued as job job-1."}]
 
@@ -823,7 +847,11 @@ class TestWhatsAppCommands:
 
         handler(_job(_text_message_payload(text="join my zoom meeting")))
 
-        assert enqueuer.calls == [("zoom_join_meeting", {"meeting_id": "1234567890"})]
+        assert enqueuer.calls == [
+            _enqueued(
+                "zoom_join_meeting", {"meeting_id": "1234567890"}, summary="join your zoom"
+            )
+        ]
 
     def test_a_non_command_leaves_the_conversational_path_untouched(self) -> None:
         enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
@@ -888,9 +916,28 @@ class TestWhatsAppCommands:
         handler(_job(_text_message_payload(text="yes", message_id="wamid.yes")))
 
         assert enqueuer.calls == [
-            ("system_control", {"action": "wifi.set_enabled", "args": {"enabled": False}})
+            _enqueued(
+                "system_control",
+                {"action": "wifi.set_enabled", "args": {"enabled": False}},
+                summary="kill chrome",
+            )
         ]
         assert sent == [{"to": "15550001111", "text": "On it: kill chrome. Queued as job job-1."}]
+
+    def test_the_outcome_goes_back_to_whoever_sent_the_command(self) -> None:
+        """Not a constant: the descriptor names the sender of *this* message.
+
+        The one place in the system that knows who is waiting. Everything
+        downstream reads a generic notify descriptor.
+        """
+        enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
+        handler = self._handler(_action(), enqueuer=enqueuer, pending=pending, sent=sent)
+
+        handler(_job(_text_message_payload(text="turn wifi off", sender="923339998888")))
+
+        descriptor = enqueuer.calls[0][1]["notify"]
+        assert descriptor["payload"]["reply_to"] == "923339998888"
+        assert descriptor["kind"] == "whatsapp_outcome"
 
     def test_a_no_cancels_the_pending_action(self) -> None:
         enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
@@ -993,7 +1040,11 @@ class TestWhatsAppCommands:
         handler(_job(_audio_message_payload()))
 
         assert enqueuer.calls == [
-            ("system_control", {"action": "wifi.set_enabled", "args": {"enabled": False}})
+            _enqueued(
+                "system_control",
+                {"action": "wifi.set_enabled", "args": {"enabled": False}},
+                summary="turn wifi off",
+            )
         ]
         assert synthesised == ["On it: turn wifi off."]
         assert "job-1" not in synthesised[0]

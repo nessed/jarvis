@@ -38,6 +38,23 @@ class FakeJobs:
         self.job = job
         self.calls: list[tuple[str, object]] = []
 
+    def enqueue(self, kind, payload, run_after=None, max_attempts=None):
+        # Only the outcome-notification path enqueues from inside poll_once.
+        self.calls.append(("enqueue", kind, dict(payload)))
+        now = datetime.now(UTC)
+        return Job(
+            id=f"enqueued-{len(self.calls)}",
+            kind=kind,
+            payload=dict(payload),
+            status="queued",
+            checkpoint={},
+            run_after=run_after or now,
+            created_at=now,
+            updated_at=now,
+            attempts=0,
+            max_attempts=max_attempts or 3,
+        )
+
     def claim_next(self, kind_filter=None):
         self.calls.append(("claim_next", kind_filter))
         if self.job is None:
@@ -969,3 +986,87 @@ def test_poll_once_records_a_cause_on_the_permanent_failure_path_too():
     assert result.checkpoint["error"] == {
         "message": "executor handler failed permanently (GoneForGood: missing_target)"
     }
+
+
+def test_poll_once_tells_the_waiting_user_when_a_job_dead_letters():
+    """Silence is worst here: the user was told "on it" and heard nothing since.
+
+    The poller reads a generic ``notify`` payload field. It never learns that
+    WhatsApp exists — that is entirely in the descriptor's ``kind``.
+    """
+    job = replace(
+        _job(attempts=5, max_attempts=5),
+        kind="system_control",
+        payload={
+            "action": "wifi.set_enabled",
+            "notify": {"kind": "whatsapp_outcome", "payload": {"reply_to": "9230012", "summary": "turn wifi off"}},
+        },
+    )
+    repository = FakeJobs(job)
+
+    def broken_handler(job: Job) -> None:
+        raise RuntimeError("boom")
+
+    result = poll_once(repository=repository, handler=broken_handler)
+
+    assert result is not None and result.status == "dead_letter"
+    assert ("enqueue", "whatsapp_outcome") in [(c[0], c[1]) for c in repository.calls if c[0] == "enqueue"]
+    kind, payload = next(c[1:3] for c in repository.calls if c[0] == "enqueue")
+    assert payload["status"] == "failed"
+    assert payload["reply_to"] == "9230012"
+    assert payload["detail"] == "RuntimeError"
+
+
+def test_poll_once_stays_silent_while_a_job_is_still_going_to_be_retried():
+    """One message per retry would be three messages for one action."""
+    job = replace(
+        _job(attempts=1, max_attempts=5),
+        kind="system_control",
+        payload={
+            "action": "wifi.set_enabled",
+            "notify": {"kind": "whatsapp_outcome", "payload": {"reply_to": "9230012"}},
+        },
+    )
+    repository = FakeJobs(job)
+
+    def broken_handler(job: Job) -> None:
+        raise RuntimeError("boom")
+
+    result = poll_once(repository=repository, handler=broken_handler)
+
+    assert result is not None and result.status == "queued"
+    assert [c for c in repository.calls if c[0] == "enqueue"] == []
+
+
+def test_poll_once_notifies_on_the_permanent_failure_path_too():
+    job = replace(
+        _job(attempts=1, max_attempts=5),
+        kind="flp_sort",
+        payload={
+            "notify": {"kind": "whatsapp_outcome", "payload": {"reply_to": "9230012", "summary": "sort the mixer"}},
+        },
+    )
+    repository = FakeJobs(job)
+
+    def broken_handler(job: Job) -> None:
+        raise ReorderNotSupported("PyFLP cannot move an insert")
+
+    result = poll_once(repository=repository, handler=broken_handler)
+
+    assert result is not None and result.status == "failed"
+    kind, payload = next(c[1:3] for c in repository.calls if c[0] == "enqueue")
+    assert kind == "whatsapp_outcome"
+    assert payload["detail"] == "ReorderNotSupported"
+    # The exception's message came from PyFLP and has no business in a hosted
+    # table; only the type name travels.
+    assert "PyFLP" not in str(payload)
+
+
+def test_poll_once_notifies_nobody_for_a_job_that_asked_for_nothing():
+    repository = FakeJobs(_job(attempts=5, max_attempts=5))
+
+    def broken_handler(job: Job) -> None:
+        raise RuntimeError("boom")
+
+    assert poll_once(repository=repository, handler=broken_handler) is not None
+    assert [c for c in repository.calls if c[0] == "enqueue"] == []

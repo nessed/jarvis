@@ -32,6 +32,7 @@ from typing import Any
 
 from db.jobs import Job
 
+from executor import notify
 from executor.system_control import files, power, printing, processes, scheduled_tasks
 
 logger = logging.getLogger(__name__)
@@ -226,7 +227,56 @@ def build_system_control_handler(
                 f"no system_control action registered for {action!r}"
             )
         args = job.payload.get("args") or {}
-        registry[action](args)
+        result = registry[action](args)
         logger.info("system_control action %s completed (job=%s)", action, job.id)
+        # The result used to be dropped on the floor here. Half of these
+        # actions are *questions* -- wifi.list_interfaces, power.get_active_plan,
+        # scheduled_task.query -- and "done" is not an answer to a question.
+        # See executor/notify.py for why this enqueues rather than sends.
+        notify.enqueue_outcome(job, status=notify.STATUS_OK, detail=render_result(str(action), result))
 
     return _handle
+
+
+def render_result(action: str, result: Any) -> str:
+    """A short, bounded line describing what an action returned.
+
+    Rendering belongs here rather than in ``executor/notify.py`` because this
+    is where the result's *meaning* lives: a list of interfaces, a plan name,
+    and ``None`` from a setter each need different words, and only the module
+    that owns the action registry knows which is which.
+
+    Deliberately mechanical -- no model, and no template that could grow into
+    one. The string reaches the hosted jobs table, so it must stay a rendering
+    of a known return shape and never become free text.
+    """
+    # A setter returns nothing, and there is nothing to add: the reply already
+    # names the action ("Done: turn wifi off"), so "wifi.set_enabled done"
+    # bolted onto the end is the same sentence twice.
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result.strip()
+    if isinstance(result, Mapping):
+        return ", ".join(f"{key}: {value}" for key, value in result.items())
+    if isinstance(result, (list, tuple)):
+        if not result:
+            return f"{action}: nothing"
+        return "; ".join(_render_item(item) for item in result)
+    return str(result)
+
+
+def _render_item(item: Any) -> str:
+    """One element of a list result, preferring the field a human asked for.
+
+    ``wifi.list_interfaces`` returns rows with a dozen keys; the user wants
+    the name and whether it is up, not the row.
+    """
+    if isinstance(item, Mapping):
+        for key in ("name", "title", "printer", "path", "id"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                extra = item.get("state", item.get("status", item.get("active")))
+                return f"{value} ({extra})" if extra is not None else value
+        return ", ".join(f"{key}: {value}" for key, value in item.items())
+    return str(item)

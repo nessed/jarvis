@@ -117,5 +117,25 @@ once in a batched handoff, and only ones that newly became actionable.
   Worth knowing **why** the owner changed if you can tell — a repo whose
   `.git` another account can write is a bigger question than the warning.
 
+- **U14 — Send one WhatsApp command and check you get two replies**
+  (1 min, sensory; needs `start-jarvis.bat` running). The outcome reply
+  shipped 2 Sep 2026 and the machine half is proved live end to end — a real
+  `system_control` job produced a real `whatsapp_outcome` row carrying
+  `Wi-Fi (connected)`, and a deliberately-broken one produced its failure
+  twin. What no test can prove is the part with your thumb in it.
+
+  Send: **"what wifi interfaces does this laptop have?"**
+
+  Expect **two** messages, a few seconds apart:
+
+  ```
+  On it: list wifi interfaces. Queued as job a8b4785b.
+  Done: list wifi interfaces. Wi-Fi (connected).
+  ```
+
+  If only the first arrives, say so — the likely cause is `whatsapp-worker`
+  not having picked up the new `whatsapp_outcome` kind, which needs a
+  restart rather than a fix.
+
 - **U10 — UI-TARS second Windows account** (Phase 5, parked until you
   care): create it, log in once, babysit the first runs.
