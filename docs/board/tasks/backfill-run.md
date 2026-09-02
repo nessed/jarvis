@@ -4,7 +4,7 @@ status: blocked
 lane: AUTO
 priority: 1
 phase: 1
-blocked-on: mem0-extraction-not-schema-constrained
+blocked-on: Q14 (the blocker's fix contradicts Ali's own Q10a blueprint amendment)
 files: docs/tasks/backfill-run-report.md (run artifacts only; code changes only if Q3=B)
 resources: ollama-extract (EXCLUSIVE — executor stopped, whole window), test-workspace
 ---

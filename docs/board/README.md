@@ -114,7 +114,10 @@ and the code does not yet do.
 
 Ready now:
 
-1. `board-audit` — recurring; the fallback when nothing else is ready
+1. `offline-suite-network-leak` — four tests in the *offline* suite build a live Supabase client, so a
+   bad connection turns the commit gate red. Filed 3 Sep from a real
+   pre-commit refusal
+2. `board-audit` — recurring; the fallback when nothing else is ready
 
 Blocked, in the order they'll matter once unblocked:
 
@@ -129,6 +132,9 @@ Blocked, in the order they'll matter once unblocked:
 7. `vps-harden-deploy` — **U7**, after `phase4-prep` (done)
 8. `bus-offbox-packaging` — after `vps-harden-deploy`
 9. `cloud-routine-wire` — **U8**, after `bus-offbox-packaging`
+10. `backfill-run` — **Q14**. It was missing from this list entirely until the 3 Sep audit.
+    Blocked on a blocker whose recommended fix contradicts Ali's own Q10a
+    blueprint amendment, filed 49 minutes after it
 
 USER items live in `USER-TASKS.md`. Decisions live in `QUESTIONS.md`.
 Deliberately-not-being-done items live in `PARKED.md` — read it before

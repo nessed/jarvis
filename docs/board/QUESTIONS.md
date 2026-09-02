@@ -358,3 +358,58 @@ the precedent: reported, left in place.
 Blocks: nothing. The chain runs regardless.
 
 **Answer:** _pending_
+
+
+## Q14 — Backfill is stuck between your own two answers
+
+`backfill-run` is blocked, and the thing blocking it is a contradiction
+between two decisions you made 49 minutes apart on 2 Sep 2026.
+
+**Q10a (01:53, `6bd3ad4`)** amended blueprint 1.3 to say fact extraction uses
+"the `json_object` response format with pydantic validation and one retry —
+**not** constrained JSON-schema structured decoding. That is what shipped and
+what the code does."
+
+**The blocker filed at 02:42 (`843bc26`)** says the opposite, and quotes 1.3's
+*pre-amendment* text as its justification:
+
+> `docs/blueprint.md` §1.3 already specifies this and the code does not do it:
+> "...using **constrained JSON-schema structured decoding**."
+
+That sentence no longer exists. It was replaced by its own negation before the
+blocker was written. So the blocker's recommendation — "pass the fact schema
+to Ollama as `format`" — is not conforming the code to the spec any more. It
+is a request to change the spec back, which is yours and not an agent's.
+
+**The measurements in the blocker are still good**, and they are the reason
+this is not simply closed. On synthetic text at real chunk sizes:
+
+```
+unconstrained (what the code does today):   invalid JSON, twice, run aborted
+schema-constrained, ~96-768 words:          4/4 valid, 26-29s, 12-15 facts
+```
+
+Both pass on small inputs, so the model is not the problem — the input size
+is. The backfill sends chunks in the failing range.
+
+- **A (recommended): re-amend 1.3 to constrained decoding, and file the task.**
+  Your Q10a answer corrected the blueprint to match the code, which was right
+  at the time — nobody had measured the code failing yet. Now someone has. The
+  change is small: pass the schema through as Ollama's `format`, keep the
+  existing validate-and-retry as a second line.
+- B: keep `json_object` and make the backfill chunk smaller instead. Cheaper
+  to try, but it is tuning around a decoder that is free to emit anything, and
+  the failure returns at whatever the next size ceiling is.
+- C: leave it. `backfill-run` stays blocked and blueprint 1.3 stays unbuilt.
+
+Either way, note that the two timeout defaults are too tight for one serial
+Ollama on this machine — extraction defaults to 90s and the real call takes
+about that; embedding defaults to 15s and cannot survive an 8B generation
+holding the runtime. Raising them is not a fix on its own (a run with both
+raised still failed on decoding) but the fix cannot be tested without it.
+
+Full evidence: `docs/blockers/mem0-extraction-not-schema-constrained.md`.
+
+Blocks: `backfill-run`, and therefore blueprint 1.3.
+
+**Answer:** _pending_

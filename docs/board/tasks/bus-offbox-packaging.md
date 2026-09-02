@@ -4,7 +4,7 @@ status: blocked
 lane: AUTO
 priority: 3
 phase: 4
-blocked-on: enqueue-classifier, vps-harden-deploy
+blocked-on: vps-harden-deploy (enqueue-classifier landed 2 Sep 2026)
 files: bus/main.py (hot), bus/whatsapp_client.py (hot), other bus/ modules per runbook findings, tests/bus/
 resources: none until live
 ---

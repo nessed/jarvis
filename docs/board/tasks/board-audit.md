@@ -84,3 +84,66 @@ Never. Log entry per pass; status stays `ready`.
     marker, so nothing was lost or overwritten. But `git add <directory>`
     does not respect claims, and a directory-wide add is how a lane commits
     another lane's half-written work without noticing. Stage explicit paths.
+
+- **3 Sep 2026 (post-integration pass, CORE, lane-1):** ran after eight tasks
+  landed in one session — `distill-chain-stall`, `action-outcome-reply`, the
+  four router tasks, `provider-status-generator` and `pytest-addopts`.
+  - **Statuses reconciled.** All 27 task files check out against the tree: 18
+    `done` with cited evidence, 9 `blocked` on a live gate, 1 `ready` (this).
+    No `done` claim was found without evidence, and no `ready` task's gap had
+    silently closed.
+  - **`backfill-run` was missing from NEXT entirely.** Nine task files are
+    `blocked`; NEXT listed eight. It has been invisible on the board since the
+    2 Sep rebuild — the one task nobody would have picked up even after its
+    gate cleared. Added at position 10.
+  - **The finding that matters: `backfill-run` is blocked on a contradiction,
+    not on work.** `docs/blockers/mem0-extraction-not-schema-constrained.md`
+    justifies its fix by quoting blueprint §1.3 as specifying "constrained
+    JSON-schema structured decoding" and the code not doing it. That sentence
+    had been replaced by its own negation **49 minutes before the blocker was
+    written**: Q10a amended 1.3 to `json_object` + pydantic validation at
+    01:53 (`6bd3ad4`), and the blocker landed at 02:42 (`843bc26`). Its
+    recommendation is therefore no longer "conform the code to the spec" but
+    "change the spec back", which is Ali's. Filed as **Q14** with the
+    measurements intact, since those are still good and are the reason it is
+    not simply closed.
+  - **Blueprint §3.3's own gap paragraph was stale.** It named four clauses
+    "the code does not have yet"; three shipped this session. Rewritten to
+    name the one that remains (the verification window, Q11). The clauses
+    themselves were not touched — only the claim about what the code does,
+    which is what this audit is for.
+  - **`bus-offbox-packaging`'s gate was half-stale**: `blocked-on:
+    enqueue-classifier, vps-harden-deploy`, and `enqueue-classifier` landed
+    2 Sep. Narrowed to the real gate.
+  - **`docs/context.md`'s hand-written part had grown to 20 lines** against a
+    ~15-line budget — the same drift the last pass caught at 27. Trimmed to
+    14. The durable parts were already in `state.md`.
+  - `QUESTIONS.md`: Q11 and Q12 pending from before, Q13 and Q14 added this
+    session, no unprocessed answers from Ali.
+    `tools/context_status.py --check` passes.
+  - **`facts_check` is current**, not overdue: newest report is
+    `docs/tasks/facts-check-reports/2026-09-02.md`, one day old against a
+    30-day trigger. Not re-run.
+  - **Blueprint-vs-tree diff done**, which the 2 Sep pass explicitly deferred
+    because the blueprint had been rewritten that same day. §3.3's five shape
+    clauses were checked one by one against `router/routing.py`; four hold,
+    the fifth is Q11. One wording observation, filed here rather than as a
+    question because its actionable half is satisfied: §3.3 says
+    `providers.yaml` and `state.md` are "both generated from the running
+    config", while a bullet four lines later says "Removing a provider is a
+    `providers.yaml` edit". Read as "these live in those files, not in this
+    document", the two agree — and `state.md`'s lists are now genuinely
+    generated. Not worth an interruption.
+  - **One new task filed, from this pass's own pre-commit refusal:**
+    `offline-suite-network-leak`. Four tests in `tests/status/` call
+    `create_app(...)` without `jobs=`, so `bus/main.py:107` falls back to
+    `SupabaseJobsRepository.from_env()` and builds a **live** Supabase client
+    they never use. An SSL handshake timeout failed all four, the run took
+    148s instead of 77s, and the same suite passed either side of it. That is
+    the third time this repo has lost time to a red suite that was not a
+    regression — after the shared `--basetemp` and U13's git ownership — and
+    the offline suite's entire value is that red means broken.
+  - **Last pass's process slip, avoided:** it staged `git add docs/board/` and
+    swept a file another lane held. This pass stages explicit paths. `git add
+    -A` was used earlier in this session for the seven task commits, which was
+    the same hazard and got away with it only because no peer lane was alive.

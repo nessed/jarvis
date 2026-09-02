@@ -121,11 +121,18 @@ Two implementation notes, both settled and built:
   process that routes — the executor, not the bus — is the one that reports
   provider health to `/status`. Built 2 Sep 2026; see `docs/state.md`.
 
-Four clauses above describe behaviour the code does not have yet: the
-verification window, cost-class-then-p50 ordering, 401/402/403 surfacing, and
-the generated `providers.yaml` / `state.md` lists. They are named as router
-work in `docs/board/tasks/blueprint-corrections.md`, not silently softened to
-match today's code.
+**One clause above describes behaviour the code does not have yet: the
+verification window.** A rung is eligible today on a configured key and a
+resolvable model, without requiring a verified 200. That is `Q11` — the window
+has no duration yet — and `docs/board/tasks/router-eligibility-window.md`.
+
+The other three landed on 2 Sep 2026, and this paragraph named all four as
+outstanding until then: cost-class-then-p50 ordering
+(`router-cost-class-ordering`), 401/402/403 surfacing
+(`router-denial-surfacing`), and the generated `state.md` lists
+(`provider-status-generator`, which also needed
+`router-unresolvable-model-rungs` for its reason vocabulary). None was
+silently softened to match the code; the code moved.
 
 ---
 
