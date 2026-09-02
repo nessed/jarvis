@@ -1,3 +1,81 @@
+You are a second opinion on a decision inside an AI-agent-built project.
+The agent asking has already gathered the evidence below and could not
+resolve the question from it alone. Do not restate the evidence. Decide.
+
+## Question
+
+What does "surfaces the denial. It does not silently fall through to paid work"
+demand of the control flow, exactly?
+
+The clause is Ali's own blueprint text (docs/blueprint.md §3.3, applied 2 Sep
+2026), and the task says to settle its reading BEFORE changing control flow,
+because one reading changes reply behaviour on a live rung failure:
+
+  "- Rungs are ordered by cost class first (free-tier, then trial/credit, then
+     paid), and within a class by measured p50 latency for the task profile.
+   - `route(task_profile)` reorders within a cost class only. It never promotes
+     a paid rung above a free one that is eligible; urgency does that,
+     explicitly and per-job.
+   - A rung that returns 401/402/403 enters cooldown and surfaces the denial.
+     It does not silently fall through to paid work."
+
+Today, in router/routing.py's cascade:
+  - 429, 402 and 5xx all cool the rung down, append to `failures`, and
+    `continue` to the next candidate.
+  - 401/403 re-raise to the caller, and the cooldown is a carve-out written as
+    `if provider.name == "mistral"`, so no other provider's auth denial cools
+    anything down.
+  - When every candidate fails, it raises NoEligibleProvider("all eligible
+    providers failed: " + "; ".join(failures)).
+
+The ladder is priority-ordered in router/providers.yaml. Free/trial rungs
+first (groq, cerebras, nvidia_nim, gemini, openrouter, mistral), then
+`deepseek` marked `"paid_overflow": true`, then `claude_api` marked
+`"capped": true` and `"emergency_only": true`. Both flags already exist on the
+Provider dataclass. There is no `cost_class` field yet — a separate board task
+adds it — but `paid_overflow` and `capped` already express "this one costs
+money" for the two rungs that do.
+
+Callers: this is on the WhatsApp reply path. A raise from route() propagates to
+the handler, then to executor/poller.py, which retries with backoff and
+eventually dead-letters. So "abort the cascade" concretely means the user's
+message gets no reply for that attempt.
+
+Three candidate readings:
+
+  A. Literal-strict. 401/402/403 aborts the cascade outright and re-raises,
+     for every provider. Nothing falls through. Simplest to state, and it is
+     what 401/403 already do for Mistral.
+
+  B. Paid-boundary. A denial cools the rung down and the cascade continues,
+     but it may not cross into a rung marked `paid_overflow` or `capped`
+     while an unsurfaced denial is outstanding — at that boundary it raises
+     instead, carrying the denial. Falling through from one free rung to
+     another free rung stays allowed.
+
+  C. Surfacing-only. Keep the current fall-through for all of them; "surfaces"
+     is satisfied by the ledger's `last_status` being visible on /status
+     (which it is, since 2 Sep) plus the denial appearing in the aggregated
+     failure message. No control-flow change at all.
+
+Questions:
+  - Which reading does the sentence actually demand? Pay attention to the two
+    qualifiers: "silently", and "to paid work" — neither is idle if the
+    sentence means A, and B is the only reading in which both do work.
+  - If B: is "an unsurfaced denial is outstanding" the right trigger, or
+    should a denial anywhere in the cascade permanently bar the paid rungs
+    for that request?
+  - A 401 means a bad key and a 402 means no money on this plan. Should they
+    really share one control-flow rule, given a 401 is a config error that
+    will repeat on every job and a 402 is a plan state that might not?
+  - What is the smallest change that satisfies the clause without making a
+    live reply fail where it currently succeeds?
+
+## Evidence
+
+### router/routing.py
+
+```
 """OpenAI-compatible provider routing with runtime rate-limit awareness."""
 
 from __future__ import annotations
@@ -27,33 +105,6 @@ class RouterError(RuntimeError):
 
 class NoEligibleProvider(RouterError):
     """No configured, available provider can handle a request."""
-
-
-#: The statuses blueprint §3.3 calls a *denial*: a rung saying "not you"
-#: (401), "not paid for" (402), or "not allowed" (403). Distinct from 429 and
-#: 5xx, which say "not now" — those are about capacity, these are about
-#: entitlement, and only these bar the paid rungs. Grouped as one set because
-#: the blueprint groups them; splitting the grouping would be a change to a
-#: specified decision, not an implementation detail.
-DENIAL_STATUSES = frozenset({401, 402, 403})
-
-
-class ProviderDenied(NoEligibleProvider):
-    """A rung denied the request, and the next rung would have cost money.
-
-    Blueprint §3.3: "A rung that returns 401/402/403 enters cooldown and
-    surfaces the denial. It does not silently fall through to paid work."
-
-    Raising *is* the surfacing. Inside one cascade there is no other channel:
-    a request cannot both continue onto a paid rung and have surfaced the
-    denial that preceded it, so the paid boundary is where the denial has to
-    become visible. Falling through from one free rung to another is
-    untouched — that costs nothing and violates nothing.
-
-    A subclass of :class:`NoEligibleProvider` on purpose, so every existing
-    caller's error handling is unchanged; ``executor/poller.py`` catches bare
-    ``Exception`` and its retry/dead-letter path behaves exactly as before.
-    """
 
 
 class ProviderRequestError(RouterError):
@@ -237,21 +288,7 @@ class ProviderRouter:
             raise NoEligibleProvider("no configured provider is currently eligible")
 
         failures: list[str] = []
-        # Per request, never persistent. The cooldown ledger already handles
-        # repetition across requests; barring the paid rungs persistently would
-        # let one bad key disable paid overflow indefinitely.
-        denials: list[str] = []
         for provider in candidates:
-            # §3.3's paid boundary, checked before the attempt rather than
-            # after it, because after it the money is already spent.
-            # ``emergency`` is the documented exception: the adjacent bullet
-            # says urgency promotes a paid rung "explicitly and per-job", and
-            # a per-job emergency flag is the opposite of silent.
-            if denials and not emergency and (provider.paid_overflow or provider.capped):
-                raise ProviderDenied(
-                    "a rung denied the request and the next one costs money, so the cascade "
-                    f"stopped at {provider.name}: " + "; ".join(denials)
-                )
             try:
                 client = self._client_factory(self._endpoint_for(provider), self._key_for(provider))
                 provider_model = model or await self._model_for(provider, client)
@@ -266,30 +303,23 @@ class ProviderRouter:
                 return RoutedResult(provider=provider.name, model=provider_model, response=response)
             except Exception as exc:  # SDK exception types intentionally vary by provider.
                 status, headers = _response_metadata(exc)
-                denied = status in DENIAL_STATUSES
-                if denied or status == 429 or (status is not None and 500 <= status <= 599):
-                    # A denial is not a malformed request. A 401 is a key this
-                    # workspace cannot use, a 402 is a plan with nothing left,
-                    # a 403 is a permission it does not hold — none of them
-                    # says the *request* was wrong, so none of them should
-                    # abort a cascade that still has free rungs left to try.
-                    #
-                    # Until 2 Sep 2026 the cooldown here was written as
-                    # `provider.name == "mistral"`, so every other provider's
-                    # auth denial cooled down nothing and every subsequent job
-                    # re-probed a key that could not work. The reason the
-                    # carve-out gave applies to all of them and always did.
+                if status == 429 or status == 402 or (status is not None and 500 <= status <= 599):
+                    # 402 (e.g. Cerebras' PaymentRequired for a key/plan with no
+                    # free tier) means this rung cannot serve the request at
+                    # all, not that the request was malformed. Cool it down and
+                    # keep falling through, same as 429/5xx, instead of
+                    # aborting the whole cascade with a bare raise.
                     self._record_cooldown(provider, status, headers)
                     failures.append(f"{provider.name}: HTTP {status}")
-                    if denied:
-                        denials.append(f"{provider.name}: HTTP {status}")
                     continue
+                # A Mistral Labs/workspace denial is not a malformed request.
+                # Record it as unavailable so future jobs do not repeatedly
+                # probe a key that cannot currently run chat completions, but
+                # surface the denial to the caller rather than silently moving
+                # the request to another (possibly paid) provider.
+                if provider.name == "mistral" and status in {401, 403}:
+                    self._record_cooldown(provider, status, headers)
                 raise
-        if denials:
-            # Every rung failed *and* at least one of them denied us. Say so
-            # rather than reporting a generic exhaustion: a denial is a thing
-            # the user can fix, and a 429 is a thing they wait out.
-            raise ProviderDenied("all eligible providers failed: " + "; ".join(failures))
         raise NoEligibleProvider("all eligible providers failed: " + "; ".join(failures))
 
     def _configured(self, provider: Provider) -> bool:
@@ -514,3 +544,162 @@ async def route(
 ) -> RoutedResult:
     """Convenience entrypoint for executor integration."""
     return await shared_router().route(task_profile, messages, urgent=urgent, **request_options)
+
+```
+### router/providers.yaml
+
+```
+{
+  "providers": [
+    {
+      "name": "groq",
+      "endpoint": "https://api.groq.com/openai/v1",
+      "key_env": "GROQ_API_KEY",
+      "priority": 1,
+      "default_model": "${GROQ_DEFAULT_MODEL}",
+      "task_profiles": ["latency", "batch"]
+    },
+    {
+      "name": "cerebras",
+      "endpoint": "https://api.cerebras.ai/v1",
+      "key_env": "CEREBRAS_API_KEY",
+      "priority": 2,
+      "default_model": "${CEREBRAS_DEFAULT_MODEL}",
+      "task_profiles": ["batch"]
+    },
+    {
+      "name": "nvidia_nim",
+      "endpoint": "https://integrate.api.nvidia.com/v1",
+      "key_env": "NVIDIA_API_KEY",
+      "priority": 3,
+      "default_model": "${NVIDIA_DEFAULT_MODEL}",
+      "task_profiles": ["latency", "batch", "vision", "reasoning"]
+    },
+    {
+      "name": "gemini",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "key_env": "GEMINI_API_KEY",
+      "priority": 4,
+      "default_model": "${GEMINI_DEFAULT_MODEL}",
+      "task_profiles": ["long_context", "vision"]
+    },
+    {
+      "name": "openrouter",
+      "endpoint": "https://openrouter.ai/api/v1",
+      "key_env": "OPENROUTER_API_KEY",
+      "priority": 5,
+      "default_model": "openrouter/free",
+      "task_profiles": ["latency", "batch", "long_context", "vision", "reasoning"]
+    },
+    {
+      "name": "mistral",
+      "endpoint": "https://api.mistral.ai/v1",
+      "key_env": "MISTRAL_API_KEY",
+      "model_env": "MISTRAL_DEFAULT_MODEL",
+      "discover_chat_model": true,
+      "priority": 6,
+      "default_model": null,
+      "task_profiles": ["latency", "batch", "long_context", "vision", "reasoning"]
+    },
+    {
+      "name": "deepseek",
+      "endpoint": "https://api.deepseek.com/v1",
+      "key_env": "DEEPSEEK_API_KEY",
+      "priority": 7,
+      "default_model": "deepseek-v4-flash",
+      "task_profiles": ["batch", "long_context", "reasoning"],
+      "paid_overflow": true
+    },
+    {
+      "name": "claude_max",
+      "endpoint": null,
+      "key_env": null,
+      "priority": 8,
+      "default_model": null,
+      "task_profiles": ["reasoning"],
+      "not_a_router_target": true,
+      "execution_path": "claude -p"
+    },
+    {
+      "name": "claude_api",
+      "endpoint": "${CLAUDE_API_BASE_URL}",
+      "key_env": "ANTHROPIC_API_KEY",
+      "priority": 9,
+      "default_model": "${CLAUDE_API_DEFAULT_MODEL}",
+      "task_profiles": ["reasoning"],
+      "emergency_only": true,
+      "capped": true
+    }
+  ]
+}
+
+```
+### docs/board/tasks/router-denial-surfacing.md
+
+```
+---
+id: router-denial-surfacing
+status: in-progress
+lane: AUTO
+priority: 2
+phase: 0
+blocked-on: none
+files: router/routing.py (hot), tests/router/test_routing.py (area-hot), docs/state.md
+resources: none offline
+---
+
+# router-denial-surfacing — 401/402/403 must surface, not just cool down
+
+## Goal
+
+`docs/blueprint.md` §3.3 (Ali's own text, applied 2 Sep 2026): "A rung that
+returns 401/402/403 enters cooldown and **surfaces the denial**. It does not
+silently fall through to paid work."
+
+`router-cooldown-ledger` shipped 2 Sep with only the cooldown half. Today:
+
+- **402** cools the provider down and then `continue`s down the ladder
+  (`router/routing.py`, the 429/402/5xx branch). A payment-required rung is
+  therefore indistinguishable from a busy one, and the request quietly moves
+  on — possibly to a paid rung, which is the exact thing the clause forbids.
+- **401/403** re-raise, but the cooldown is a **Mistral-only carve-out** by
+  name. Any other provider's auth denial cools down nothing, so every
+  subsequent job re-probes a key that cannot work.
+
+## Steps
+
+1. Generalise the 401/403 carve-out from `provider.name == "mistral"` to
+   every provider. The comment explaining why a denial is not a malformed
+   request already applies to all of them.
+2. Decide what "surfaces" means concretely, and write it down. The ledger
+   entry already carries `last_status`, so the cheapest honest answer is that
+   `/status`'s provider health shows it (it does, since 2 Sep) **plus** the
+   cascade not silently absorbing it. Say which of those Ali's sentence
+   demands before changing control flow — if a 402 must abort the cascade,
+   that changes reply behaviour on a live rung failure, and that belongs in
+   the Log rather than being discovered later.
+3. Tests: a 402 does not silently reach a paid rung; a 401 from any provider
+   cools it down; the existing Mistral test still passes.
+
+## Done when
+
+Every 401/402/403 both cools the rung down and is visible without reading
+logs; the suite is green; `docs/state.md`'s router rows say what changed.
+
+```
+
+## Response format
+
+Answer as strict JSON and nothing else. No prose before or after, no code
+fence. Exactly these keys:
+
+{
+  "verdict": "the decision or answer, one or two sentences, actionable",
+  "reasoning": "why, citing the specific evidence above that drove it",
+  "confidence": "high | medium | low",
+  "what_would_change_this": "the concrete observation that would flip this verdict"
+}
+
+Set confidence to low rather than guessing. If the evidence provided is not
+enough to decide, say exactly what is missing in what_would_change_this — that
+is a useful answer, an invented one is not.

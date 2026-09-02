@@ -6,7 +6,10 @@ import httpx
 import openai
 import pytest
 
+from dataclasses import replace
+
 from router import NoEligibleProvider, Provider, ProviderRequestError, ProviderRouter, load_providers
+from router.routing import ProviderDenied
 from router import routing
 from router.routing import OpenAIChatClient, _chat_model_id, _retry_delay_seconds
 
@@ -240,8 +243,13 @@ def test_mistral_workspace_denial_cools_down_without_paid_fallback():
         client_factory=factory,
     )
 
-    with pytest.raises(ProviderRequestError, match="workspace access denied"):
-        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+    # router-denial-surfacing (2 Sep 2026): a 403 no longer aborts a cascade
+    # that still has *free* rungs left. Blueprint 3.3 forbids falling through
+    # to **paid** work, and `spare` costs nothing; the denial is still cooled
+    # down, and still surfaced at the paid boundary. The old assertion here was
+    # a bare re-raise, which cost a live reply for no benefit.
+    result = asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+    assert result.provider == "spare"
 
     assert router.health["mistral"].last_status == 403
     assert router.health["mistral"].cooldown_until > 0
@@ -459,19 +467,145 @@ def test_402_cools_down_and_falls_through_instead_of_aborting_chain():
     assert health.cooldown_until > 0
 
 
-def test_401_still_propagates_for_non_mistral_providers():
-    # The 402 fix must not widen into swallowing genuine auth failures for
-    # providers other than the existing Mistral workspace-denial case.
+def test_a_401_from_any_provider_cools_it_down_not_just_mistral():
+    """The carve-out was keyed on the provider name, and should not have been.
+
+    Every other provider's auth denial cooled down nothing, so every
+    subsequent job re-probed a key that could not work. The reason the
+    carve-out gave -- a denial is not a malformed request -- was never
+    Mistral-specific. This test previously asserted the bug.
+    """
     router, calls = router_for(
         ["first", "second"],
         {"first": ProviderRequestError("invalid api key", 401, {})},
     )
 
-    with pytest.raises(ProviderRequestError, match="invalid api key"):
+    result = asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert result.provider == "second"
+    assert calls == [("first", "first-configured-model"), ("second", "second-configured-model")]
+    assert router.health["first"].last_status == 401
+    assert router.health["first"].cooldown_until > 0.0
+
+
+def _paid_ladder(denial_status=402):
+    """A free rung that denies, then a rung that costs money."""
+    free, paid = providers(["free", "paid"])
+    paid = replace(paid, paid_overflow=True)
+    calls = []
+    endpoints = {free.endpoint: "free", paid.endpoint: "paid"}
+    outcomes = {"free": ProviderRequestError("denied", denial_status, {})}
+    return (
+        ProviderRouter(
+            [free, paid],
+            environ={"FREE_KEY": "test-key", "PAID_KEY": "test-key"},
+            client_factory=lambda endpoint, _key: FakeClient(endpoints[endpoint], outcomes, calls),
+        ),
+        calls,
+    )
+
+
+@pytest.mark.parametrize("status", [401, 402, 403])
+def test_a_denial_never_silently_reaches_a_rung_that_costs_money(status):
+    """Blueprint 3.3, the clause this whole task is about.
+
+    Raising *is* the surfacing: inside one cascade there is no other channel,
+    because a request cannot both continue onto the paid rung and have
+    surfaced the denial that preceded it.
+    """
+    router, calls = _paid_ladder(status)
+
+    with pytest.raises(ProviderDenied, match="costs money"):
         asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
 
-    assert calls == [("first", "first-configured-model")]
-    assert router.health["first"].cooldown_until == 0.0
+    assert calls == [("free", "free-configured-model")], "the paid rung was never attempted"
+    assert router.health["free"].last_status == status
+    assert router.health["free"].cooldown_until > 0.0
+
+
+def test_a_busy_free_rung_still_falls_through_to_paid_work():
+    """429 and 5xx say "not now"; only 401/402/403 say "not you".
+
+    The paid boundary must not widen into a general fallback ban, or one busy
+    free rung would take the whole ladder down with it.
+    """
+    free, paid = providers(["free", "paid"])
+    paid = replace(paid, paid_overflow=True)
+    calls = []
+    endpoints = {free.endpoint: "free", paid.endpoint: "paid"}
+    router = ProviderRouter(
+        [free, paid],
+        environ={"FREE_KEY": "test-key", "PAID_KEY": "test-key"},
+        client_factory=lambda endpoint, _key: FakeClient(
+            endpoints[endpoint], {"free": ProviderRequestError("slow down", 429, {})}, calls
+        ),
+    )
+
+    result = asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert result.provider == "paid"
+
+
+def test_an_explicit_per_job_emergency_may_cross_the_paid_boundary():
+    """3.3's adjacent bullet: urgency promotes a paid rung, explicitly and per-job.
+
+    A flag the caller set is the opposite of silent, and silent is the only
+    thing the denial clause forbids.
+    """
+    router, _calls = _paid_ladder()
+
+    result = asyncio.run(
+        router.route("batch", [{"role": "user", "content": "hi"}], emergency=True)
+    )
+
+    assert result.provider == "paid"
+
+
+def test_a_denial_with_no_paid_rung_below_it_is_still_reported_as_a_denial():
+    """Exhaustion and denial are different problems: one you wait out, one you fix."""
+    router, _calls = router_for(
+        ["first", "second"],
+        {
+            "first": ProviderRequestError("invalid api key", 401, {}),
+            "second": ProviderRequestError("slow down", 429, {}),
+        },
+    )
+
+    with pytest.raises(ProviderDenied, match="HTTP 401"):
+        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+
+def test_exhaustion_without_any_denial_stays_a_plain_no_eligible_provider():
+    router, _calls = router_for(
+        ["first", "second"],
+        {
+            "first": ProviderRequestError("slow down", 429, {}),
+            "second": ProviderRequestError("slow down", 429, {}),
+        },
+    )
+
+    with pytest.raises(NoEligibleProvider) as error:
+        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert not isinstance(error.value, ProviderDenied)
+
+
+def test_the_paid_bar_lasts_one_request_and_not_longer():
+    """A bad key must not permanently disable paid overflow.
+
+    The cooldown ledger already handles repetition across requests; a sticky
+    bar would turn one transient denial into a standing outage.
+    """
+    router, _calls = _paid_ladder()
+
+    with pytest.raises(ProviderDenied):
+        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    # Second request: the denying rung is in cooldown, so it is not even a
+    # candidate, no denial is recorded, and the paid rung is reachable again.
+    result = asyncio.run(router.route("batch", [{"role": "user", "content": "again"}]))
+
+    assert result.provider == "paid"
 
 
 def test_model_env_requiring_provider_without_env_var_is_not_configured():

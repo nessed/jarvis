@@ -114,31 +114,29 @@ and the code does not yet do.
 
 Ready now:
 
-1. `router-denial-surfacing` — §3.3 says a 401/402/403 cools down **and surfaces**. Only the cooldown
-   shipped; 402 still falls through, possibly to a paid rung
-2. `router-unresolvable-model-rungs` — `groq` and `cerebras` sort to the front of every request and are silently
+1. `router-unresolvable-model-rungs` — `groq` and `cerebras` sort to the front of every request and are silently
    skipped — unresolved `${...}` default_model, uncaught by `_configured()`
-3. `router-cost-class-ordering` — §3.3's cost-class-then-p50 ordering. `providers.yaml` has a static int and
+2. `router-cost-class-ordering` — §3.3's cost-class-then-p50 ordering. `providers.yaml` has a static int and
    no `cost_class`; Cerebras being trial-not-free already breaks the old model
-4. `provider-status-generator` — §3.3's two generated lists. `blueprint-corrections` left them empty on
+3. `provider-status-generator` — §3.3's two generated lists. `blueprint-corrections` left them empty on
    purpose rather than hand-write what the spec says is generated
-5. `pytest-addopts` — **barrier** — run only when `work_board_claim.py list` is empty. Also
+4. `pytest-addopts` — **barrier** — run only when `work_board_claim.py list` is empty. Also
    carries the fixed-`--basetemp` collision, partly addressed by `agent-harness`
-6. `board-audit` — recurring; the fallback when nothing else is ready
+5. `board-audit` — recurring; the fallback when nothing else is ready
 
 Blocked, in the order they'll matter once unblocked:
 
-7. `db-maintenance` — **U12**. Runner, ledger and `0003` are built, tested and committed;
+6. `db-maintenance` — **U12**. Runner, ledger and `0003` are built, tested and committed;
    `SUPABASE_DB_PASSWORD` is an empty placeholder so the DDL cannot be applied
-8. `voice-loop` — **Q12** — drop Pipecat from the desk loop? Recommendation filed
-9. `router-eligibility-window` — **Q11** — how long the verification window is
-10. `live-routing-probe` — **U2**. Now costing something measurable: the ladder collapses to
+7. `voice-loop` — **Q12** — drop Pipecat from the desk loop? Recommendation filed
+8. `router-eligibility-window` — **Q11** — how long the verification window is
+9. `live-routing-probe` — **U2**. Now costing something measurable: the ladder collapses to
     `openrouter/free`, which answered a JSON prompt with `User Safety: safe`
     on two of four probes
-11. `voice-command-ingress` — waits on `voice-loop`, so behind Q12
-12. `vps-harden-deploy` — **U7**, after `phase4-prep` (done)
-13. `bus-offbox-packaging` — after `vps-harden-deploy`
-14. `cloud-routine-wire` — **U8**, after `bus-offbox-packaging`
+10. `voice-command-ingress` — waits on `voice-loop`, so behind Q12
+11. `vps-harden-deploy` — **U7**, after `phase4-prep` (done)
+12. `bus-offbox-packaging` — after `vps-harden-deploy`
+13. `cloud-routine-wire` — **U8**, after `bus-offbox-packaging`
 
 USER items live in `USER-TASKS.md`. Decisions live in `QUESTIONS.md`.
 Deliberately-not-being-done items live in `PARKED.md` — read it before

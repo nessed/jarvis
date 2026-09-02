@@ -8,32 +8,29 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `bf9efc5 Restart the distill chain, and stop one outage becoming eighty-four rows` on `main`, 1 ahead, 0 behind origin.
+**HEAD** `fa3365a Say what the action did, not just that it queued` on `main`, 2 ahead, 0 behind origin.
 
-**Working tree:** 18 changed
+**Working tree:** 9 changed
 
 ```
   M  docs/board/README.md
-  M  docs/board/USER-TASKS.md
-  M  docs/board/tasks/action-outcome-reply.md
-  A  docs/consults/2026-09-02-action-outcome-reply-shape/prompt.md
-  A  docs/consults/2026-09-02-action-outcome-reply-shape/response.md
-  A  docs/consults/2026-09-02-action-outcome-reply-shape/verdict.json
-  M  docs/context.md
+  M  docs/board/tasks/router-denial-surfacing.md
+  A  docs/consults/2026-09-02-router-denial-surfacing-reading/prompt.md
+  A  docs/consults/2026-09-02-router-denial-surfacing-reading/response.md
+  A  docs/consults/2026-09-02-router-denial-surfacing-reading/verdict.json
   M  docs/state.md
-  M  executor/app_automation/handler.py
-  A  executor/handlers/outcome.py
-  M  executor/handlers/whatsapp.py
-  A  executor/notify.py
-  ...and 6 more
+  M  router/__init__.py
+  M  router/routing.py
+  M  tests/router/test_routing.py
 ```
 
-**Offline suite:** 1318 passed, 9 deselected, 10 warnings in 68.86s (0:01:08) _(recorded 2026-09-02)_
+**Offline suite:** 1326 passed, 9 deselected, 10 warnings in 66.20s (0:01:06) _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `fa3365a` Say what the action did, not just that it queued  _(2026-09-02)_
 - `bf9efc5` Restart the distill chain, and stop one outage becoming eighty-four rows  _(2026-09-02)_
 - `843bc26` ok  _(2026-09-02)_
 - `89cba3f` Rebuild NEXT from the task files, and file what the day turned up  _(2026-09-02)_
@@ -41,7 +38,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `e4125d4` Reduce the wake-word false-positive test to one command  _(2026-09-02)_
 - `10c736c` Make the multi-session workflow enforce itself  _(2026-09-02)_
 - `c4cc48d` Make the inspector read the two .flp files PyFLP gives up on  _(2026-09-02)_
-- `6bd3ad4` Apply Ali's blueprint corrections, and keep one line the audit was wrong about  _(2026-09-02)_
 
 <!-- END GENERATED -->
 
