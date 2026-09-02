@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import email.utils
 import json
+import logging
 import os
 import re
 import threading
@@ -19,6 +20,8 @@ from typing import Any, Protocol
 TASK_PROFILES = frozenset({"latency", "batch", "long_context", "vision", "reasoning"})
 PEAK_DEEPSEEK_WINDOWS_UTC = ((1, 4), (6, 10))
 DEFAULT_BACKOFF_SECONDS = 60
+
+logger = logging.getLogger(__name__)
 
 
 class RouterError(RuntimeError):
@@ -179,6 +182,13 @@ def load_providers(path: Path | None = None, environ: Mapping[str, str] | None =
     ]
 
 
+def _unresolvable_model_reason(provider: Provider) -> str:
+    """Say which env var would have fixed it, since that is the whole answer."""
+    if provider.model_env:
+        return f"no model: {provider.model_env} is unset"
+    return "no model: its default_model placeholder is unset in .env"
+
+
 class ProviderRouter:
     """Routes a completion request down the configured fallback ladder."""
 
@@ -199,11 +209,13 @@ class ProviderRouter:
         self._clock = clock
         self._default_backoff_seconds = default_backoff_seconds
         self.health: dict[str, ProviderHealth] = {provider.name: ProviderHealth() for provider in self._providers}
+        self._warned_unroutable: set[str] = set()
 
     def ordered_providers(self, task_profile: str, *, urgent: bool = False, emergency: bool = False) -> list[Provider]:
         if task_profile not in TASK_PROFILES:
             raise ValueError(f"unknown task profile: {task_profile}")
 
+        self._warn_once_about_unroutable_rungs()
         eligible = [
             provider
             for provider in self._providers
@@ -297,13 +309,88 @@ class ProviderRouter:
             return bool(provider.endpoint and self._environ.get("OPENROUTER_API_KEY"))
         if not (provider.endpoint and provider.key_env and self._environ.get(provider.key_env)):
             return False
-        # A provider that names a model_env with no discover_chat_model or
-        # default_model fallback has no way to resolve a model at request
-        # time if that env var is unset. Keep it out of the candidate list
-        # rather than letting it enter and no-op through _model_for().
-        if provider.model_env and not provider.discover_chat_model and not provider.default_model:
-            return bool(self._environ.get(provider.model_env))
-        return True
+        return self._can_resolve_model(provider)
+
+    def _warn_once_about_unroutable_rungs(self) -> None:
+        """Say once, out loud, that a configured rung cannot be routed to.
+
+        A key is present, so nothing looks unconfigured; the rung just never
+        serves anything. The old failure mode was worse than silence — the
+        skip *was* recorded, in a ``failures`` list only rendered when every
+        provider failed, so the ladder working perfectly was exactly the
+        condition that hid it.
+
+        Once per provider per process: this runs on every request, and a
+        warning per message would be noise nobody reads.
+        """
+        for name, reason in self.unroutable_reasons().items():
+            if name in self._warned_unroutable:
+                continue
+            self._warned_unroutable.add(name)
+            if reason.startswith("no model"):
+                logger.warning(
+                    "provider %s has a key but cannot be routed to: %s", name, reason
+                )
+
+    def _can_resolve_model(self, provider: Provider) -> bool:
+        """Whether ``_model_for`` could return a model name for this provider.
+
+        A rung that cannot name a model cannot serve a request, so it has no
+        business in the candidate list — it enters, sorts by priority, and is
+        skipped inside ``route()`` with a line appended to ``failures`` that is
+        surfaced *only if every other provider also fails*.
+
+        That is not hypothetical. On 2 Sep 2026 ``groq`` (priority 1) and
+        ``cerebras`` (priority 2) sat at the front of every request and were
+        skipped every time: both declare ``default_model:
+        "${GROQ_DEFAULT_MODEL}"``, ``load_providers`` resolves an unset
+        placeholder to ``None``, and the guard this replaces only fired for
+        providers declaring ``model_env``. Six consecutive live ``latency``
+        calls all went to ``openrouter`` while ``groq`` led the order each
+        time, its ledger entry still reading ``last_status: None``.
+
+        Filling the env vars in makes the symptom disappear; it does not fix
+        this. Any future rung whose ``default_model`` is an unresolved
+        placeholder would be silently unroutable in exactly the same way.
+
+        The three sources are checked in ``_model_for``'s own order, so the two
+        cannot drift apart. ``discover_chat_model`` counts as resolvable
+        without asking: it resolves at request time against a live client, and
+        Mistral is routable exactly that way (``codestral-2508``, live
+        2 Sep 2026) with no ``default_model`` at all.
+        """
+        if provider.model_env and self._environ.get(provider.model_env):
+            return True
+        if provider.discover_chat_model:
+            return True
+        return bool(provider.default_model)
+
+    def unroutable_reasons(self) -> dict[str, str]:
+        """Why each manifest provider is not currently a routing candidate.
+
+        Data, not a report. Blueprint §3.3 asks for a generated
+        "configured-but-not-routable, with a reason" list, and deciding how
+        that list *reads* belongs to ``provider-status-generator``; this is the
+        input it needs, exposed so the reason does not live only in a log line
+        that fires once per process.
+
+        Cooldowns are excluded on purpose: a cooling rung is routable and
+        merely resting, and the ledger already reports it with its status and
+        remaining seconds.
+        """
+        reasons: dict[str, str] = {}
+        for provider in self._providers:
+            if provider.not_a_router_target:
+                reasons[provider.name] = "not a router target"
+            elif not provider.endpoint:
+                reasons[provider.name] = "no endpoint configured"
+            elif not (provider.key_env and self._environ.get(provider.key_env)):
+                reasons[provider.name] = f"no API key in {provider.key_env or 'the manifest'}"
+            elif not self._can_resolve_model(provider):
+                reasons[provider.name] = _unresolvable_model_reason(provider)
+            elif provider.emergency_only:
+                reasons[provider.name] = "emergency only"
+        return reasons
 
     def _key_for(self, provider: Provider) -> str:
         if provider.name == "deepseek" and self._environ.get("DEEPSEEK_VIA_OPENROUTER", "").lower() == "true":

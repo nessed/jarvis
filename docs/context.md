@@ -8,28 +8,26 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `fa3365a Say what the action did, not just that it queued` on `main`, 2 ahead, 0 behind origin.
+**HEAD** `210e07d Stop a denied rung from quietly handing the bill to a paid one` on `main`, 3 ahead, 0 behind origin.
 
-**Working tree:** 9 changed
+**Working tree:** 6 changed
 
 ```
   M  docs/board/README.md
-  M  docs/board/tasks/router-denial-surfacing.md
-  A  docs/consults/2026-09-02-router-denial-surfacing-reading/prompt.md
-  A  docs/consults/2026-09-02-router-denial-surfacing-reading/response.md
-  A  docs/consults/2026-09-02-router-denial-surfacing-reading/verdict.json
+  M  docs/board/USER-TASKS.md
+  M  docs/board/tasks/router-unresolvable-model-rungs.md
   M  docs/state.md
-  M  router/__init__.py
   M  router/routing.py
   M  tests/router/test_routing.py
 ```
 
-**Offline suite:** 1326 passed, 9 deselected, 10 warnings in 66.20s (0:01:06) _(recorded 2026-09-02)_
+**Offline suite:** 1332 passed, 9 deselected, 10 warnings in 83.39s (0:01:23) _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `210e07d` Stop a denied rung from quietly handing the bill to a paid one  _(2026-09-02)_
 - `fa3365a` Say what the action did, not just that it queued  _(2026-09-02)_
 - `bf9efc5` Restart the distill chain, and stop one outage becoming eighty-four rows  _(2026-09-02)_
 - `843bc26` ok  _(2026-09-02)_
@@ -37,7 +35,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `be19942` Give voice a cloud STT tier, and the database a migration runner  _(2026-09-02)_
 - `e4125d4` Reduce the wake-word false-positive test to one command  _(2026-09-02)_
 - `10c736c` Make the multi-session workflow enforce itself  _(2026-09-02)_
-- `c4cc48d` Make the inspector read the two .flp files PyFLP gives up on  _(2026-09-02)_
 
 <!-- END GENERATED -->
 

@@ -1,6 +1,6 @@
 ---
 id: router-unresolvable-model-rungs
-status: ready
+status: done
 lane: AUTO
 priority: 2
 phase: 0
@@ -55,3 +55,82 @@ exactly the same way, at the front of the queue, with nothing surfacing it.
 
 Neither rung appears in `ordered_providers` while its model is unresolvable,
 the reason is visible somewhere a human looks, and the suite is green.
+
+## Log
+
+### 2 September 2026 — done. Three dead rungs, not two.
+
+### The fix
+
+`_configured()` deferred to a model guard that only fired for providers
+declaring `model_env`. `groq`, `cerebras` and `gemini` declare
+`default_model: "${...}"` instead, and `load_providers` resolves an unset
+placeholder to `None`, so all three entered the candidate list, sorted to the
+front by priority, and were skipped inside `route()`.
+
+The skip was recorded — appended to a `failures` list that is rendered **only
+when every provider fails**. So the ladder working correctly was the exact
+condition that kept it invisible.
+
+`_can_resolve_model()` replaces that guard and checks the same three sources
+`_model_for()` uses, in the same order, so the two cannot drift apart:
+
+1. `model_env` present in the environment,
+2. `discover_chat_model`, which resolves at request time,
+3. a `default_model` that actually resolved.
+
+`discover_chat_model` counting as resolvable is what keeps Mistral routable
+with no `default_model` at all — live 2 Sep on `codestral-2508`, and the task
+called that out specifically.
+
+### Measured, not assumed
+
+Against the real manifest and the real `.env`:
+
+```
+unroutable:
+  groq           no model: its default_model placeholder is unset in .env
+  cerebras       no model: its default_model placeholder is unset in .env
+  nvidia_nim     no API key in NVIDIA_API_KEY
+  gemini         no model: its default_model placeholder is unset in .env
+  claude_max     not a router target
+  claude_api     no endpoint configured
+
+order for latency: ['openrouter', 'mistral', 'deepseek']
+order for batch  : ['openrouter', 'mistral', 'deepseek']
+```
+
+**`gemini` is a third rung with the same defect**, which the task did not name
+— it says "two dead rungs". U2 has been updated with the measured list, since
+"the ladder collapses to openrouter/free" was previously an inference and is
+now a printout.
+
+### Step 2: what "the reason is visible" means, without inventing the report
+
+The task is explicit that the report format belongs to
+`provider-status-generator` and must not be invented here. So this task ships
+the *input* and not the presentation:
+
+- `unroutable_reasons()` returns `{provider: reason}`, naming the env var that
+  would fix each one. Cooldowns are deliberately excluded — a cooling rung is
+  routable and merely resting, and the ledger already reports it with its
+  status and remaining seconds.
+- One warning per provider per process, so the fact is not waiting on a task
+  that has not landed yet. Once per process rather than per request: this runs
+  on every message, and a warning per message is noise nobody reads.
+
+`provider-status-generator` is the next `ready` task and can format this
+without re-deriving it.
+
+### Tests
+
+Six added: an unresolved placeholder never becoming a candidate; the same
+provider becoming one once it resolves; `discover_chat_model` still routable;
+a set `model_env` sufficing without a default, and an unset one not; the
+reasons naming the right env var per rung; and the warning firing once across
+five requests rather than five times.
+
+```
+.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp-lane-1
+1332 passed, 9 deselected, 10 warnings in 73.07s
+```

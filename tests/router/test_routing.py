@@ -932,3 +932,104 @@ def test_the_snapshot_carries_nothing_secret():
         "cooldown_seconds_remaining",
         "rate_limit_headers",
     }
+
+
+def test_a_provider_whose_default_model_placeholder_is_unset_never_becomes_a_candidate():
+    """The defect U2 hides but does not fix.
+
+    groq and cerebras sat at the front of every request and were skipped
+    inside route(), which appended a line to a failures list that is only
+    rendered when *every* provider fails. The ladder working was the exact
+    condition that hid it.
+    """
+    manifest = load_providers(environ={})
+    groq = next(p for p in manifest if p.name == "groq")
+
+    assert groq.default_model is None, "an unset placeholder resolves to None at load time"
+
+    router = ProviderRouter([groq], environ={"GROQ_API_KEY": "test-key"})
+
+    assert router.ordered_providers("latency") == []
+    assert router.unroutable_reasons()["groq"] == (
+        "no model: its default_model placeholder is unset in .env"
+    )
+
+
+def test_the_same_provider_becomes_a_candidate_once_the_placeholder_resolves():
+    manifest = load_providers(environ={"GROQ_DEFAULT_MODEL": "llama-3.3-120b"})
+    groq = next(p for p in manifest if p.name == "groq")
+
+    router = ProviderRouter([groq], environ={"GROQ_API_KEY": "test-key"})
+
+    assert [p.name for p in router.ordered_providers("latency")] == ["groq"]
+    assert "groq" not in router.unroutable_reasons()
+
+
+def test_a_provider_that_discovers_its_model_at_request_time_is_still_routable():
+    """Mistral has no default_model at all and is routable (codestral-2508, live 2 Sep)."""
+    mistral = Provider(
+        "mistral",
+        "https://api.mistral.ai/v1",
+        "MISTRAL_API_KEY",
+        1,
+        None,
+        ("batch",),
+        discover_chat_model=True,
+    )
+    router = ProviderRouter([mistral], environ={"MISTRAL_API_KEY": "test-key"})
+
+    assert [p.name for p in router.ordered_providers("batch")] == ["mistral"]
+    assert "mistral" not in router.unroutable_reasons()
+
+
+def test_a_model_env_that_is_set_makes_a_provider_routable_without_a_default():
+    provider = Provider(
+        "custom",
+        "https://custom.example/v1",
+        "CUSTOM_KEY",
+        1,
+        None,
+        ("batch",),
+        model_env="CUSTOM_MODEL",
+    )
+    environ = {"CUSTOM_KEY": "test-key", "CUSTOM_MODEL": "a-model"}
+
+    assert [p.name for p in ProviderRouter([provider], environ=environ).ordered_providers("batch")] == [
+        "custom"
+    ]
+
+    without_model = ProviderRouter([provider], environ={"CUSTOM_KEY": "test-key"})
+    assert without_model.ordered_providers("batch") == []
+    assert without_model.unroutable_reasons()["custom"] == "no model: CUSTOM_MODEL is unset"
+
+
+def test_unroutable_reasons_names_the_env_var_that_would_fix_each_rung():
+    """Blueprint 3.3 asks for configured-but-not-routable *with a reason*.
+
+    This is the data behind that list; provider-status-generator decides how it
+    reads. Cooldowns are deliberately absent: a cooling rung is routable and
+    merely resting, and the ledger already reports it.
+    """
+    manifest = load_providers(environ={})
+    router = ProviderRouter(manifest, environ={"GROQ_API_KEY": "k", "OPENROUTER_API_KEY": "k"})
+
+    reasons = router.unroutable_reasons()
+
+    assert reasons["groq"].startswith("no model")
+    assert reasons["cerebras"] == "no API key in CEREBRAS_API_KEY"
+    assert reasons["claude_max"] == "not a router target"
+    assert "openrouter" not in reasons, "a routable rung has no reason to give"
+
+
+def test_an_unroutable_rung_is_warned_about_once_per_process_not_once_per_request(caplog):
+    """A warning per message would be noise nobody reads."""
+    manifest = load_providers(environ={})
+    groq = next(p for p in manifest if p.name == "groq")
+    router = ProviderRouter([groq], environ={"GROQ_API_KEY": "test-key"})
+
+    with caplog.at_level("WARNING", logger="router.routing"):
+        for _ in range(5):
+            router.ordered_providers("latency")
+
+    warnings = [r for r in caplog.records if "cannot be routed to" in r.getMessage()]
+    assert len(warnings) == 1

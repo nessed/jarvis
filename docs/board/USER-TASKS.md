@@ -22,6 +22,22 @@ once in a batched handoff, and only ones that newly became actionable.
   day found none of the five keys present. 2 minutes. Unblocks
   `live-routing-probe`, which is the only thing that proves the new IDs
   serve.
+
+  **Now measurable, 2 Sep evening.** `router-unresolvable-model-rungs` made
+  the router say which rungs it is refusing and why. Against the current
+  `.env`, **three** are excluded rather than the two previously reported:
+
+  ```
+  groq        no model: its default_model placeholder is unset in .env
+  cerebras    no model: its default_model placeholder is unset in .env
+  gemini      no model: its default_model placeholder is unset in .env
+  nvidia_nim  no API key in NVIDIA_API_KEY
+  ```
+
+  That leaves `openrouter, mistral, deepseek` as the entire ladder for both
+  `latency` and `batch`. Filling in `GROQ_DEFAULT_MODEL`,
+  `CEREBRAS_DEFAULT_MODEL` and `GEMINI_DEFAULT_MODEL` restores the top three
+  rungs by itself.
 - **U3 — Sleep/wake probe.** Send a WhatsApp message with the lid closed,
   wake the laptop, confirm the reply arrives. The one Phase 0 criterion
   with no evidence. You said you'd do it later (1 Sep) — whenever.
