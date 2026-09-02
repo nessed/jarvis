@@ -8,22 +8,32 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `89cba3f Rebuild NEXT from the task files, and file what the day turned up` on `main`, in sync with origin.
+**HEAD** `843bc26 ok` on `main`, in sync with origin.
 
-**Working tree:** 3 changed
+**Working tree:** 12 changed
 
 ```
-  A  docs/blockers/mem0-extraction-not-schema-constrained.md
-  M  docs/board/tasks/backfill-run.md
-  M  docs/board/tasks/board-audit.md
+  M  docs/board/QUESTIONS.md
+  M  docs/board/README.md
+  M  docs/board/USER-TASKS.md
+  M  docs/board/tasks/distill-chain-stall.md
+  M  docs/context.md
+  M  docs/state.md
+  M  executor/handlers/distill.py
+  M  executor/poller.py
+  M  memory/embeddings.py
+  M  tests/executor/test_distill_handler.py
+  M  tests/executor/test_poller.py
+  M  tests/memory/test_embeddings.py
 ```
 
-**Offline suite:** 1289 passed, 9 deselected, 10 warnings in 58.06s _(recorded 2026-09-02)_
+**Offline suite:** 1297 passed, 9 deselected, 10 warnings in 68.46s (0:01:08) _(recorded 2026-09-02)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `843bc26` ok  _(2026-09-02)_
 - `89cba3f` Rebuild NEXT from the task files, and file what the day turned up  _(2026-09-02)_
 - `be19942` Give voice a cloud STT tier, and the database a migration runner  _(2026-09-02)_
 - `e4125d4` Reduce the wake-word false-positive test to one command  _(2026-09-02)_
@@ -31,25 +41,31 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `c4cc48d` Make the inspector read the two .flp files PyFLP gives up on  _(2026-09-02)_
 - `6bd3ad4` Apply Ali's blueprint corrections, and keep one line the audit was wrong about  _(2026-09-02)_
 - `10be80b` Give the router a ledger that outlives one call, and let /status see it  _(2026-09-02)_
-- `34b4bc0` Write the whole Oracle side of Phase 4 before the account exists  _(2026-09-02)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-**Work the NEXT order in `docs/board/README.md`.** It was rebuilt from the
-task files on 2 Sep and is accurate. Item 1 is the only broken system:
-batch distillation died 98 times and has been stalled since 30 Aug, while
-the WhatsApp reply path is 175 rows and all `done`.
+**Work the NEXT order in `docs/board/README.md`.** Memory is no longer the
+broken system: `distill-chain-stall` closed the evening of 2 Sep and the
+distill chain has completed seven live jobs since. Everything `ready` is now
+the router.
 
-**Four things are Ali's, and only these** (details in `QUESTIONS.md` /
+**Five things are Ali's, and only these** (details in `QUESTIONS.md` /
 `USER-TASKS.md`, all with recommendations):
 
+- **U13** — one `git config --global --add safe.directory` line. `.git` is
+  owned by another Windows account, so *every* git command fails and four
+  `test_context_status.py` tests fail with it.
 - **Q12** — drop Pipecat from the desk loop? Blocks `voice-loop`.
 - **Q11** — how long is the router's verification window?
 - **U2** — the five model IDs still are not in `.env`. The ladder collapses
   to `openrouter/free`, which fails structured output ~half the time.
 - **U12** — `SUPABASE_DB_PASSWORD` is empty, so `0003` cannot be applied.
+
+**Q13 is open but blocks nothing:** what to do with the 98 dead-lettered
+`distill_memory` rows. Nothing was lost and there is nothing to re-queue;
+it is disposal only, and "leave them" is recommended.
 
 **Standing constraint:** the FLP writing half stays unbuilt — see
 `docs/board/PARKED.md`. Reading `.flp`s is fine.

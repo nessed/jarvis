@@ -245,6 +245,15 @@ def _chain(clock: Clock, queue: FakeQueue, turns: FakeTurns, extractor: FakeExtr
 def clock(monkeypatch) -> Clock:
     ticker = Clock()
     monkeypatch.setattr(distill_handler, "_utcnow", ticker)
+    # Seeding is rate-limited against a *monotonic* clock, and that limiter's
+    # state is module-level and therefore leaks between tests in one pytest
+    # process. Both halves matter: derive the monotonic reading from the same
+    # fake clock so ``clock.advance`` moves it, and clear the limiter so test
+    # order cannot decide whether a seed is allowed.
+    monkeypatch.setattr(
+        distill_handler, "_monotonic", lambda: (ticker.now - START).total_seconds()
+    )
+    distill_handler.reset_seed_cooldown()
     return ticker
 
 
@@ -788,8 +797,75 @@ def test_seeding_reseeds_once_a_previous_chain_has_finished(clock):
     queue = FakeQueue(clock)
     seed_distill_chain(repository=queue, enabled=True)
     queue.rows[0]["status"] = "done"
+    # A chain that ends and is re-seeded a cooldown later is normal operation;
+    # the throttle below is about the case where that happens every minute.
+    clock.advance(distill_handler.SEED_RESEED_COOLDOWN_SECONDS)
 
     assert seed_distill_chain(repository=queue, enabled=True) is True
+
+
+def test_a_chain_that_keeps_dying_is_re_seeded_at_the_idle_cadence_not_every_minute(clock):
+    """The amplifier behind 84 dead-lettered rows, bounded.
+
+    On 29-30 August 2026 Ollama stopped, every distill row failed in seconds
+    on the embedding dimension probe, and the executor re-seeded immediately
+    after each one dead-lettered. 78 unattended minutes produced 84 rows and
+    distilled nothing: the payload is scheduling metadata only, so not one of
+    them carried work that was lost.
+
+    This drives that exact loop for the same 78 minutes and counts the rows.
+    """
+    queue = FakeQueue(clock)
+    seeds = 0
+
+    for _ in range(78 * 60 // 5):  # 78 minutes at the 5s poll interval
+        if seed_distill_chain(repository=queue, delay_seconds=0, enabled=True):
+            seeds += 1
+        # Whatever the chain seeded dies immediately, as it did when the
+        # dimension probe could not reach Ollama.
+        for row in queue.rows:
+            if row["status"] in {"queued", "running"}:
+                row["status"] = "dead_letter"
+        clock.advance(5)
+
+    # 78 minutes at the 900s cooldown: the first seed, then one per cooldown.
+    assert seeds == 1 + (78 * 60) // int(distill_handler.SEED_RESEED_COOLDOWN_SECONDS)
+    assert seeds < 10, "the live incident produced 84"
+
+
+def test_a_fresh_worker_always_seeds_immediately(clock):
+    """The throttle is per process, so a restart is never made to wait.
+
+    An operator who has just fixed Ollama and restarted the executor must see
+    the chain move, not sit out a cooldown inherited from the broken run.
+    """
+    queue = FakeQueue(clock)
+    assert seed_distill_chain(repository=queue, delay_seconds=0, enabled=True) is True
+    queue.rows[0]["status"] = "dead_letter"
+    assert seed_distill_chain(repository=queue, delay_seconds=0, enabled=True) is False
+
+    distill_handler.reset_seed_cooldown()  # what a new process starts with
+
+    assert seed_distill_chain(repository=queue, delay_seconds=0, enabled=True) is True
+
+
+def test_the_throttle_never_fires_while_the_chain_is_alive(clock):
+    """A live chain returns early, so it must not spend the seed budget.
+
+    The executor calls the seed on every poll. If a healthy chain consumed the
+    allowance, the one moment the chain genuinely needed re-seeding would be
+    the moment the throttle refused.
+    """
+    queue = FakeQueue(clock)
+    assert seed_distill_chain(repository=queue, delay_seconds=0, enabled=True) is True
+
+    for _ in range(500):  # a healthy chain, polled for well over a cooldown
+        assert seed_distill_chain(repository=queue, delay_seconds=0, enabled=True) is False
+        clock.advance(5)
+
+    queue.rows[0]["status"] = "done"
+
+    assert seed_distill_chain(repository=queue, delay_seconds=0, enabled=True) is True
 
 
 def test_the_seed_row_caps_its_attempts_so_a_stuck_chain_cannot_retry_forever(clock):

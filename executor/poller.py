@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -53,6 +54,9 @@ DEFAULT_POLL_INTERVAL_SECONDS = 5.0
 DEFAULT_HANDLER_TIMEOUT_SECONDS = 300.0
 BACKOFF_BASE_SECONDS = 5.0
 BACKOFF_CAP_SECONDS = 300.0
+# The only shape a ``cause`` slug may have before it is written to the hosted
+# jobs table. See ``_describe_failure``.
+_SAFE_CAUSE = re.compile(r"[a-z0-9_]+")
 logger = logging.getLogger(__name__)
 
 
@@ -165,8 +169,9 @@ def poll_once(
     through the same retry/backoff/dead-letter path as any other failure, so
     a kind registered in a later deploy can still succeed on retry. A
     handler that exceeds its timeout is likewise retried, not lost. Every
-    stored diagnostic uses only an exception type, so payloads or provider
-    details cannot leak into the durable queue.
+    stored diagnostic uses only an exception type plus, where the exception
+    offers one, a fixed-vocabulary ``cause`` slug (``_failure_cause``), so
+    payloads or provider details cannot leak into the durable queue.
     """
     job = None
     for kind in kinds_to_claim(kind_filter):
@@ -218,17 +223,43 @@ def poll_once(
         )
         return fail(
             job.id,
-            f"executor handler failed permanently ({type(exc).__name__})",
+            f"executor handler failed permanently ({_describe_failure(exc)})",
             repository=repository,
         )
     except Exception as exc:
         return retry_or_dead_letter(
             job.id,
-            f"executor handler failed ({type(exc).__name__})",
+            f"executor handler failed ({_describe_failure(exc)})",
             backoff_seconds(job.attempts),
             repository=repository,
         )
     return complete(job.id, repository=repository)
+
+
+def _describe_failure(exc: BaseException) -> str:
+    """The exception type, plus its ``cause`` slug when it publishes a safe one.
+
+    An exception *type* is not a diagnosis. Between 29 and 30 August 2026 the
+    live queue collected 84 dead-lettered ``distill_memory`` rows whose entire
+    stored diagnostic was ``executor handler failed (EmbeddingError)``, and
+    that one string covered a timeout, an unreachable Ollama and a model that
+    was never pulled. Two days were spent working out which.
+
+    The message goes into the *hosted* jobs table, so the slug is admitted
+    only if it looks like a fixed-vocabulary discriminator — lowercase ASCII,
+    digits and underscores, at most 40 characters. That is a shape no prompt,
+    turn text, URL or provider payload can pass, which is the point: the check
+    is a privacy boundary, not tidiness. See ``memory.embeddings`` for the
+    vocabulary it was built around.
+    """
+    name = type(exc).__name__
+    cause = getattr(exc, "cause", None)
+    if not isinstance(cause, str):
+        return name
+    slug = cause.strip()
+    if not slug or len(slug) > 40 or not _SAFE_CAUSE.fullmatch(slug):
+        return name
+    return f"{name}: {slug}"
 
 
 def _resolve_registration(

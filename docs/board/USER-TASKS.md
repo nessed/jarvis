@@ -84,5 +84,38 @@ once in a batched handoff, and only ones that newly became actionable.
   committed; `.venv\Scripts\python.exe -m db.migrate --dry-run` will print
   the plan the moment the value lands, and applying it is one command after
   that.
+- **U13 — One `git config` line: `.git` is owned by another Windows account**
+  (1 min, unblocks git for every agent session). Every `git` command in this
+  repo now fails outright:
+
+  ```
+  fatal: detected dubious ownership in repository at
+  'C:/Users/Ali/Desktop/Projects/Code/jarvis'
+  '.../.git' is owned by: DESKTOP-68UQJNR/CodexSandboxOffline
+  but the current user is: DESKTOP-68UQJNR/Ali
+  ```
+
+  `.git` changed owner to the `CodexSandboxOffline` account at some point, so
+  git refuses to touch the repo as `Ali`. It also fails **four**
+  `tests/tools/test_context_status.py` tests, which shell out to `git` — those
+  four are an environment fault, not a regression, and they pass the moment
+  git works.
+
+  The fix is one line, and `agents.md` puts global git config on the
+  ask-first list, so it is yours to run rather than an agent's:
+
+  ```
+  git config --global --add safe.directory C:/Users/Ali/Desktop/Projects/Code/jarvis
+  ```
+
+  Until then agents can work around it per command
+  (`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=...`),
+  which is what `distill-chain-stall` used to commit on 2 Sep — but that has
+  to be re-exported in every shell, and the first session that forgets reads a
+  red suite as a real failure.
+
+  Worth knowing **why** the owner changed if you can tell — a repo whose
+  `.git` another account can write is a bigger question than the warning.
+
 - **U10 — UI-TARS second Windows account** (Phase 5, parked until you
   care): create it, log in once, babysit the first runs.

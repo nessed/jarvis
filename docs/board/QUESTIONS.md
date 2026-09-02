@@ -327,3 +327,34 @@ stop-and-report, confidence high. Full finding:
 Blocks: `voice-loop`, and therefore `voice-command-ingress` behind it.
 
 **Answer:** _pending_
+
+## Q13 — What happens to the 98 dead-lettered `distill_memory` rows?
+
+The chain is fixed and running again (`distill-chain-stall`, 2 Sep 2026), so
+this is only about the wreckage it left.
+
+**Nothing was lost.** Every one of those rows is a chain *link*, not a unit
+of work: the payload is `{"reason": "seed"}` and nothing else, because the
+handler deliberately keeps turn text out of the hosted queue. The work
+itself lives in the local conversation store, and it was still there — the
+7 turns distilled today came straight off that backlog. So **re-queueing
+them would achieve nothing**, and that half of the question answers itself.
+
+What is left is disposal, and they are the only evidence of the outage.
+
+- **A (recommended): leave them.** They cost one `dead_letter` count on
+  `/status` and nothing else. The failure they record is the reason
+  `EmbeddingError` now carries a `cause`, and the reason the seed is
+  throttled; deleting the evidence a week after reading it is how the same
+  incident gets diagnosed twice.
+- B: delete them once `db-maintenance`'s retention pass exists, as part of
+  it rather than as a special case.
+- C: delete them now.
+
+B and C are destructive writes to the live table, so neither happens without
+you. Q9's carve-out on the seven orphaned `queue-durability-probe-` rows is
+the precedent: reported, left in place.
+
+Blocks: nothing. The chain runs regardless.
+
+**Answer:** _pending_

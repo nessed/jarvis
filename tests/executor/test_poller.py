@@ -895,3 +895,77 @@ def test_the_poll_loop_publishes_each_cycle(monkeypatch):
 
     assert poller.main(["--no-heartbeat"]) == 0
     assert published == [None, "state"]
+
+
+def test_poll_once_records_a_safe_cause_slug_alongside_the_exception_type():
+    """``EmbeddingError`` alone was not a diagnosis; the slug is what tells them apart.
+
+    84 dead-lettered ``distill_memory`` rows on 29-30 August 2026 stored one
+    string for three different failures. See ``memory.embeddings``.
+    """
+    repository = FakeJobs(_job(attempts=1, max_attempts=5))
+
+    class Unreachable(RuntimeError):
+        cause = "unavailable"
+
+    def broken_handler(job: Job) -> None:
+        raise Unreachable("http://127.0.0.1:11434 refused the connection")
+
+    result = poll_once(repository=repository, handler=broken_handler)
+
+    assert result is not None
+    assert result.checkpoint["error"] == {
+        "message": "executor handler failed (Unreachable: unavailable)"
+    }
+    assert "11434" not in result.checkpoint["error"]["message"]
+
+
+def test_poll_once_refuses_a_cause_that_is_not_a_fixed_vocabulary_slug():
+    """The slug shape is a privacy boundary: the checkpoint is hosted.
+
+    Anything that could be free text — a prompt, a turn, a URL, a key — fails
+    the shape test and is dropped back to the bare exception type.
+    """
+    unsafe = [
+        "Ali said he lives in Lahore",  # spaces and capitals
+        "sk-abc123DEF",  # a key shape
+        "http://127.0.0.1:11434/api/embed",  # a URL
+        "x" * 41,  # over the length cap
+        "",
+        None,
+        b"unavailable",
+        17,
+    ]
+
+    for cause in unsafe:
+        repository = FakeJobs(_job(attempts=1, max_attempts=5))
+
+        class Leaky(RuntimeError):
+            pass
+
+        Leaky.cause = cause
+
+        def broken_handler(job: Job) -> None:
+            raise Leaky("boom")
+
+        result = poll_once(repository=repository, handler=broken_handler)
+
+        assert result is not None
+        assert result.checkpoint["error"] == {"message": "executor handler failed (Leaky)"}, cause
+
+
+def test_poll_once_records_a_cause_on_the_permanent_failure_path_too():
+    repository = FakeJobs(_job(attempts=1, max_attempts=5))
+
+    class GoneForGood(FileNotFoundError):
+        cause = "missing_target"
+
+    def broken_handler(job: Job) -> None:
+        raise GoneForGood("C:/private/path/to/a/project.flp")
+
+    result = poll_once(repository=repository, handler=broken_handler)
+
+    assert result is not None and result.status == "failed"
+    assert result.checkpoint["error"] == {
+        "message": "executor handler failed permanently (GoneForGood: missing_target)"
+    }

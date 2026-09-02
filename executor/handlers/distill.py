@@ -70,6 +70,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -107,6 +108,29 @@ _DEFAULT_EXTRACTION_TIMEOUT_SECONDS = 90.0
 
 # A distill row never fans out, so a stuck one must not be retried for long.
 DISTILL_MAX_ATTEMPTS = 3
+
+# How long ``seed_distill_chain`` waits before seeding *again* in one process.
+#
+# The seed is idempotent and the executor calls it every poll, which is right
+# while the chain is alive: the check is one cheap query and it returns early.
+# It is wrong the moment the chain starts dying. On 29-30 August 2026 Ollama
+# stopped at 00:35 local, every distill row then failed in seconds on the
+# dimension probe, and each one dead-lettered after three attempts and was
+# re-seeded immediately. That loop ran unattended for 78 minutes and produced
+# 84 dead-lettered rows — one outage, amplified ~65x per hour, against a
+# hosted database. None of them carried work: the payload is
+# ``{"reason": ...}`` and the actual backlog lives in the local conversation
+# store, so the whole 78 minutes bought exactly nothing.
+#
+# Deliberately equal to the idle cooldown: a chain that died costs no more
+# than a chain that had nothing to do. Recovery is bounded by the same 15
+# minutes either way, and a fresh process still seeds immediately, so a
+# restart is never delayed.
+SEED_RESEED_COOLDOWN_SECONDS = DEFAULT_IDLE_COOLDOWN_SECONDS
+
+# Module-level and therefore per-process, which is exactly the scope wanted:
+# one long-lived executor, and a restart that begins with a clean slate.
+_last_seeded_monotonic: float | None = None
 
 
 class ChainQueue(Protocol):
@@ -335,6 +359,7 @@ def seed_distill_chain(
     repository: JobRepository | None = None,
     delay_seconds: float = DEFAULT_BUSY_COOLDOWN_SECONDS,
     enabled: bool | None = None,
+    reseed_cooldown_seconds: float = SEED_RESEED_COOLDOWN_SECONDS,
 ) -> bool:
     """Start the chain if it is not already running. Returns whether it enqueued.
 
@@ -342,7 +367,17 @@ def seed_distill_chain(
     never fork a second chain. Two chains would be two competitors for the one
     serial Ollama, which is the exact failure this whole design exists to
     prevent.
+
+    Idempotence is not enough on its own, though, because it says nothing about
+    *rate*. This process seeds at most once per ``reseed_cooldown_seconds``;
+    see that constant for the 78 minutes that bought it. The first seed in a
+    process is always immediate, so a restart recovers at once, and the
+    cooldown is only consulted when a seed would actually be written — a call
+    that returns early because the chain is alive costs nothing and leaves the
+    clock alone.
     """
+    global _last_seeded_monotonic
+
     if not (distillation_enabled() if enabled is None else enabled):
         return False
     queue = repository if repository is not None else _default_repository()
@@ -351,8 +386,31 @@ def seed_distill_chain(
         raise TypeError("seeding the distill chain needs a queue that can report open jobs")
     if check(DISTILL_JOB_KIND):
         return False
+
+    now = _monotonic()
+    if _last_seeded_monotonic is not None and now - _last_seeded_monotonic < reseed_cooldown_seconds:
+        # The chain has died at least twice in quick succession, so something
+        # underneath it is broken and re-seeding now would only widen the
+        # crater. One line per suppression, at warning level, so the log says
+        # the chain is down rather than going quiet.
+        logger.warning(
+            "not re-seeding the %s chain: the last seed was %.0fs ago and the chain is already "
+            "gone again, so something below it is failing; waiting %.0fs between seeds",
+            DISTILL_JOB_KIND,
+            now - _last_seeded_monotonic,
+            reseed_cooldown_seconds,
+        )
+        return False
+
     _enqueue_successor(delay_seconds, "seed", repository=queue)
+    _last_seeded_monotonic = now
     return True
+
+
+def reset_seed_cooldown() -> None:
+    """Forget when this process last seeded. For tests and for a fresh worker."""
+    global _last_seeded_monotonic
+    _last_seeded_monotonic = None
 
 
 def _repository_live_work_check(repository: JobRepository | None) -> LiveWorkCheck:
@@ -473,6 +531,16 @@ def _enqueue_successor(
         max_attempts=DISTILL_MAX_ATTEMPTS,
         repository=repository,
     )
+
+
+def _monotonic() -> float:
+    """Seeding's clock, separate from ``_utcnow`` and for the same reason.
+
+    Monotonic rather than wall-clock: the seed throttle is a rate limit, and a
+    laptop that suspends, resumes, or has its clock corrected must not be able
+    to talk it into either firing early or never firing again.
+    """
+    return time.monotonic()
 
 
 def _utcnow() -> datetime:

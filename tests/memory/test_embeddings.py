@@ -3,7 +3,12 @@ import json
 import httpx
 import pytest
 
-from memory.embeddings import EmbeddingError, OllamaEmbeddingConfig, OllamaEmbeddingProvider
+from memory.embeddings import (
+    EMBEDDING_FAILURE_CAUSES,
+    EmbeddingError,
+    OllamaEmbeddingConfig,
+    OllamaEmbeddingProvider,
+)
 
 
 def fake_transport(handler):
@@ -94,3 +99,97 @@ def test_http_model_failure_does_not_include_response_body():
         provider.embed(["hello"])
 
     assert "do-not-expose-this-body" not in str(error.value)
+
+
+def test_every_failure_carries_a_distinct_cause_from_the_published_vocabulary():
+    """One exception type covered three different failures in the live queue.
+
+    Between 29 and 30 August 2026, 84 dead-lettered ``distill_memory`` rows
+    stored only ``EmbeddingError``. These are the causes that had been
+    collapsed into it.
+    """
+
+    def raises(fn):
+        with pytest.raises(EmbeddingError) as error:
+            fn()
+        return error.value.cause
+
+    def transport_raising(exc_factory):
+        return fake_transport(lambda request: (_ for _ in ()).throw(exc_factory(request)))
+
+    def provider(handler):
+        return OllamaEmbeddingProvider(
+            OllamaEmbeddingConfig(model="chosen"), transport=fake_transport(handler)
+        )
+
+    observed = {
+        "not_configured": raises(lambda: OllamaEmbeddingConfig.from_environ({})),
+        "bad_timeout": raises(
+            lambda: OllamaEmbeddingConfig.from_environ(
+                {"OLLAMA_EMBEDDING_MODEL": "m", "OLLAMA_EMBEDDING_TIMEOUT_SECONDS": "soon"}
+            )
+        ),
+        "invalid_url": raises(lambda: OllamaEmbeddingConfig(model="m", base_url="not-a-url")),
+        "non_loopback_url": raises(
+            lambda: OllamaEmbeddingConfig(model="m", base_url="https://example.com")
+        ),
+        "invalid_input": raises(lambda: provider(lambda r: httpx.Response(200)).embed([])),
+        "timeout": raises(
+            lambda: OllamaEmbeddingProvider(
+                OllamaEmbeddingConfig(model="chosen"),
+                transport=transport_raising(lambda r: httpx.ReadTimeout("slow", request=r)),
+            ).embed(["hello"])
+        ),
+        "unavailable": raises(
+            lambda: OllamaEmbeddingProvider(
+                OllamaEmbeddingConfig(model="chosen"),
+                transport=transport_raising(lambda r: httpx.ConnectError("refused", request=r)),
+            ).embed(["hello"])
+        ),
+        "http_404": raises(lambda: provider(lambda r: httpx.Response(404)).embed(["hello"])),
+        "invalid_json": raises(
+            lambda: provider(lambda r: httpx.Response(200, text="not json")).embed(["hello"])
+        ),
+        "malformed_response": raises(
+            lambda: provider(lambda r: httpx.Response(200, json=[1, 2])).embed(["hello"])
+        ),
+        "vector_count_mismatch": raises(
+            lambda: provider(lambda r: httpx.Response(200, json={"embeddings": []})).embed(["hello"])
+        ),
+        "empty_vector": raises(
+            lambda: provider(lambda r: httpx.Response(200, json={"embeddings": [[]]})).embed(["hello"])
+        ),
+        "non_numeric_value": raises(
+            lambda: provider(lambda r: httpx.Response(200, json={"embeddings": [["x"]]})).embed(["hello"])
+        ),
+        "non_finite_value": raises(
+            lambda: provider(lambda r: httpx.Response(200, text='{"embeddings": [[NaN]]}')).embed(["hello"])
+        ),
+        "dimension_mismatch": raises(
+            lambda: provider(lambda r: httpx.Response(200, json={"embeddings": [[1.0], [1.0, 2.0]]})).embed(
+                ["a", "b"]
+            )
+        ),
+    }
+
+    assert {expected: observed[expected] for expected in observed} == {
+        expected: expected for expected in observed
+    }
+    # Everything but the interpolated HTTP status is a published constant, so a
+    # reader who finds a cause in a checkpoint can grep for it.
+    assert {c for c in observed if not c.startswith("http_")} <= EMBEDDING_FAILURE_CAUSES
+
+
+def test_a_cause_never_carries_interpolated_content():
+    """The slug reaches the hosted jobs table; the message never does."""
+    provider = OllamaEmbeddingProvider(
+        OllamaEmbeddingConfig(model="chosen"),
+        transport=fake_transport(lambda request: httpx.Response(404, text="do-not-expose-this-body")),
+    )
+
+    with pytest.raises(EmbeddingError) as error:
+        provider.embed(["a private turn about Ali"])
+
+    assert error.value.cause == "http_404"
+    assert "do-not-expose-this-body" not in error.value.cause
+    assert "private turn" not in error.value.cause

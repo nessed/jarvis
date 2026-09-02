@@ -105,41 +105,40 @@ than by hand. Seven tasks landed that day — `action-worker`,
 from what they found.
 
 Phase 2's producer/consumer gap is closed: WhatsApp text becomes real action
-jobs and a worker claims them. The open weight has moved to the **router**
-(four tasks implementing Ali's §3.3, which the blueprint now states and the
-code does not yet do) and to **memory**, which is the one genuinely broken
-system — see item 1.
+jobs and a worker claims them. Memory is closed too — `distill-chain-stall`
+landed the evening of 2 Sep and the distill chain has completed seven live
+jobs since. The open weight is now entirely on the **router**: four tasks
+implementing Ali's §3.3, which the blueprint states and the code does not yet
+do.
 
 Ready now:
 
-1. `distill-chain-stall` — the memory path is down. 98 dead-lettered `distill_memory` rows, then one
-   ripe row unclaimed since 30 Aug. The reply path is healthy; this is not
-2. `action-outcome-reply` — an enqueued action says "queued as job X" and never says whether it worked
-3. `router-denial-surfacing` — §3.3 says a 401/402/403 cools down **and surfaces**. Only the cooldown
+1. `action-outcome-reply` — an enqueued action says "queued as job X" and never says whether it worked
+2. `router-denial-surfacing` — §3.3 says a 401/402/403 cools down **and surfaces**. Only the cooldown
    shipped; 402 still falls through, possibly to a paid rung
-4. `router-unresolvable-model-rungs` — `groq` and `cerebras` sort to the front of every request and are silently
+3. `router-unresolvable-model-rungs` — `groq` and `cerebras` sort to the front of every request and are silently
    skipped — unresolved `${...}` default_model, uncaught by `_configured()`
-5. `router-cost-class-ordering` — §3.3's cost-class-then-p50 ordering. `providers.yaml` has a static int and
+4. `router-cost-class-ordering` — §3.3's cost-class-then-p50 ordering. `providers.yaml` has a static int and
    no `cost_class`; Cerebras being trial-not-free already breaks the old model
-6. `provider-status-generator` — §3.3's two generated lists. `blueprint-corrections` left them empty on
+5. `provider-status-generator` — §3.3's two generated lists. `blueprint-corrections` left them empty on
    purpose rather than hand-write what the spec says is generated
-7. `pytest-addopts` — **barrier** — run only when `work_board_claim.py list` is empty. Also
+6. `pytest-addopts` — **barrier** — run only when `work_board_claim.py list` is empty. Also
    carries the fixed-`--basetemp` collision, partly addressed by `agent-harness`
-8. `board-audit` — recurring; the fallback when nothing else is ready
+7. `board-audit` — recurring; the fallback when nothing else is ready
 
 Blocked, in the order they'll matter once unblocked:
 
-9. `db-maintenance` — **U12**. Runner, ledger and `0003` are built, tested and committed;
+8. `db-maintenance` — **U12**. Runner, ledger and `0003` are built, tested and committed;
    `SUPABASE_DB_PASSWORD` is an empty placeholder so the DDL cannot be applied
-10. `voice-loop` — **Q12** — drop Pipecat from the desk loop? Recommendation filed
-11. `router-eligibility-window` — **Q11** — how long the verification window is
-12. `live-routing-probe` — **U2**. Now costing something measurable: the ladder collapses to
+9. `voice-loop` — **Q12** — drop Pipecat from the desk loop? Recommendation filed
+10. `router-eligibility-window` — **Q11** — how long the verification window is
+11. `live-routing-probe` — **U2**. Now costing something measurable: the ladder collapses to
     `openrouter/free`, which answered a JSON prompt with `User Safety: safe`
     on two of four probes
-13. `voice-command-ingress` — waits on `voice-loop`, so behind Q12
-14. `vps-harden-deploy` — **U7**, after `phase4-prep` (done)
-15. `bus-offbox-packaging` — after `vps-harden-deploy`
-16. `cloud-routine-wire` — **U8**, after `bus-offbox-packaging`
+12. `voice-command-ingress` — waits on `voice-loop`, so behind Q12
+13. `vps-harden-deploy` — **U7**, after `phase4-prep` (done)
+14. `bus-offbox-packaging` — after `vps-harden-deploy`
+15. `cloud-routine-wire` — **U8**, after `bus-offbox-packaging`
 
 USER items live in `USER-TASKS.md`. Decisions live in `QUESTIONS.md`.
 Deliberately-not-being-done items live in `PARKED.md` — read it before
