@@ -1,92 +1,163 @@
-# Handoff
+# Handoff — 3 September 2026
 
-The one place agents write to when they need Ali. Overwritten, not appended:
-this is what is waiting on him *now*. Anything that stops being true gets
-removed. History lives in `docs/history/`, questions in `QUESTIONS.md`,
-hands-and-accounts steps in `USER-TASKS.md`; this file points at them.
-
-Written by whichever lane runs out of work first; the other lanes append a
-line rather than sending a second notification. One `PushNotification` per
-rewrite.
+Nine board tasks landed in one session. The board has nothing `ready` left
+except the recurring audit, which ran this session. **Everything else is
+waiting on you: four actions and two decisions.**
 
 ---
 
-**Written 2 Sep 2026 by CORE.** The board still has eight ready tasks, so
-nothing here blocks work — but four items are yours alone, and one thing is
-broken that you should know about.
+## Do these four, in this order
 
-## One thing is broken
+**U13 — one line, and it unblocks everything else you touch.** Every `git`
+command in this repo fails outright:
 
-**Batch distillation has been down since 30 August.** Memory is not being
-built.
+```
+fatal: detected dubious ownership in repository at 'C:/Users/Ali/Desktop/Projects/Code/jarvis'
+'.../.git' is owned by: DESKTOP-68UQJNR/CodexSandboxOffline
+but the current user is: DESKTOP-68UQJNR/Ali
+```
 
-- 98 of the queue's 103 dead-lettered rows are `distill_memory`, all inside a
-  32-hour window on 29–30 Aug: 83 `EmbeddingError`, 12 `LLMError`, 3 stale
-  timeouts.
-- Since then it has been *stalled*, not dead: exactly one row is queued, ripe
-  since 30 Aug 20:53, unclaimed for two days.
-- Your reply path is fine — 175 `whatsapp_webhook` rows, every one `done`.
+The fix:
 
-Filed as `distill-chain-stall`, at the top of NEXT. No action needed from
-you; an agent takes it next.
+```
+git config --global --add safe.directory C:/Users/Ali/Desktop/Projects/Code/jarvis
+```
 
-## Four things only you can do
+`agents.md` puts global git config on the ask-first list, so it is yours to
+run. It also fails four `test_context_status.py` tests, and it is why
+`.pytest_cache` is unwritable — one fault, three symptoms. **Worth knowing
+why `.git` changed owner if you can tell.** A repo another account can write
+is a bigger question than the warning.
 
-Ordered by what they unblock. Each has a full write-up where it lives.
+**U14 — send one WhatsApp message** (1 min, needs `start-jarvis.bat` running).
 
-1. **Q12 — drop Pipecat from the desk loop?** (`QUESTIONS.md`)
-   `voice-loop` stopped before writing a line because five of its six stages
-   would be custom subclasses. Recommendation and a second opinion are filed.
-   Blocks `voice-loop` and `voice-command-ingress`.
+> what wifi interfaces does this laptop have?
 
-2. **U2 — the five model IDs still are not in `.env`.** (`USER-TASKS.md`)
-   You said "pasted"; a key-name check finds none of them. This is now
-   costing something measurable, not hypothetical: `groq` and `cerebras` sort
-   to the front of every request and are silently skipped, so the ladder
-   collapses to `openrouter/free` — which answered a JSON-only prompt with
-   the string `User Safety: safe` on two of four probes. WhatsApp commands
-   fail safe when that happens (they read as chat), but they only work as
-   often as that one rung behaves.
+You should get **two** replies a few seconds apart:
 
-3. **U12 — `SUPABASE_DB_PASSWORD` is an empty placeholder.**
-   (`USER-TASKS.md`) The migration runner, its ledger and migration `0003`
-   are built, tested and committed. The REST key you have can read and write
-   rows but cannot run DDL, so nothing can be applied until this lands. Two
-   minutes: Supabase dashboard → Project Settings → Database.
+```
+On it: list wifi interfaces. Queued as job a8b4785b.
+Done: list wifi interfaces. Wi-Fi (connected).
+```
 
-4. **Q11 — how long is the router's "verification window"?**
-   (`QUESTIONS.md`) Your own §3.3 makes a rung ineligible without a recent
-   verified 200. Recommendation is 24h plus an eligible-but-last cold start.
-   Blocks only `router-eligibility-window`.
+The machine half is proved live end to end. The half with your thumb in it
+is not, and no test can prove it.
 
-## One two-minute sensory check, whenever
+**U2 — paste three model IDs into `.env`.** This is no longer a guess. The
+router now reports what it is refusing and why:
 
-**U11 — send one code-switched voice note with whisper-server stopped.**
-The Groq STT fallback is live and word-perfect on English. Under the
-production `ur` language hint a pure-English test clip came back as garbage,
-which is the documented trade — but a synthetic English clip is not how you
-talk, so it proves nothing about your real messages. One normal Urdu/English
-note settles whether the fallback needs its own language setting.
+```
+groq      no model: its default_model placeholder is unset in .env
+cerebras  no model: its default_model placeholder is unset in .env
+gemini    no model: its default_model placeholder is unset in .env
+```
 
-## What landed on 2 September
+That leaves `openrouter, mistral, deepseek` as your entire ladder. Your own
+values from Q5 are in `docs/state.md`.
 
-Eleven tasks across four parallel sessions. From this one:
+**U12 — fill `SUPABASE_DB_PASSWORD`.** Unblocks `db-maintenance`'s live half.
+The runner, its ledger and migration `0003` are all built, tested and
+committed; the key is in `.env` and empty.
 
-- **`action-worker`** — the four action job kinds had no consumer at all
-  (`--kind` took one value). A third supervised worker now owns them.
-- **`enqueue-classifier`** — WhatsApp text becomes real action jobs, on your
-  closed allowlist, with confirm-first on anything irreversible. Live: three
-  wifi queries classified, enqueued and completed; "kill the chrome process"
-  asked first and enqueued nothing.
-- **`router-cooldown-ledger`** — cooldowns now outlive a single call, and
-  `/status` reports the ledger of the process that actually routes instead of
-  the bus's, which never routes anything.
-- **`blueprint-corrections`** — your §3.3 applied verbatim, five provider
-  facts re-verified against current sources. One audit recommendation was
-  wrong and is flagged rather than followed.
-- **`stt-groq-fallback`** — a dead whisper-server no longer means silence.
-- **`db-maintenance`** — runner and ledger built; blocked on U12 above.
-- **`board-audit`** — NEXT is now generated from the task files, and seven
-  new tasks were filed from what the day's work turned up.
+---
 
-Detail in each task's Log under `docs/board/tasks/`, and in `docs/state.md`.
+## Decide these two
+
+**Q12 — drop Pipecat from the desk loop?** Recommendation filed: yes, keep
+Silero VAD. Five of six stages become custom code either way. Blocks
+`voice-loop` and `voice-command-ingress` behind it.
+
+**Q11 — how long is the router's verification window?** Recommendation:
+"24h + eligible-but-last". It is the last of §3.3's five clauses the code
+does not implement; the other four shipped this session.
+
+Two more questions are filed and block nothing: **Q13** (what to do with 98
+dead-lettered rows — recommendation: leave them) and **Q14**, below.
+
+---
+
+## What landed
+
+**Memory was down and is running.** It had been dead since 30 August. Two
+causes, neither in the chain's own logic: Ollama stopped at 00:35 on 31 Aug,
+and the `background-worker` process was killed at 01:53 and never restarted.
+Seven live jobs have completed since, seven turns distilled, zero failures.
+
+The 98 dead-lettered rows carried no work — the payload is scheduling
+metadata and the real backlog is local — so nothing was lost and there is
+nothing to re-queue. The re-seed loop that turned one outage into 84 rows in
+78 minutes is now rate-limited.
+
+**An action tells you whether it worked.** A WhatsApp command used to say
+"queued as job X" and then nothing, whether it succeeded, failed, or
+dead-lettered. The outcome now comes back as a second message, including on
+failure — which is the case where silence was worst.
+
+**Four router tasks, all of §3.3 except the verification window.**
+
+- A denied rung (401/402/403) no longer quietly falls through to one that
+  costs money.
+- Three rungs that sat at the front of every request unserved are now
+  excluded, with the env var that would fix each named.
+- The ladder orders by cost class first, then by measured latency inside a
+  class. Cerebras is `trial`, not `free`, since its free tier became a $5
+  credit.
+- `state.md`'s provider lists are generated, not typed.
+
+**Two things that were quietly costing time.**
+
+`pytest -q` works bare now. The flags moved into config, and a fixed
+`--basetemp` was dropped entirely — two sessions running the suite at once
+were deleting each other's temp files, which reads exactly like a flaky
+suite. Proved both ways.
+
+And the "offline" suite was reaching the internet: five tests built a live
+Supabase client they never used, so a wifi blip turned the commit gate red.
+A guard now refuses any non-loopback connection. **The suite went from 77s to
+42s** — nearly half its runtime was network it should never have touched.
+
+---
+
+## Two things worth your attention
+
+**Q14 — the backfill is stuck between two of your own answers, 49 minutes
+apart.** On 2 Sep at 01:53 you amended blueprint §1.3 to say fact extraction
+uses `json_object` with pydantic validation, *not* constrained JSON-schema
+decoding — "that is what shipped and what the code does". At 02:42 a blocker
+was filed arguing the opposite, and quoting §1.3's *pre-amendment* text as
+its justification.
+
+The measurements in that blocker are good: unconstrained decoding produced
+invalid JSON twice at real chunk sizes and aborted the run, while constrained
+held at every size tested. But the fix it recommends is now a request to
+change the spec back, which is yours. Recommendation: re-amend and file the
+task.
+
+**`backfill-run` was invisible on the board.** Nine task files are blocked;
+NEXT listed eight. It had been missing since the 2 Sep rebuild, so nobody
+would have picked it up even after its gate cleared. Now listed.
+
+---
+
+## Numbers
+
+```
+Nine commits, bf9efc5..ba80f71
+Board: 18 done, 9 blocked, 1 ready (the recurring audit)
+
+.venv\Scripts\python.exe -m pytest -q
+1367 passed, 9 deselected in 42.38s
+
+.venv\Scripts\python.exe -m pytest -q -m live tests/live
+1 passed, 1 warning in 29.97s
+```
+
+Three design decisions were consulted rather than guessed, and each verdict's
+flip-conditions were checked against the tree rather than accepted on trust:
+`docs/consults/2026-09-02-action-outcome-reply-shape/`,
+`-router-denial-surfacing-reading/`, `-router-p50-storage-scope/`.
+
+**Not done, and deliberately:** `backfill-run` (Q14), `voice-loop` (Q12),
+`router-eligibility-window` (Q11), `db-maintenance` (U12), `live-routing-probe`
+(U2), and the four Phase 4 tasks behind U7/U8. The FLP writing half stays
+unbuilt per `PARKED.md`.
