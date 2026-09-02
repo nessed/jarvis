@@ -77,19 +77,59 @@ def test_the_hook_runs_the_documented_offline_suite_command() -> None:
 
     # CLAUDE.md's Commands section names this exact invocation as "required
     # before any commit". If the hook's actual command drifts from it, the hook
-    # is no longer proving what CLAUDE.md claims it proves. Compared whole, not
-    # flag by flag: '-p no:cacheprovider' must keep its value, and a flag-set
-    # check would pass on '-p something_else'.
+    # is no longer proving what CLAUDE.md claims it proves.
     assert documented.startswith("-m pytest"), documented
     assert documented in hook, (
         f"CLAUDE.md documents {documented!r} as required before any commit, "
         f"but .githooks/pre-commit does not run that command"
     )
 
-    # Not stylistic. The system TEMP directory is locked down on this machine,
-    # so pytest's default cache and scratch dirs fail with PermissionError.
-    assert "-p no:cacheprovider" in documented
-    assert "--basetemp=.pytest-basetemp" in documented
+
+def test_the_two_machine_workarounds_still_exist_where_they_moved_to() -> None:
+    """They left the command line on 2 Sep 2026; they must not have left entirely.
+
+    This test used to assert both flags appeared in the documented command.
+    That was the right guard in the wrong place once they moved into
+    configuration -- the thing worth protecting was never the command line, it
+    was that the workarounds exist at all. Both faults are still real:
+    ``.pytest_cache`` is owned by another Windows account (USER-TASKS U13) and
+    the system TEMP is locked down.
+    """
+    pytest_ini = (REPO_ROOT / "pytest.ini").read_text(encoding="utf-8")
+    conftest = (REPO_ROOT / "conftest.py").read_text(encoding="utf-8")
+
+    assert "-p no:cacheprovider" in pytest_ini
+    assert "PYTEST_DEBUG_TEMPROOT" in conftest
+
+
+def test_no_fixed_basetemp_is_reintroduced_on_any_command_line() -> None:
+    """A fixed basetemp is shared mutable state between parallel lanes.
+
+    Pytest empties an explicitly-given basetemp at session start, so two
+    concurrent sessions delete each other's live ``tmp_path`` directories.
+    Reproduced deliberately on 2 Sep 2026: two concurrent ``tests/voice/`` runs
+    gave ``2 errors`` and ``1 failed`` while each passed alone. It reads exactly
+    like a flaky suite and is not one.
+
+    ``PYTEST_DEBUG_TEMPROOT`` in ``conftest.py`` replaced it, which keeps
+    pytest's own concurrency-safe ``pytest-<n>`` numbering. Putting
+    ``--basetemp`` back anywhere durable undoes that.
+    """
+    for path in (
+        REPO_ROOT / ".githooks" / "pre-commit",
+        REPO_ROOT / "pytest.ini",
+    ):
+        # Comments in both files explain *why* it is gone, and saying so is
+        # not the same as doing it.
+        code = [
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith("#")
+        ]
+        assert not any("--basetemp" in line for line in code), (
+            f"{path.name} pins a fixed --basetemp; parallel lanes will delete "
+            "each other's tmp_path directories"
+        )
 
 
 def test_the_hook_does_not_skip_the_jobs_integration_file_by_path() -> None:

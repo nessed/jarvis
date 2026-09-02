@@ -25,6 +25,10 @@ memory.db-*
 .pytest-basetemp/
 .pytest-basetemp-*/
 .pytest-typing-diagnosis/
+# The scratch root conftest.py points PYTEST_DEBUG_TEMPROOT at, since 2 Sep
+# 2026. pytest does its own pytest-of-<user>/pytest-<n> numbering underneath,
+# which is safe for parallel lanes in a way a fixed --basetemp was not.
+.pytest-temp/
 .context-status.json
 .executor-heartbeat
 test_projects/

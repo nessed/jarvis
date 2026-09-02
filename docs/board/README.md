@@ -114,23 +114,21 @@ and the code does not yet do.
 
 Ready now:
 
-1. `pytest-addopts` — **barrier** — run only when `work_board_claim.py list` is empty. Also
-   carries the fixed-`--basetemp` collision, partly addressed by `agent-harness`
-2. `board-audit` — recurring; the fallback when nothing else is ready
+1. `board-audit` — recurring; the fallback when nothing else is ready
 
 Blocked, in the order they'll matter once unblocked:
 
-3. `db-maintenance` — **U12**. Runner, ledger and `0003` are built, tested and committed;
+2. `db-maintenance` — **U12**. Runner, ledger and `0003` are built, tested and committed;
    `SUPABASE_DB_PASSWORD` is an empty placeholder so the DDL cannot be applied
-4. `voice-loop` — **Q12** — drop Pipecat from the desk loop? Recommendation filed
-5. `router-eligibility-window` — **Q11** — how long the verification window is
-6. `live-routing-probe` — **U2**. Now costing something measurable: the ladder collapses to
+3. `voice-loop` — **Q12** — drop Pipecat from the desk loop? Recommendation filed
+4. `router-eligibility-window` — **Q11** — how long the verification window is
+5. `live-routing-probe` — **U2**. Now costing something measurable: the ladder collapses to
     `openrouter/free`, which answered a JSON prompt with `User Safety: safe`
     on two of four probes
-7. `voice-command-ingress` — waits on `voice-loop`, so behind Q12
-8. `vps-harden-deploy` — **U7**, after `phase4-prep` (done)
-9. `bus-offbox-packaging` — after `vps-harden-deploy`
-10. `cloud-routine-wire` — **U8**, after `bus-offbox-packaging`
+6. `voice-command-ingress` — waits on `voice-loop`, so behind Q12
+7. `vps-harden-deploy` — **U7**, after `phase4-prep` (done)
+8. `bus-offbox-packaging` — after `vps-harden-deploy`
+9. `cloud-routine-wire` — **U8**, after `bus-offbox-packaging`
 
 USER items live in `USER-TASKS.md`. Decisions live in `QUESTIONS.md`.
 Deliberately-not-being-done items live in `PARKED.md` — read it before

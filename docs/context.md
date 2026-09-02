@@ -8,24 +8,30 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `d8b1970 Order the ladder by what a rung costs, then by how fast it actually is` on `main`, 5 ahead, 0 behind origin.
+**HEAD** `e0609bc Generate the provider lists instead of typing them` on `main`, 6 ahead, 0 behind origin.
 
-**Working tree:** 5 changed
+**Working tree:** 10 changed
 
 ```
+  M  .githooks/pre-commit
+  M  .gitignore
+  M  CLAUDE.md
+  A  conftest.py
   M  docs/board/README.md
-  M  docs/board/tasks/provider-status-generator.md
+  M  docs/board/tasks/pytest-addopts.md
+  M  docs/context.md
   M  docs/state.md
-  A  tests/tools/test_provider_status.py
-  A  tools/provider_status.py
+  M  pytest.ini
+  M  tests/tools/test_precommit_hook.py
 ```
 
-**Offline suite:** 1359 passed, 9 deselected, 10 warnings in 72.96s (0:01:12) _(recorded 2026-09-03)_
+**Offline suite:** 1361 passed, 9 deselected, 10 warnings in 72.70s (0:01:12) _(recorded 2026-09-03)_
 
-**Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
+**Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `e0609bc` Generate the provider lists instead of typing them  _(2026-09-03)_
 - `d8b1970` Order the ladder by what a rung costs, then by how fast it actually is  _(2026-09-03)_
 - `d57beb0` Keep a rung that cannot name a model out of the ladder  _(2026-09-02)_
 - `210e07d` Stop a denied rung from quietly handing the bill to a paid one  _(2026-09-02)_
@@ -33,7 +39,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `bf9efc5` Restart the distill chain, and stop one outage becoming eighty-four rows  _(2026-09-02)_
 - `843bc26` ok  _(2026-09-02)_
 - `89cba3f` Rebuild NEXT from the task files, and file what the day turned up  _(2026-09-02)_
-- `be19942` Give voice a cloud STT tier, and the database a migration runner  _(2026-09-02)_
 
 <!-- END GENERATED -->
 

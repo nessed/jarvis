@@ -70,20 +70,20 @@ never hand-edit claim state.
 ## Commands
 
 ```
-.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp=.pytest-basetemp-$JARVIS_LANE   # full offline suite; required before any commit
+.venv\Scripts\python.exe -m pytest -q                                              # full offline suite; required before any commit
 .venv\Scripts\python.exe -m pytest -q -m live tests/live                           # phase acceptance probes
 .venv\Scripts\python.exe tools/consult.py "question" [--file P] [--cmd "..."]      # second opinion; every Class B stop
 .venv\Scripts\python.exe tools/repoint_webhook.py                                  # re-point Meta at the current tunnel
 .venv\Scripts\python.exe tools/context_status.py --check                          # is context.md's status block current
 ```
 
-The full-suite command needs `-p no:cacheprovider --basetemp=...` on this
-machine: the system `TEMP` directory is locked down, and pytest's default
-scratch/cache dirs land there and fail with `PermissionError` without those
-flags. The `-$JARVIS_LANE` suffix gives each session its own scratch dir;
-two panes sharing one produced a fake flaky suite on 2 Sep 2026. The
-SessionStart hook exports `JARVIS_LANE`; `.githooks/pre-commit` uses the
-same form.
+The suite runs **bare**. It did not until 2 Sep 2026: this machine's system
+`TEMP` is locked down and its `.pytest_cache` is owned by another Windows
+account, so every command hand-carried `-p no:cacheprovider --basetemp=...`.
+Both now live in `pytest.ini` and the repo-root `conftest.py`. Do not put
+them back on the command line — a fixed `--basetemp` is emptied at session
+start, so two lanes sharing one delete each other's `tmp_path` directories
+and produce a suite that looks flaky and is not.
 
 The pre-commit hook in `.githooks/pre-commit` runs the full offline suite and
 refuses a red commit. If it is not firing, run
