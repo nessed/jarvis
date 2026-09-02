@@ -1,3 +1,86 @@
+You are a second opinion on a decision inside an AI-agent-built project.
+The agent asking has already gathered the evidence below and could not
+resolve the question from it alone. Do not restate the evidence. Decide.
+
+## Question
+
+Where should per-(provider, task_profile) p50 latency live, and is that mine to decide or Ali's?
+
+Blueprint 3.3 (Ali's own text): "Rungs are ordered by cost class first
+(free-tier, then trial/credit, then paid), and within a class by measured p50
+latency for the task profile."
+
+Cost-class-major ordering is done and tested. What is left is the "measured
+p50 within a class" half, and the task file says this, verbatim:
+
+  "3. Measure p50 per (provider, task_profile). The router already sees every
+      response; where the measurement lives -- process-lifetime beside the
+      cooldown ledger, or persisted -- is a design decision to make
+      explicitly. The ledger's own scope was a Class C question (Q10c), so do
+      not assume."
+
+The precedent it points at. Q10c asked Ali whether the cooldown ledger should
+be process-lifetime or persisted. He answered process-lifetime, and the
+reasoning is recorded in the blueprint:
+
+  "The cooldown ledger is process-lifetime (Q10c, 1 Sep 2026), and the process
+   that routes -- the executor, not the bus -- is the one that reports provider
+   health to /status."
+
+and in docs/state.md:
+
+  "Not persisted to disk, deliberately: a file would tell a fresh process to
+   keep avoiding a provider that recovered hours ago."
+
+That reasoning is specific to cooldowns. A cooldown is a claim about *right
+now* and goes stale in seconds; a latency distribution is a claim about a
+provider's typical behaviour and arguably gets *better* with age, so the
+argument that settled Q10c does not obviously transfer either way.
+
+What exists today. router/routing.py holds `health: dict[str, ProviderHealth]`
+(cooldown_until, last_status, rate_limit_headers), process-lifetime, built once
+per process by shared_router(). router/health_report.py already publishes that
+map to a small JSON file that /status reads, age-bounded, best-effort, atomic
+rename -- so there IS already a persistence mechanism next door, built for a
+different purpose (cross-process reporting, not cross-restart memory).
+
+Three shapes I can see:
+
+  A. Process-lifetime only, beside `health`. Follows the Q10c precedent
+     mechanically. A restart forgets every measurement and the first requests
+     after a restart order by priority alone until samples accumulate.
+
+  B. Persisted, its own small file next to the health report. Survives
+     restarts, so ordering is informed immediately. Needs a decay or window so
+     a provider that got slower is not judged on last week's numbers, and that
+     window is another number nobody has specified.
+
+  C. Piggyback on the existing health-report file: the executor already writes
+     it, /status already reads it, and adding a p50 field to each entry costs
+     no new mechanism. But that file is explicitly age-bounded and treated as
+     stale after 10 minutes, which is right for a countdown and wrong for a
+     latency baseline.
+
+Questions:
+
+  - Is the storage scope genuinely Class C (Ali's), or is it Class B (mine,
+    with a defensible answer) given that his Q10c reasoning is on the record
+    and is about staleness rather than about persistence as a policy?
+  - If it is mine: which of A, B, C, and what makes it defensible rather than
+    merely convenient?
+  - How many samples should a provider need before its p50 is allowed to
+    reorder anything? An ordering that flips on a single slow response is
+    worse than no ordering at all, and "p50" over 1 sample is just "the last
+    response".
+  - Is there a smaller thing that satisfies "within a class by measured p50"
+    honestly, that I could ship now, without pre-empting whatever Ali would
+    say about persistence?
+
+## Evidence
+
+### router/routing.py
+
+```
 """OpenAI-compatible provider routing with runtime rate-limit awareness."""
 
 from __future__ import annotations
@@ -9,12 +92,10 @@ import logging
 import os
 import re
 import threading
-from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from statistics import median
 from time import monotonic
 from typing import Any, Protocol
 
@@ -52,18 +133,6 @@ DENIAL_STATUSES = frozenset({401, 402, 403})
 #: priority integer could not say that, which is why this field exists.
 COST_CLASS_ORDER = ("free", "trial", "paid")
 DEFAULT_COST_CLASS = "paid"
-
-#: How many recent successful calls a (provider, task_profile) bucket keeps.
-#: Bounded rather than time-decayed on purpose: a decay constant is a number
-#: nobody has specified, and a short window is recent by construction.
-LATENCY_WINDOW = 20
-
-#: How many samples a bucket needs before its median may reorder anything.
-#: A "p50" over one call is just "the last call", and an order that flips on
-#: one cold start is worse than no order at all. Five is the smallest count
-#: whose median survives two outliers; below it the rung keeps its manifest
-#: priority, which is a defensible order rather than a guess.
-MIN_LATENCY_SAMPLES = 5
 
 
 class ProviderDenied(NoEligibleProvider):
@@ -252,18 +321,6 @@ class ProviderRouter:
         self._default_backoff_seconds = default_backoff_seconds
         self.health: dict[str, ProviderHealth] = {provider.name: ProviderHealth() for provider in self._providers}
         self._warned_unroutable: set[str] = set()
-        # Process-lifetime, beside the cooldown ledger and for the same reason
-        # Ali gave for that one (Q10c): a file would hand a fresh process a
-        # belief about a provider that may no longer be true. A latency
-        # baseline goes stale more slowly than a cooldown, but correcting for
-        # that needs a decay window nobody has specified, and inventing one
-        # would be inventing policy. Persisting this is a later question, and
-        # answering it wants observed variance rather than a guess — which is
-        # what these buckets, reported through ``health_snapshot``, produce.
-        # Reasoning: docs/consults/2026-09-02-router-p50-storage-scope/
-        self._latencies: dict[tuple[str, str], deque[float]] = defaultdict(
-            lambda: deque(maxlen=LATENCY_WINDOW)
-        )
 
     def ordered_providers(self, task_profile: str, *, urgent: bool = False, emergency: bool = False) -> list[Provider]:
         if task_profile not in TASK_PROFILES:
@@ -291,57 +348,9 @@ class ProviderRouter:
         ordered: list[Provider] = []
         for cost_class in COST_CLASS_ORDER:
             in_class = [p for p in eligible if p.cost_class == cost_class]
-            ordered.extend(
-                self._by_p50([p for p in in_class if task_profile in p.task_profiles], task_profile)
-            )
-            ordered.extend(
-                self._by_p50(
-                    [p for p in in_class if task_profile not in p.task_profiles], task_profile
-                )
-            )
+            ordered.extend(p for p in in_class if task_profile in p.task_profiles)
+            ordered.extend(p for p in in_class if task_profile not in p.task_profiles)
         return ordered
-
-    def _by_p50(self, candidates: Sequence[Provider], task_profile: str) -> list[Provider]:
-        """Fastest first, among those with enough samples to have an opinion.
-
-        Applied strictly inside one cost class and one profile group, so
-        §3.3's class-major invariant is structurally untouched: this can only
-        reorder rungs within the group they were already in, never move one
-        between tiers.
-
-        A rung with fewer than ``MIN_LATENCY_SAMPLES`` keeps its manifest
-        priority and sorts after every measured one. Measured beating
-        unmeasured is deliberate: a rung with a known median has earned its
-        place, while a priority integer is a number someone typed once.
-        """
-
-        def key(provider: Provider) -> tuple[bool, float, int]:
-            p50 = self.p50_seconds(provider.name, task_profile)
-            return (p50 is None, p50 if p50 is not None else 0.0, provider.priority)
-
-        return sorted(candidates, key=key)
-
-    def p50_seconds(self, provider_name: str, task_profile: str) -> float | None:
-        """The measured median for one rung on one profile, or ``None``.
-
-        ``None`` means "not enough evidence to have an opinion", which is a
-        different answer from "slow" and is treated as one by ``_by_p50``.
-        """
-        samples = self._latencies.get((provider_name, task_profile))
-        if not samples or len(samples) < MIN_LATENCY_SAMPLES:
-            return None
-        return median(samples)
-
-    def _record_latency(self, provider: Provider, task_profile: str, seconds: float) -> None:
-        """Record one *successful* completion's wall time.
-
-        Success only, on purpose. A 429 measures how fast a provider says no,
-        and a 5xx measures how fast it falls over; folding either into a
-        service-latency median would make the rung that rejects fastest look
-        like the rung that serves fastest.
-        """
-        if seconds >= 0:
-            self._latencies[(provider.name, task_profile)].append(float(seconds))
 
     async def route(
         self,
@@ -384,11 +393,9 @@ class ProviderRouter:
                 if not provider_model:
                     failures.append(f"{provider.name}: no model configured")
                     continue
-                started = self._clock()
                 response = await client.create_chat_completion(
                     model=provider_model, messages=messages, **request_options
                 )
-                self._record_latency(provider, task_profile, self._clock() - started)
                 self.health[provider.name].last_status = 200
                 self._record_response_headers(provider, getattr(client, "last_response_headers", {}))
                 return RoutedResult(provider=provider.name, model=provider_model, response=response)
@@ -717,3 +724,230 @@ async def route(
 ) -> RoutedResult:
     """Convenience entrypoint for executor integration."""
     return await shared_router().route(task_profile, messages, urgent=urgent, **request_options)
+
+```
+### router/health_report.py
+
+```
+"""A provider-health snapshot the routing process writes and the bus reads.
+
+Q10c, answered by Ali on 1 September 2026: the router's cooldown ledger is
+**process-lifetime**, and **the executor** — the process that actually routes —
+reports provider health. Both halves of that answer need this file.
+
+Why a file at all
+-----------------
+
+``/status`` used to read ``app.state.provider_router.health``: the *bus's* own
+router. The bus is enqueue-only and never routes, so that map was every
+provider at its constructed defaults — ``last_status: None``, no cooldown —
+for as long as the process lived. It did not report health, it reported the
+absence of any attempt to find out, in a shape indistinguishable from
+"everything is fine".
+
+The routing process is a different process, so its ledger cannot be read
+in-memory. This mirrors ``executor/heartbeat.py``, which exists for the same
+reason and is written the same way: a small file, written best-effort, read
+with an age bound, and fail-open on every error. A stale or missing snapshot
+degrades ``/status`` to "nobody has reported", which is honest; nothing here
+is ever allowed to break a poll loop or a status request.
+
+Why the countdown is stored relative
+------------------------------------
+
+``ProviderHealth.cooldown_until`` is a ``time.monotonic()`` reading. Monotonic
+clocks share no origin across processes — the bus reading the executor's
+number would be comparing against an unrelated zero point. The snapshot
+therefore stores *seconds remaining at write time* alongside a wall-clock
+``reported_at``, and :func:`read` subtracts the elapsed time. That also makes
+the file correct while the writer is idle: the countdown keeps ticking down
+for the reader without needing a rewrite every second.
+
+What is in it
+-------------
+
+Only what ``/status`` already exposed: status codes, a relative countdown, and
+rate-limit headers. No keys, no endpoints, no request or response bodies. The
+writer filters headers to ``retry-after`` and ``x-ratelimit-*`` before they
+ever reach ``ProviderHealth`` (see ``routing._record_response_headers``).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from pathlib import Path
+from typing import Any, Mapping
+
+DEFAULT_REPORT_PATH = Path(".provider-health.json")
+
+#: Older than this and the snapshot is treated as nobody having reported. Sized
+#: like the heartbeat's window and for the same reason: the writer only rewrites
+#: when something *material* changes, so a healthy, quiet router can legitimately
+#: leave the file untouched for a long time. Ten minutes is long enough to ride
+#: out that quiet and short enough that a stopped executor stops being believed.
+DEFAULT_MAX_AGE_SECONDS = 600.0
+
+
+def report_path(environ: Mapping[str, str] | None = None) -> Path:
+    settings = os.environ if environ is None else environ
+    return Path(settings.get("JARVIS_PROVIDER_HEALTH_REPORT", str(DEFAULT_REPORT_PATH)))
+
+
+def material_state(snapshot: Mapping[str, Any]) -> tuple:
+    """The part of a snapshot worth rewriting the file for.
+
+    A raw snapshot differs on every poll because the countdown decrements, so
+    comparing whole snapshots would rewrite the file several times a second
+    and never skip a write. What actually changes meaning is a provider's last
+    status, its rate-limit headers, and whether it is cooling down at all —
+    the exact remaining seconds are reconstructed by :func:`read` from
+    ``reported_at``.
+    """
+    return tuple(
+        (
+            name,
+            entry.get("last_status"),
+            tuple(sorted((entry.get("rate_limit_headers") or {}).items())),
+            bool((entry.get("cooldown_seconds_remaining") or 0) > 0),
+        )
+        for name, entry in sorted(snapshot.items())
+    )
+
+
+def write(snapshot: Mapping[str, Any], path: Path | None = None) -> None:
+    """Publish a snapshot. Never raises.
+
+    Written to a sibling temp file and moved into place so a reader can never
+    observe half a JSON document. An ``OSError`` costs ``/status`` one refresh
+    and must never reach the caller — this is called from the executor's poll
+    loop, and the same reasoning as ``heartbeat.touch`` applies.
+    """
+    target = path or report_path()
+    document = {"reported_at": time.time(), "providers": dict(snapshot)}
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(document), encoding="utf-8")
+        os.replace(temporary, target)
+    except OSError:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+
+
+def read(
+    path: Path | None = None, *, max_age_seconds: float = DEFAULT_MAX_AGE_SECONDS
+) -> dict[str, dict[str, Any]] | None:
+    """The last published snapshot with countdowns brought up to date.
+
+    ``None`` means nobody has reported: no file, an unreadable or malformed
+    one, or one older than ``max_age_seconds``. Callers must render that as
+    "unreported" rather than as healthy — telling the two apart is the entire
+    point of this module.
+    """
+    target = path or report_path()
+    try:
+        document = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(document, Mapping):
+        return None
+    reported_at = document.get("reported_at")
+    providers = document.get("providers")
+    if not isinstance(reported_at, (int, float)) or not isinstance(providers, Mapping):
+        return None
+
+    age = max(0.0, time.time() - float(reported_at))
+    if age > max_age_seconds:
+        return None
+
+    aged: dict[str, dict[str, Any]] = {}
+    for name, entry in providers.items():
+        if not isinstance(entry, Mapping):
+            continue
+        remaining = entry.get("cooldown_seconds_remaining")
+        remaining = float(remaining) if isinstance(remaining, (int, float)) else 0.0
+        aged[str(name)] = {
+            "last_status": entry.get("last_status"),
+            "cooldown_seconds_remaining": round(max(0.0, remaining - age), 3),
+            "rate_limit_headers": dict(entry.get("rate_limit_headers") or {}),
+            "reported": True,
+            "reported_age_seconds": round(age, 3),
+        }
+    return aged
+
+```
+### docs/board/tasks/router-cost-class-ordering.md
+
+```
+---
+id: router-cost-class-ordering
+status: in-progress
+lane: AUTO
+priority: 3
+phase: 0
+blocked-on: none
+files: router/providers.yaml, router/routing.py (hot), tests/router/test_routing.py (area-hot), docs/state.md
+resources: none offline
+---
+
+# router-cost-class-ordering — order by cost class, then measured p50
+
+## Goal
+
+Blueprint §3.3, Ali's text: "Rungs are ordered by cost class first
+(free-tier, then trial/credit, then paid), and within a class by measured p50
+latency for the task profile." And: "`route(task_profile)` reorders **within
+a cost class only**. It never promotes a paid rung above a free one that is
+eligible; urgency does that, explicitly and per-job."
+
+Today `providers.yaml` has a static integer `priority` and nothing else.
+There is no `cost_class` field and no latency measurement anywhere — grepped
+1 Sep 2026 and again 2 Sep, zero hits.
+
+The gap is not academic: Cerebras stopped being free in mid-2026 and is now a
+$5 trial credit (`blueprint-corrections`, 2 Sep), so "free" and "trial" are
+already two different things inside the current roster, and a static priority
+integer cannot express that.
+
+## Steps
+
+1. Add `cost_class` to `router/providers.yaml` for every provider —
+   `free` / `trial` / `paid`. This is a data edit; get the classification
+   right against `docs/blueprint.md`'s provider section **as corrected on
+   2 Sep**, not against memory.
+2. Make ordering cost-class-major, existing priority minor, before any
+   latency work. That alone satisfies the "never promotes a paid rung"
+   clause and is independently testable.
+3. Measure p50 per (provider, task_profile). The router already sees every
+   response; where the measurement lives — process-lifetime beside the
+   cooldown ledger, or persisted — is a design decision to make explicitly.
+   The ledger's own scope was a Class C question (Q10c), so do not assume.
+4. Urgency stays the only thing that crosses a class boundary, per-job.
+
+## Done when
+
+Ordering is cost-class-major with p50 within a class, a paid rung can never
+outrank an eligible free one except on an explicitly urgent job, and the
+suite is green.
+
+```
+
+## Response format
+
+Answer as strict JSON and nothing else. No prose before or after, no code
+fence. Exactly these keys:
+
+{
+  "verdict": "the decision or answer, one or two sentences, actionable",
+  "reasoning": "why, citing the specific evidence above that drove it",
+  "confidence": "high | medium | low",
+  "what_would_change_this": "the concrete observation that would flip this verdict"
+}
+
+Set confidence to low rather than guessing. If the evidence provided is not
+enough to decide, say exactly what is missing in what_would_change_this — that
+is a useful answer, an invented one is not.

@@ -5,6 +5,7 @@
       "endpoint": "https://api.groq.com/openai/v1",
       "key_env": "GROQ_API_KEY",
       "priority": 1,
+      "cost_class": "free",
       "default_model": "${GROQ_DEFAULT_MODEL}",
       "task_profiles": ["latency", "batch"]
     },
@@ -13,6 +14,7 @@
       "endpoint": "https://api.cerebras.ai/v1",
       "key_env": "CEREBRAS_API_KEY",
       "priority": 2,
+      "cost_class": "trial",
       "default_model": "${CEREBRAS_DEFAULT_MODEL}",
       "task_profiles": ["batch"]
     },
@@ -21,6 +23,7 @@
       "endpoint": "https://integrate.api.nvidia.com/v1",
       "key_env": "NVIDIA_API_KEY",
       "priority": 3,
+      "cost_class": "free",
       "default_model": "${NVIDIA_DEFAULT_MODEL}",
       "task_profiles": ["latency", "batch", "vision", "reasoning"]
     },
@@ -29,6 +32,7 @@
       "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/",
       "key_env": "GEMINI_API_KEY",
       "priority": 4,
+      "cost_class": "free",
       "default_model": "${GEMINI_DEFAULT_MODEL}",
       "task_profiles": ["long_context", "vision"]
     },
@@ -37,6 +41,7 @@
       "endpoint": "https://openrouter.ai/api/v1",
       "key_env": "OPENROUTER_API_KEY",
       "priority": 5,
+      "cost_class": "free",
       "default_model": "openrouter/free",
       "task_profiles": ["latency", "batch", "long_context", "vision", "reasoning"]
     },
@@ -47,6 +52,7 @@
       "model_env": "MISTRAL_DEFAULT_MODEL",
       "discover_chat_model": true,
       "priority": 6,
+      "cost_class": "free",
       "default_model": null,
       "task_profiles": ["latency", "batch", "long_context", "vision", "reasoning"]
     },
@@ -55,6 +61,7 @@
       "endpoint": "https://api.deepseek.com/v1",
       "key_env": "DEEPSEEK_API_KEY",
       "priority": 7,
+      "cost_class": "paid",
       "default_model": "deepseek-v4-flash",
       "task_profiles": ["batch", "long_context", "reasoning"],
       "paid_overflow": true
@@ -64,6 +71,7 @@
       "endpoint": null,
       "key_env": null,
       "priority": 8,
+      "cost_class": "paid",
       "default_model": null,
       "task_profiles": ["reasoning"],
       "not_a_router_target": true,
@@ -74,6 +82,7 @@
       "endpoint": "${CLAUDE_API_BASE_URL}",
       "key_env": "ANTHROPIC_API_KEY",
       "priority": 9,
+      "cost_class": "paid",
       "default_model": "${CLAUDE_API_DEFAULT_MODEL}",
       "task_profiles": ["reasoning"],
       "emergency_only": true,

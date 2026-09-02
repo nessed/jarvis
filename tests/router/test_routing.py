@@ -9,7 +9,12 @@ import pytest
 from dataclasses import replace
 
 from router import NoEligibleProvider, Provider, ProviderRequestError, ProviderRouter, load_providers
-from router.routing import ProviderDenied
+from router.routing import (
+    COST_CLASS_ORDER,
+    LATENCY_WINDOW,
+    MIN_LATENCY_SAMPLES,
+    ProviderDenied,
+)
 from router import routing
 from router.routing import OpenAIChatClient, _chat_model_id, _retry_delay_seconds
 
@@ -1033,3 +1038,252 @@ def test_an_unroutable_rung_is_warned_about_once_per_process_not_once_per_reques
 
     warnings = [r for r in caplog.records if "cannot be routed to" in r.getMessage()]
     assert len(warnings) == 1
+
+
+# --------------------------------------------------------------------------
+# Cost-class ordering (blueprint 3.3).
+# --------------------------------------------------------------------------
+
+
+def _classed(*specs):
+    """Providers as (name, cost_class, priority, task_profiles) tuples."""
+    return [
+        Provider(
+            name=name,
+            endpoint=f"https://{name}.example/v1",
+            key_env=f"{name.upper()}_KEY",
+            priority=priority,
+            default_model=f"{name}-model",
+            task_profiles=tuple(profiles),
+            cost_class=cost_class,
+        )
+        for name, cost_class, priority, profiles in specs
+    ]
+
+
+def _router(providers_list, **kwargs):
+    return ProviderRouter(
+        providers_list,
+        environ={f"{p.name.upper()}_KEY": "test-key" for p in providers_list},
+        **kwargs,
+    )
+
+
+def test_the_manifest_declares_a_cost_class_for_every_rung():
+    """Cerebras is the reason this field exists.
+
+    It stopped being free in mid-2026 and became a one-time $5 credit that
+    expires, so free and trial are already two different things inside the
+    current roster and a priority integer cannot say so.
+    """
+    manifest = load_providers(environ={})
+    classes = {p.name: p.cost_class for p in manifest}
+
+    assert classes["cerebras"] == "trial"
+    assert classes["groq"] == "free"
+    assert classes["gemini"] == "free"
+    assert classes["openrouter"] == "free"
+    assert classes["mistral"] == "free"
+    assert classes["deepseek"] == "paid"
+    assert classes["claude_api"] == "paid"
+    assert set(classes.values()) <= set(COST_CLASS_ORDER)
+
+
+def test_ordering_is_cost_class_major_regardless_of_priority():
+    router = _router(
+        _classed(
+            ("expensive", "paid", 1, ["batch"]),
+            ("credit", "trial", 2, ["batch"]),
+            ("gratis", "free", 3, ["batch"]),
+        )
+    )
+
+    assert [p.name for p in router.ordered_providers("batch")] == ["gratis", "credit", "expensive"]
+
+
+def test_a_profile_match_never_promotes_a_paid_rung_above_a_free_one():
+    """The bug adding cost_class alone would have left in place.
+
+    The profile partition used to run across the whole eligible list, so a
+    paid rung declaring the profile sorted above a free rung that did not.
+    3.3: route(task_profile) reorders within a cost class only.
+    """
+    router = _router(
+        _classed(
+            ("paid_match", "paid", 1, ["vision"]),
+            ("free_nomatch", "free", 2, ["batch"]),
+        )
+    )
+
+    assert [p.name for p in router.ordered_providers("vision")] == ["free_nomatch", "paid_match"]
+
+
+def test_a_profile_match_still_wins_inside_one_cost_class():
+    router = _router(
+        _classed(
+            ("free_nomatch", "free", 1, ["batch"]),
+            ("free_match", "free", 2, ["vision"]),
+        )
+    )
+
+    assert [p.name for p in router.ordered_providers("vision")] == ["free_match", "free_nomatch"]
+
+
+def test_a_rung_with_no_declared_cost_class_is_assumed_to_cost_money():
+    """The safe failure for a forgotten manifest field is over-caution."""
+    provider = Provider("mystery", "https://m.example/v1", "M_KEY", 1, "m", ("batch",))
+    assert provider.cost_class == "paid"
+
+    manifest = load_providers(environ={})
+    assert all(p.cost_class in COST_CLASS_ORDER for p in manifest)
+
+
+def test_an_unrecognised_cost_class_in_the_manifest_does_not_stop_the_router(tmp_path):
+    source = tmp_path / "providers.yaml"
+    source.write_text(
+        json.dumps(
+            {
+                "providers": [
+                    {
+                        "name": "typo",
+                        "endpoint": "https://typo.example/v1",
+                        "key_env": "TYPO_KEY",
+                        "priority": 1,
+                        "cost_class": "freee",
+                        "default_model": "m",
+                        "task_profiles": ["batch"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_providers(source, environ={})
+
+    assert loaded[0].cost_class == "paid", "a typo costs the rung its tier, not the router its start"
+
+
+# --------------------------------------------------------------------------
+# p50 within a class.
+# --------------------------------------------------------------------------
+
+
+def test_p50_reorders_within_a_class_once_a_rung_has_enough_samples():
+    router = _router(
+        _classed(
+            ("slowfirst", "free", 1, ["batch"]),
+            ("fastsecond", "free", 2, ["batch"]),
+        )
+    )
+
+    assert [p.name for p in router.ordered_providers("batch")] == ["slowfirst", "fastsecond"]
+
+    for _ in range(5):
+        router._record_latency(router._providers[0], "batch", 4.0)
+        router._record_latency(router._providers[1], "batch", 0.5)
+
+    assert [p.name for p in router.ordered_providers("batch")] == ["fastsecond", "slowfirst"]
+
+
+def test_p50_never_moves_a_rung_across_a_cost_class_boundary():
+    """The whole point of measuring inside the class rather than across it."""
+    router = _router(
+        _classed(
+            ("slow_free", "free", 1, ["batch"]),
+            ("fast_paid", "paid", 2, ["batch"]),
+        )
+    )
+
+    for _ in range(20):
+        router._record_latency(router._providers[0], "batch", 30.0)
+        router._record_latency(router._providers[1], "batch", 0.01)
+
+    assert [p.name for p in router.ordered_providers("batch")] == ["slow_free", "fast_paid"]
+
+
+def test_a_median_over_too_few_samples_does_not_reorder_anything():
+    """A p50 over one call is just the last call, and one cold start would flip it."""
+    router = _router(
+        _classed(
+            ("first", "free", 1, ["batch"]),
+            ("second", "free", 2, ["batch"]),
+        )
+    )
+
+    for _ in range(MIN_LATENCY_SAMPLES - 1):
+        router._record_latency(router._providers[0], "batch", 9.0)
+        router._record_latency(router._providers[1], "batch", 0.1)
+
+    assert router.p50_seconds("first", "batch") is None
+    assert [p.name for p in router.ordered_providers("batch")] == ["first", "second"]
+
+    router._record_latency(router._providers[0], "batch", 9.0)
+    router._record_latency(router._providers[1], "batch", 0.1)
+
+    assert router.p50_seconds("first", "batch") == 9.0
+    assert [p.name for p in router.ordered_providers("batch")] == ["second", "first"]
+
+
+def test_a_measured_rung_outranks_an_unmeasured_one_in_the_same_class():
+    router = _router(
+        _classed(
+            ("unmeasured", "free", 1, ["batch"]),
+            ("measured", "free", 2, ["batch"]),
+        )
+    )
+
+    for _ in range(MIN_LATENCY_SAMPLES):
+        router._record_latency(router._providers[1], "batch", 3.0)
+
+    assert [p.name for p in router.ordered_providers("batch")] == ["measured", "unmeasured"]
+
+
+def test_samples_are_kept_per_task_profile_not_pooled():
+    """3.3 says "measured p50 latency **for the task profile**"."""
+    router = _router(_classed(("only", "free", 1, ["batch", "vision"])))
+
+    for _ in range(MIN_LATENCY_SAMPLES):
+        router._record_latency(router._providers[0], "batch", 2.0)
+
+    assert router.p50_seconds("only", "batch") == 2.0
+    assert router.p50_seconds("only", "vision") is None
+
+
+def test_the_window_is_bounded_so_the_median_stays_recent():
+    router = _router(_classed(("only", "free", 1, ["batch"])))
+
+    for _ in range(LATENCY_WINDOW):
+        router._record_latency(router._providers[0], "batch", 10.0)
+    for _ in range(LATENCY_WINDOW):
+        router._record_latency(router._providers[0], "batch", 1.0)
+
+    assert router.p50_seconds("only", "batch") == 1.0, "the old numbers aged out of the window"
+
+
+def test_only_successful_calls_are_measured():
+    """A 429 measures how fast a provider says no, not how fast it serves.
+
+    Folding rejections in would make the rung that refuses fastest look like
+    the rung that answers fastest.
+    """
+    router, _calls = router_for(
+        ["first", "second"],
+        {"first": ProviderRequestError("slow down", 429, {})},
+    )
+
+    for _ in range(MIN_LATENCY_SAMPLES):
+        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert router.p50_seconds("first", "batch") is None, "the rejecting rung recorded nothing"
+    assert router.p50_seconds("second", "batch") is not None
+
+
+def test_a_real_route_call_records_its_own_latency():
+    router, _calls = router_for(["only"], {})
+
+    for _ in range(MIN_LATENCY_SAMPLES):
+        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    p50 = router.p50_seconds("only", "batch")
+    assert p50 is not None and p50 >= 0.0
