@@ -8,28 +8,25 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `d57beb0 Keep a rung that cannot name a model out of the ladder` on `main`, 4 ahead, 0 behind origin.
+**HEAD** `d8b1970 Order the ladder by what a rung costs, then by how fast it actually is` on `main`, 5 ahead, 0 behind origin.
 
-**Working tree:** 9 changed
+**Working tree:** 5 changed
 
 ```
   M  docs/board/README.md
-  M  docs/board/tasks/router-cost-class-ordering.md
-  A  docs/consults/2026-09-02-router-p50-storage-scope/prompt.md
-  A  docs/consults/2026-09-02-router-p50-storage-scope/response.md
-  A  docs/consults/2026-09-02-router-p50-storage-scope/verdict.json
+  M  docs/board/tasks/provider-status-generator.md
   M  docs/state.md
-  M  router/providers.yaml
-  M  router/routing.py
-  M  tests/router/test_routing.py
+  A  tests/tools/test_provider_status.py
+  A  tools/provider_status.py
 ```
 
-**Offline suite:** 1346 passed, 9 deselected, 10 warnings in 74.39s (0:01:14) _(recorded 2026-09-03)_
+**Offline suite:** 1359 passed, 9 deselected, 10 warnings in 72.96s (0:01:12) _(recorded 2026-09-03)_
 
 **Live acceptance suite:** 1 passed in 39.63s _(recorded 2026-08-26)_
 
 **Recent commits**
 
+- `d8b1970` Order the ladder by what a rung costs, then by how fast it actually is  _(2026-09-03)_
 - `d57beb0` Keep a rung that cannot name a model out of the ladder  _(2026-09-02)_
 - `210e07d` Stop a denied rung from quietly handing the bill to a paid one  _(2026-09-02)_
 - `fa3365a` Say what the action did, not just that it queued  _(2026-09-02)_
@@ -37,7 +34,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `843bc26` ok  _(2026-09-02)_
 - `89cba3f` Rebuild NEXT from the task files, and file what the day turned up  _(2026-09-02)_
 - `be19942` Give voice a cloud STT tier, and the database a migration runner  _(2026-09-02)_
-- `e4125d4` Reduce the wake-word false-positive test to one command  _(2026-09-02)_
 
 <!-- END GENERATED -->
 

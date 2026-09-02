@@ -69,6 +69,7 @@ Phases 4 and 5 have not started.
 | Router denial surfacing (401/402/403) | **Built 2 Sep 2026**, closing blueprint §3.3's clause: "A rung that returns 401/402/403 enters cooldown and surfaces the denial. It does not silently fall through to paid work." Three things changed. **(1)** The cooldown carve-out was literally `provider.name == "mistral"`, so every other provider's auth denial cooled down nothing and every subsequent job re-probed a key that could not work; it now applies to all of them. **(2)** 401/403 no longer abort the cascade — they cool down and fall through like 429/402/5xx, which *gains* a live reply where one used to be lost. **(3)** The new part: a denial recorded during a request bars the cascade from crossing into a rung marked `paid_overflow` or `capped`; at that boundary it raises `ProviderDenied` instead, naming the denying rung. Raising **is** the surfacing — inside one cascade there is no other channel, because a request cannot both continue onto the paid rung and have surfaced the denial that preceded it. The bar is **per request, not sticky**: the cooldown ledger already handles repetition, and a persistent bar would let one bad key disable paid overflow indefinitely. `emergency=True` may still cross it, per §3.3's adjacent bullet that urgency promotes a paid rung "explicitly and per-job" — a caller's flag is the opposite of silent. `ProviderDenied` subclasses `NoEligibleProvider`, and nothing upstream catches that type specially (`executor/poller.py` catches bare `Exception`), so retry/dead-letter behaviour is unchanged. The reading was settled before the control flow changed: `docs/consults/2026-09-02-router-denial-surfacing-reading/` (verdict B, confidence high). The other half of "surfaces" was already there — `/status` carries `last_status` per provider. **Known behaviour change:** a 402 on a free rung no longer reaches `deepseek`. Narrow in practice, since `deepseek` is peak-gated and `claude_api` is `emergency_only`. **Not built:** a `denied: true` flag on `/status`, which would say it in words rather than leaving a reader to know that 402 is a denial; `last_status` meets the task's bar without it |
 | Router model-resolvability gate | **Built 2 Sep 2026.** A rung that cannot name a model is no longer a routing candidate. It used to be: `_configured()`'s model guard fired only for providers declaring `model_env`, and `groq`/`cerebras`/`gemini` declare `default_model: "${...}"`, which `load_providers` resolves to `None` when the env var is unset. They entered the candidate list, sorted to the front by priority, and were skipped inside `route()` with a line appended to a `failures` list **rendered only if every provider failed** — so the ladder working was the exact condition that hid it. `_can_resolve_model()` now checks the same three sources `_model_for()` uses, in the same order, so the two cannot drift; `discover_chat_model` still counts as resolvable, which keeps `mistral` routable with no `default_model` at all. **Measured against the live manifest and `.env`: three rungs are excluded, not the two the task named** — `groq`, `cerebras` and `gemini`, each for an unset placeholder — leaving `openrouter, mistral, deepseek` as the whole ladder for both `latency` and `batch`. `unroutable_reasons()` returns `{provider: reason}` naming the env var that would fix each one, and a one-per-process warning says it out loud in the meantime. That method is **data, not a report**: §3.3's generated configured-but-not-routable list is `provider-status-generator`'s to format, and this task deliberately did not invent it. Cooldowns are excluded from it — a cooling rung is routable and merely resting |
 | Router cost-class ordering | **Built 2 Sep 2026**, closing blueprint §3.3's first two bullets. `providers.yaml` gains `cost_class` per rung — `free` for groq, nvidia_nim, gemini, openrouter and mistral; **`trial` for cerebras**, whose open free tier became a one-time $5 credit in mid-2026; `paid` for deepseek, claude_max and claude_api, which keeps the blueprint's own ladder order among them via the existing priority integer. A missing or unrecognised value loads as **`paid`**, not `free`: a manifest typo should cost a rung its tier, not cost money, and it must never stop the router from starting. **The profile partition moved inside the cost class**, which was a real defect and not just a missing field — it used to run across the whole eligible list, so a paid rung declaring the task profile sorted above a free rung that did not, exactly what "never promotes a paid rung above a free one that is eligible" forbids. Within a class, ordering is measured p50 per **(provider, task_profile)**, then manifest priority. The buckets are a bounded deque of the last 20 **successful** calls (a 429 measures how fast a rung says no), and a median only counts once it has 5 samples — a p50 over one call is the last call, and an order that flips on one cold start is worse than none. A measured rung outranks an unmeasured one; an unmeasured one keeps its priority. **Process-lifetime, beside the cooldown ledger**, following Q10c's precedent: persisting it needs a decay window nobody has specified, and inventing one would be inventing policy. That decision was consulted rather than assumed, as the task required — `docs/consults/2026-09-02-router-p50-storage-scope/` (Class B, option A, confidence high). Against the live manifest the whole ladder is currently `openrouter, mistral, deepseek` for both `latency` and `batch` |
+| Provider status generator | **Built 2 Sep 2026.** `tools/provider_status.py` emits §3.3's two lists — routable, and configured-but-not-routable **with a reason and a date** — into `docs/state.md` between generated markers, the same discipline `tools/context_status.py` uses for `docs/context.md`. Three inputs: the manifest, the environment, and the live health snapshot `router/health_report.py` publishes. **Environment key *names* only** — it decides whether a variable is set and never reads what it holds, because the output is committed; a test asserts no env value reaches the block while the variable names, which are the whole content of the reason, survive. The reason vocabulary is `ProviderRouter.unroutable_reasons()`, so the tool and the router cannot disagree about why a rung is unusable. Cooldowns are added here rather than there: a cooling rung is routable and merely resting, and "never verified" is its own state — a rung with a key, a model and no cooldown is indistinguishable from a working one until the first request, which is the distinction §3.3 asks for by name. **Not wired into the pre-commit hook**, unlike `context_status.py`: the state column reads a snapshot that changes between requests, so staging it would put an ephemeral cooldown countdown in every commit. `--check` verifies the block is present and machine-written rather than byte-comparing against a fresh render, which would fail constantly for the same reason. The old hand-written rung table is gone; a test asserts no markdown table survives in that section outside the markers |
 | Provider health on `/status` | **Reported by the process that routes, since 2 Sep 2026** (Q10c). It used to read `app.state.provider_router.health` — the *bus's* router. The bus is enqueue-only and never calls `route()`, so every entry stayed at its constructed default for the life of the process: `/status` reported the absence of any attempt in a shape indistinguishable from "everything is fine". The executor now publishes its ledger through `router/health_report.py` and the bus reads it. Mirrors `executor/heartbeat.py`: small file, best-effort write, age-bounded read, fail-open on every error, 10-minute staleness window. The countdown is stored **relative** plus a wall-clock `reported_at`, because `cooldown_until` is a `monotonic()` reading and monotonic clocks share no origin across processes; the reader ages it. The file is rewritten only when something *material* changes — a ticking countdown is not a reason — or the poll loop would rewrite it several times a second forever. Only `whatsapp-worker` routes, and `_publish_provider_health` uses `current_shared_router`, so the other two workers neither build a router nor stamp defaults over its snapshot. Entry shape changed: `cooldown_until` → `cooldown_seconds_remaining`, plus `reported` / `reported_age_seconds`; `reported: false` is what nothing-has-reported looks like now |
 | Ladder rungs that cannot resolve a model | **Open, found 2 Sep 2026.** `groq` (priority 1) and `cerebras` (priority 2) declare `default_model: "${GROQ_DEFAULT_MODEL}"` / `"${CEREBRAS_DEFAULT_MODEL}"`, and `load_providers` resolves both to `None` because neither key is in `.env` (U2). `_configured()` does not catch it — its model guard only covers providers that declare `model_env`, and these declare `default_model` — so both stay eligible, sort to the front of every request, and are skipped inside `route()` with `"no model configured"`, a message surfaced only if *every* provider fails. Six consecutive live `latency` calls went to `openrouter` with `groq` first in the eligible order each time. Two fixes are possible (widen the `_configured` guard, or report it as configured-but-not-routable) and choosing belongs with `provider-status-generator`; filed for `board-audit` as `router-unresolvable-model-rungs`. Resolves on its own the moment U2 lands |
 | Command classifier (WhatsApp → action jobs) | **Live-verified 2 Sep 2026.** `executor/handlers/command_intent.py`, called from the WhatsApp handler before recall/routing — so a spoken command works too, a voice note being a transcript by then. The allowlist is a closed tuple (`system_control`, `zoom_join_meeting`) per Ali's Q1 answer; `flp_sort` and `whatsapp_desktop_send_message` are named as excluded-with-a-reason so asking gets an answer rather than silence. **The model proposes, constants dispose**: a `system_control` action must exist in the classifier's own action table (a test asserts that table equals `_build_action_registry(SystemControlDeps())`, so drift is caught in CI rather than by a dead-lettered job), and whether it needs confirmation is read from that table — the model's `destructive` flag may only raise the bar, never lower it. Reversible toggles (`wifi.set_enabled`, `power.set_plan`, `display.switch`) go straight through; `process.kill`, the `file.*` actions, both `scheduled_task` mutations and both printing actions ask first. Confidence floor 0.7; unparseable, low-confidence, empty and over-300-char input all fall back to conversation. Message text is fenced as data with markers stripped, same discipline as the recalled-context fence. Pending confirmations are sqlite beside the memory DB (`*.pending-actions.db`), one row per sender, 10-minute TTL, and any non-yes/no message retires them so a later "yes" cannot fire a forgotten action. Yes/no is a word list, not a model call. `JARVIS_WHATSAPP_COMMANDS=0` disables the producer without touching the allowlist. **Cost: a text message now makes two routed completions**, classification then reply. 104 offline tests. Live: three runs of "what wifi interfaces does this laptop have?" each classified, enqueued, and completed by `action-worker` (`a8b4785b`, `d581f3cd`, `a63ba76b`, all `status: done`); "kill the chrome process" asked first and enqueued nothing; an FLP request was refused. Zero `process.kill` and zero `flp_sort` jobs have ever been enqueued. The outcome reply landed 2 Sep 2026 — see the Action outcome replies row. Evidence: `docs/board/tasks/enqueue-classifier.md` |
@@ -82,52 +83,54 @@ corpus inputs are gitignored. No personal corpus has been read or ingested.
 
 ## Provider rungs
 
-| Rung | State |
-|---|---|
-| Groq | "Working" claim **unverified against the current `.env`** — see note below. Rate-limit header capture proven at some point, but not provably under today's config |
-| Gemini | Same caveat as Groq below |
-| DeepSeek direct | Working through `https://api.deepseek.com/v1`. No rate-limit headers, so cooldown parsing is unexercised. `default_model` is a literal in `router/providers.yaml` (`deepseek-v4-flash`), not env-resolved, so this rung is unaffected by the note below. Ali reports credits added to the account (2026-08-29) — not independently verified, no balance was checked or read |
-| OpenRouter | Working through `openrouter/free`. No retry headers, cooldown correctly stays empty. Also a `providers.yaml` literal, unaffected |
-| Cerebras | Authenticates, chat returns `402 payment_required`. Do not route work here |
-| Mistral | Integrated, model discovery works, live chat returns `403`. Needs account or workspace resolution |
-| NVIDIA NIM | Deferred. Geo-blocked from Pakistan, and removed from the fact-extraction plan by the blueprint 1.3 amendment |
-| Claude Max | Priority 8. Used through `tools/consult.py`, not as a router target (`not_a_router_target: true`, `execution_path: claude -p`) |
-| Claude API | **Priority 9, and missing from this table until 1 Sep 2026.** `router/providers.yaml` defines **nine** rungs, not eight. `emergency_only: true`, `capped: true`, keyed on `ANTHROPIC_API_KEY`, `default_model: ${CLAUDE_API_DEFAULT_MODEL}` — one of the five unset vars in the gap note below, so it resolves to `None` today |
+**The two lists below are generated.** Blueprint §3.3: they are "generated
+from the running config, not maintained by hand here". Never hand-edit
+between the markers; run `.venv\Scripts\python.exe tools/provider_status.py --write`
+instead, and `--check` asks whether the block is still machine-written.
 
-DeepSeek proxy mode is off. OpenRouter proxy routing is disabled.
+They are **not** regenerated by the pre-commit hook, unlike
+`docs/context.md`'s status block, and deliberately so: the state column reads
+the live health snapshot, which changes between requests, so staging it would
+put an ephemeral cooldown countdown in every commit. The generation date in
+the block is how a reader judges its age.
 
-**`*_DEFAULT_MODEL` gap, found 2026-08-28 (`verify-configured-model-ids`):**
-none of `GROQ_DEFAULT_MODEL`, `CEREBRAS_DEFAULT_MODEL`, `NVIDIA_DEFAULT_MODEL`,
-`GEMINI_DEFAULT_MODEL`, or `CLAUDE_API_DEFAULT_MODEL` are present as keys in
-the live `.env` (checked key names only, no values read or printed — the file
-itself is access-restricted to this agent by design). `router/providers.yaml`
-resolves each of those five providers' `default_model` via `${VAR}`
-interpolation with no literal fallback, so each currently resolves to
-`None`. `ProviderRouter._configured()` (`router/routing.py:246-257`) does not
-check `default_model` for these providers (its `model_env` guard only covers
-Mistral, the one provider using that field) — a rung passes as "configured"
-purely on `key_env` presence. The failure is caught, not silent: `route()`
-(`routing.py:216-218`) checks `if not provider_model` and records
-`"{provider}: no model configured"` before falling through to the next
-candidate — so this does not crash a request, but it does mean any of these
-five rungs that reach that point today cannot serve one, contradicting a
-"Working" claim made on their behalf. `tests/live/` currently has exactly one
-test (`test_memory_roundtrip.py`) and it does not exercise routing at all, so
-there is no live probe on disk proving current Groq/Gemini behavior either
-way. This is the exact gap `docs/plan.md`'s `router-model-env-validation` job
-already names; this note is the live-environment evidence for it, not a fix —
-`router/routing.py` is claimed by another lane as of this writing.
-Current model IDs, for whoever sets these (verified 2026-08-28, not written
-to `.env` by this agent): Groq's `llama-3.1-8b-instant` is deprecated;
-`openai/gpt-oss-20b` is Groq's current free-tier-friendly general model
-([console.groq.com/docs/models](https://console.groq.com/docs/models)).
-Gemini's `gemini-2.0-flash` shut down 1 June 2026; current free-tier Flash
-models include `gemini-2.5-flash` and `gemini-2.5-flash-lite`
-([ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models)).
+<!-- BEGIN GENERATED: tools/provider_status.py. Do not edit by hand. -->
 
-**Superseded by Ali's own values, 1 Sep 2026 (Q5).** He chose different IDs
-from the researched set above and they are what must be pasted — do not
-paste the 28 Aug values:
+_Generated by `tools/provider_status.py` on 2026-09-02._
+
+**Routable**
+
+| Rung | Cost class | State |
+|---|---|---|
+| `openrouter` | free | never verified — no request has reached it in this reporting window |
+| `mistral` | free | never verified — no request has reached it in this reporting window |
+| `deepseek` | paid | never verified — no request has reached it in this reporting window |
+
+**Configured but not routable**
+
+| Rung | Cost class | Reason | As of |
+|---|---|---|---|
+| `groq` | free | no model: its default_model placeholder is unset in .env | 2026-09-02 |
+| `cerebras` | trial | no model: its default_model placeholder is unset in .env | 2026-09-02 |
+| `nvidia_nim` | free | no API key in NVIDIA_API_KEY | 2026-09-02 |
+| `gemini` | free | no model: its default_model placeholder is unset in .env | 2026-09-02 |
+| `claude_max` | paid | not a router target | 2026-09-02 |
+| `claude_api` | paid | no endpoint configured | 2026-09-02 |
+
+<!-- END GENERATED: tools/provider_status.py -->
+
+Everything below is a decision or an account fact, not a status — those are
+above, and generated.
+
+DeepSeek proxy mode is off. OpenRouter proxy routing is disabled. DeepSeek's
+`default_model` is a literal in `router/providers.yaml` (`deepseek-v4-flash`),
+not env-resolved, which is why it is routable while the `${...}` rungs are
+not. Ali reports credits added to the DeepSeek account (2026-08-29) — not
+independently verified, no balance was read.
+
+**Ali's model IDs (Q5, 1 Sep 2026).** His own values, differing from the
+researched set; these are what must be pasted, and `.env` still did not
+contain them on 2 Sep:
 
 ```
 GROQ_DEFAULT_MODEL=openai/gpt-oss-120b
@@ -137,12 +140,22 @@ NVIDIA_DEFAULT_MODEL=
 CLAUDE_API_DEFAULT_MODEL=claude-sonnet-5
 ```
 
-The gap above is still live: a key-name check on 1 Sep found none of the
-five keys in `.env`. Neither `openai/gpt-oss-120b` nor `gemini-3.6-flash`
-has been verified against a provider model list or a live call — they are
-Ali's instruction, and `live-routing-probe` is what turns them into
-evidence. The blank Cerebras value is deliberate (Q6): it makes that rung a
-skipped loop iteration rather than a 402.
+Neither `openai/gpt-oss-120b` nor `gemini-3.6-flash` has been checked against
+a provider model list or a live call. They are an instruction, and
+`live-routing-probe` is what turns them into evidence. The blank Cerebras
+value is deliberate (Q6): it makes that rung a skipped loop iteration rather
+than a 402.
+
+Two facts about specific rungs that no generator can derive, and that outlive
+any snapshot:
+
+- **NVIDIA NIM is geo-blocked from Pakistan** and is removed from the
+  fact-extraction plan by the blueprint 1.3 amendment. It stays a candidate
+  for the Phase 4 VPS, which is not in Pakistan. Independently of geography,
+  `CLAUDE.md` forbids it from ever seeing private memory content.
+- **Cerebras authenticates and returns `402 payment_required` on chat.** Its
+  open free tier became a one-time $5 credit in mid-2026, which is why its
+  cost class is `trial` rather than `free`.
 
 ## Open blockers
 
