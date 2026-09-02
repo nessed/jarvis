@@ -154,6 +154,9 @@ def test_webhook_with_no_extractable_message_ids_still_enqueues_unchanged() -> N
 def test_status_is_bearer_protected_and_reports_integrated_shape() -> None:
     client = TestClient(
         create_app(
+            # jobs= injected so create_app does not build a live Supabase
+            # client this test never uses; see conftest.py's network guard.
+            jobs=object(),
             bearer_token="bus-test-token",
             queue_depths=lambda: {"queued": 1, "running": 0},
             last_job=lambda: {"id": "job-1", "status": "queued"},

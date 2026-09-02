@@ -404,6 +404,10 @@ def test_status_reports_a_cooldown_the_executor_recorded(tmp_path, monkeypatch) 
 
     client = TestClient(
         create_app(
+            # jobs= injected so create_app does not fall back to
+            # SupabaseJobsRepository.from_env() and build a live client this
+            # test never uses. conftest.py's guard now refuses that outright.
+            jobs=object(),
             bearer_token="token",
             queue_depths=lambda: {},
             last_job=lambda: None,
@@ -420,7 +424,7 @@ def test_status_says_unreported_rather_than_healthy_when_nothing_has_routed(monk
     monkeypatch.setattr(bus_main.health_report, "read", lambda: None)
 
     client = TestClient(
-        create_app(bearer_token="token", queue_depths=lambda: {}, last_job=lambda: None)
+        create_app(jobs=object(), bearer_token="token", queue_depths=lambda: {}, last_job=lambda: None)
     )
     body = client.get("/status", headers={"Authorization": "Bearer token"}).json()
 
@@ -435,7 +439,7 @@ def test_status_still_lists_the_whole_provider_ladder_when_unreported(monkeypatc
     monkeypatch.setattr(bus_main.health_report, "read", lambda: None)
 
     client = TestClient(
-        create_app(bearer_token="token", queue_depths=lambda: {}, last_job=lambda: None)
+        create_app(jobs=object(), bearer_token="token", queue_depths=lambda: {}, last_job=lambda: None)
     )
     body = client.get("/status", headers={"Authorization": "Bearer token"}).json()
 
@@ -452,7 +456,7 @@ def test_a_provider_the_reporter_knows_but_the_manifest_does_not_is_kept(monkeyp
     )
 
     client = TestClient(
-        create_app(bearer_token="token", queue_depths=lambda: {}, last_job=lambda: None)
+        create_app(jobs=object(), bearer_token="token", queue_depths=lambda: {}, last_job=lambda: None)
     )
     body = client.get("/status", headers={"Authorization": "Bearer token"}).json()
 

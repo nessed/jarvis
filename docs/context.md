@@ -8,30 +8,27 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `ec8ae8e Let a bare pytest work, and stop two lanes deleting each other's temp files` on `main`, 7 ahead, 0 behind origin.
+**HEAD** `7647c67 Audit the board, and find backfill blocked on a contradiction` on `main`, 8 ahead, 0 behind origin.
 
-**Working tree:** 11 changed (plus 1 untracked)
+**Working tree:** 7 changed
 
 ```
-  M conftest.py
-  M  docs/blueprint.md
-  M  docs/board/QUESTIONS.md
+  M  conftest.py
   M  docs/board/README.md
-  M  docs/board/tasks/backfill-run.md
-  M  docs/board/tasks/board-audit.md
-  M  docs/board/tasks/bus-offbox-packaging.md
-  A  docs/board/tasks/offline-suite-network-leak.md
-  M  docs/context.md
-   M tests/status/test_live_queue_status.py
-   M tests/test_integration.py
+  M  docs/board/tasks/offline-suite-network-leak.md
+  M  docs/state.md
+  M  tests/status/test_live_queue_status.py
+  M  tests/test_integration.py
+  A  tests/tools/test_network_guard.py
 ```
 
-**Offline suite:** 1367 passed, 9 deselected in 37.63s _(recorded 2026-09-03)_
+**Offline suite:** 1367 passed, 9 deselected in 38.00s _(recorded 2026-09-03)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `7647c67` Audit the board, and find backfill blocked on a contradiction  _(2026-09-03)_
 - `ec8ae8e` Let a bare pytest work, and stop two lanes deleting each other's temp files  _(2026-09-03)_
 - `e0609bc` Generate the provider lists instead of typing them  _(2026-09-03)_
 - `d8b1970` Order the ladder by what a rung costs, then by how fast it actually is  _(2026-09-03)_
@@ -39,7 +36,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `210e07d` Stop a denied rung from quietly handing the bill to a paid one  _(2026-09-02)_
 - `fa3365a` Say what the action did, not just that it queued  _(2026-09-02)_
 - `bf9efc5` Restart the distill chain, and stop one outage becoming eighty-four rows  _(2026-09-02)_
-- `843bc26` ok  _(2026-09-02)_
 
 <!-- END GENERATED -->
 

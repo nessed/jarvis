@@ -40,3 +40,51 @@ TEMPROOT = Path(__file__).parent / ".pytest-temp"
 
 TEMPROOT.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", str(TEMPROOT))
+
+
+import socket
+
+import pytest
+
+_LOOPBACK = {"localhost", "127.0.0.1", "::1", "0.0.0.0", ""}
+
+
+@pytest.fixture(autouse=True)
+def no_outbound_network(request, monkeypatch):
+    """Fail any default-suite test that reaches a host off this machine.
+
+    The offline suite is the gate on every commit, and its entire value is
+    that red means broken. On 3 Sep 2026 four tests in ``tests/status/`` went
+    red twice in ten minutes -- once on an SSL handshake timeout, once on
+    ``getaddrinfo failed`` -- while passing either side of it. They were
+    building a live Supabase client they never used, because they called
+    ``create_app()`` without ``jobs=`` and ``bus/main.py`` falls back to
+    ``SupabaseJobsRepository.from_env()``.
+
+    Injecting a fake at those four call sites would have fixed that morning
+    and nothing else: the fifth test to forget ``jobs=`` brings it straight
+    back, and the symptom looks like whatever else changed that hour. This is
+    the version that holds.
+
+    **Loopback stays open**, deliberately. Ollama, whisper-server and every
+    local fixture live there, and a guard that blocked them would be a guard
+    everyone disables. Only addresses off this machine are refused.
+
+    ``live``-marked tests are exempt: reaching real providers is what they are
+    for, and they are deselected from the default run anyway.
+    """
+    if "live" in request.keywords:
+        return
+
+    real_getaddrinfo = socket.getaddrinfo
+
+    def guarded_getaddrinfo(host, port, *args, **kwargs):
+        if isinstance(host, str) and host.lower() not in _LOOPBACK:
+            raise RuntimeError(
+                f"offline test tried to resolve {host!r}. The default suite must not "
+                "touch the network -- inject a fake, or mark the test `live`. See "
+                "conftest.py::no_outbound_network."
+            )
+        return real_getaddrinfo(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)

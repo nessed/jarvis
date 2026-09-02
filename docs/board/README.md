@@ -114,10 +114,7 @@ and the code does not yet do.
 
 Ready now:
 
-1. `offline-suite-network-leak` — four tests in the *offline* suite build a live Supabase client, so a
-   bad connection turns the commit gate red. Filed 3 Sep from a real
-   pre-commit refusal
-2. `board-audit` — recurring; the fallback when nothing else is ready
+1. `board-audit` — recurring; the fallback when nothing else is ready
 
 Blocked, in the order they'll matter once unblocked:
 
