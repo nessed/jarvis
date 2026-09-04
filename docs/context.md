@@ -8,32 +8,22 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `ca8a767 Bring the README back in line with what the code does` on `main`, in sync with origin.
+**HEAD** `8b90d89 Stop paying a TLS handshake per call, and start the stack in parallel` on `main`, 1 ahead, 0 behind origin.
 
-**Working tree:** 38 changed
+**Working tree:** 2 changed
 
 ```
-  M  bus/whatsapp_client.py
-  M  conftest.py
-  M  db/jobs.py
-  M  docs/board/HANDOFF.md
-  M  docs/board/QUESTIONS.md
-  M  docs/board/README.md
   M  docs/board/USER-TASKS.md
-  A  docs/board/tasks/client-connection-reuse.md
-  A  docs/board/tasks/launcher-fast-start.md
-  A  docs/board/tasks/stt-latency-decision.md
-  A  docs/board/tasks/tts-pipeline-cache.md
-  M  docs/context.md
-  ...and 26 more
+  M  docs/history/infra-audit-2026-09-04.md
 ```
 
-**Offline suite:** 1434 passed, 9 deselected in 65.11s (0:01:05) _(recorded 2026-09-04)_
+**Offline suite:** 1434 passed, 9 deselected in 62.42s (0:01:02) _(recorded 2026-09-05)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `8b90d89` Stop paying a TLS handshake per call, and start the stack in parallel  _(2026-09-04)_
 - `ca8a767` Bring the README back in line with what the code does  _(2026-09-03)_
 - `669b47b` Write this week's handoff  _(2026-09-03)_
 - `ba80f71` Keep the commit gate off the internet  _(2026-09-03)_
@@ -41,7 +31,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `ec8ae8e` Let a bare pytest work, and stop two lanes deleting each other's temp files  _(2026-09-03)_
 - `e0609bc` Generate the provider lists instead of typing them  _(2026-09-03)_
 - `d8b1970` Order the ladder by what a rung costs, then by how fast it actually is  _(2026-09-03)_
-- `d57beb0` Keep a rung that cannot name a model out of the ladder  _(2026-09-02)_
 
 <!-- END GENERATED -->
 

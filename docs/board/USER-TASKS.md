@@ -15,7 +15,14 @@ once in a batched handoff, and only ones that newly became actionable.
   window", and the window has no duration. Recommendation is in the file
   — "24h + eligible-but-last" takes it. Blocks one new router task, and
   nothing that is currently `ready`.
-- **U2 — Paste the 5 model-ID lines into `.env`. Still open.** Ali gave the
+- **U2 — Paste the 5 model-ID lines into `.env`. Still open, and it is now
+  a *latency* item, not just a dead-rung item.** Measured 4 Sep 2026: the
+  ladder has collapsed to `openrouter`, which answers a one-word question
+  in 2.4-2.65 s, and a text reply makes two such calls — about 5 s of a
+  ~10 s reply. `groq` is priority 1 in the manifest because it is the fast
+  rung, and the only thing excluding it is the unset `GROQ_DEFAULT_MODEL`.
+  This is the largest single remaining lever on reply speed and it costs
+  one paste. Detail: `docs/history/infra-audit-2026-09-04.md`. Ali gave the
   values on 1 Sep (his own, differing from the researched set: Groq 120b
   not 20b, Gemini 3.6-flash not 2.5-flash, Cerebras deliberately blank)
   and said "pasted" — but a key-name check of the repo-root `.env` that

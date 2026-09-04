@@ -116,3 +116,47 @@ Not changed, because each is a decision and not a lookup:
 - Claude Max and ChatGPT Plus. The blueprint already settles both: Max is
   `claude -p` only (it is `tools/consult.py`), never a router target; Plus
   has no API. Nothing on the reply path can use either.
+
+## Addendum, same evening: the reply path measured end to end
+
+The table above sums components. This measures the machine half of a real
+text reply through the actual handler — real recall, real classifier, real
+router, real memory — with only the two Meta calls faked, so nothing
+reached Ali's phone, and `write_memory=False`, so nothing entered
+`memory.db`. Sender id `PROOF-NOT-A-REAL-NUMBER`, the same convention the
+outcome-reply proof used.
+
+```
+reply #1: 12.11s  -> 'Paris'
+reply #2:  7.50s  -> 'Paris'
+reply #3:  9.22s  -> 'Paris'
+```
+
+Split, measured separately in one process:
+
+```
+one routed completion #1: 10.39s  (provider=openrouter)   <- cold
+one routed completion #2:  2.65s
+one routed completion #3:  2.40s
+recall #1: 0.64s   #2: 0.60s   #3: 0.55s
+```
+
+So a warm text reply's machine half is 7.5-9.2 s, and **two routed
+completions are ~5 s of it** — the classify-then-reply shape from Q1. Add
+the five queue calls (5 x 0.30 s) and two Graph calls (2 x 0.24 s) and a
+full text reply is roughly **10 s, against roughly 22 s before** the
+connection-reuse work. Halved, and the remaining half is now dominated by
+model time rather than connection setup.
+
+**A latency finding about U2 that nobody had made.** The ladder has
+collapsed to `openrouter` for want of three model IDs, and openrouter is
+answering a one-word question in 2.4-2.65 s. `groq` is priority 1 in the
+manifest precisely because it is the fast rung, and it is excluded only
+because `GROQ_DEFAULT_MODEL` is unset. U2 was filed as "three rungs are
+dead"; it is also the largest single remaining lever on reply latency, and
+it costs one paste.
+
+Ollama was found stopped again during this probe (the second time in one
+evening) and every embedding failed with `EmbeddingError` until it was
+restarted — which is exactly the failure the launcher's new Ollama
+auto-start removes.
