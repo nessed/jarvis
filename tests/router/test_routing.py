@@ -1287,3 +1287,132 @@ def test_a_real_route_call_records_its_own_latency():
 
     p50 = router.p50_seconds("only", "batch")
     assert p50 is not None and p50 >= 0.0
+
+
+# --- the client cache ---------------------------------------------------------
+
+
+def _counting_router(*, environ=None, provider=None, models=None):
+    """A one-rung router whose factory records every construction."""
+    rung = provider or providers(["only"])[0]
+    built = []
+    calls = []
+
+    def factory(endpoint, api_key):
+        built.append((endpoint, api_key))
+        if models is None:
+            return FakeClient("only", {}, calls)
+        return DiscoveringFakeClient(rung.name, {}, calls, models)
+
+    env = environ if environ is not None else {f"{rung.name.upper()}_KEY": "test-key"}
+    return ProviderRouter([rung], environ=env, client_factory=factory), built, calls
+
+
+def test_two_routed_requests_share_one_client():
+    """The whole point of the cache, stated as an assertion.
+
+    A new client is a new ``httpx.AsyncClient`` is a new TLS handshake, and a
+    single text reply routes twice (classify, then answer). Before this, that
+    was two handshakes per message before the model saw a token.
+    """
+    router, built, calls = _counting_router()
+
+    asyncio.run(router.route("batch", [{"role": "user", "content": "one"}]))
+    asyncio.run(router.route("batch", [{"role": "user", "content": "two"}]))
+
+    assert len(built) == 1, "the second request rebuilt the client"
+    assert [provider for provider, _ in calls] == ["only", "only"]
+
+
+def test_a_rotated_key_is_not_served_from_the_cache():
+    """The cache is keyed on (endpoint, key), so a new key is a new client.
+
+    Reusing a client authenticated with a revoked key would turn a key
+    rotation into a rung that 401s until the process restarts.
+    """
+    environ = {"ONLY_KEY": "first-key"}
+    router, built, _calls = _counting_router(environ=environ)
+
+    asyncio.run(router.route("batch", [{"role": "user", "content": "before"}]))
+    environ["ONLY_KEY"] = "second-key"
+    asyncio.run(router.route("batch", [{"role": "user", "content": "after"}]))
+
+    assert [key for _endpoint, key in built] == ["first-key", "second-key"]
+
+
+def test_the_router_repr_never_renders_its_client_cache():
+    """The cache dict is keyed on API keys, so no debug path may print it.
+
+    A default or generated repr walking this object's attributes would put
+    live provider keys into tracebacks and log lines.
+    """
+    router, _built, _calls = _counting_router(environ={"ONLY_KEY": "sk-secret-value"})
+
+    asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert "sk-secret-value" not in repr(router)
+    assert repr(router) == "<ProviderRouter providers=1>"
+
+
+def test_model_discovery_runs_once_per_process_not_once_per_request():
+    """Measured 4 Sep 2026: three ``route()`` calls made three ``models.list()``
+    round trips, i.e. a second HTTP request in front of every Mistral
+    completion."""
+    mistral = Provider(
+        "mistral",
+        "https://api.mistral.ai/v1",
+        "MISTRAL_API_KEY",
+        1,
+        None,
+        ("batch",),
+        discover_chat_model=True,
+    )
+    calls = []
+    client = DiscoveringFakeClient("mistral", {}, calls, ["discovered-chat-model"])
+    router = ProviderRouter(
+        [mistral], environ={"MISTRAL_API_KEY": "test-key"}, client_factory=lambda *_: client
+    )
+
+    for content in ("one", "two", "three"):
+        result = asyncio.run(router.route("batch", [{"role": "user", "content": content}]))
+        assert result.model == "discovered-chat-model"
+
+    assert client.model_discovery_calls == 1
+
+
+def test_an_empty_model_roster_is_never_cached():
+    """A failed discovery must not lock the rung out for the process.
+
+    A workspace that gains chat access an hour later has to be able to use it
+    without a restart, so only a roster with something in it is remembered.
+    """
+    mistral = Provider(
+        "mistral",
+        "https://api.mistral.ai/v1",
+        "MISTRAL_API_KEY",
+        1,
+        None,
+        ("batch",),
+        discover_chat_model=True,
+    )
+    spare = Provider("spare", "https://spare.example/v1", "SPARE_KEY", 2, "spare-model", ("batch",))
+    calls = []
+    mistral_client = DiscoveringFakeClient("mistral", {}, calls, [])
+    spare_client = FakeClient("spare", {}, calls)
+    router = ProviderRouter(
+        [mistral, spare],
+        environ={"MISTRAL_API_KEY": "test-key", "SPARE_KEY": "test-key"},
+        client_factory=lambda endpoint, _key: (
+            mistral_client if endpoint == mistral.endpoint else spare_client
+        ),
+    )
+
+    first = asyncio.run(router.route("batch", [{"role": "user", "content": "one"}]))
+    assert first.provider == "spare", "an empty roster leaves mistral unable to serve"
+
+    mistral_client.models = ["now-granted-model"]
+    second = asyncio.run(router.route("batch", [{"role": "user", "content": "two"}]))
+
+    assert second.provider == "mistral"
+    assert second.model == "now-granted-model"
+    assert mistral_client.model_discovery_calls == 2

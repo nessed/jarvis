@@ -155,3 +155,28 @@ once in a batched handoff, and only ones that newly became actionable.
 
 - **U10 — UI-TARS second Windows account** (Phase 5, parked until you
   care): create it, log in once, babysit the first runs.
+
+- **U15 — Kill two orphaned `whisper-server.exe` processes** (30 s). Two
+  are alive from launches at 18:17 and 19:50 on 4 Sep, 750 MB between them,
+  both holding port 8081, with the stack down. The launcher now attaches
+  every child to a Windows Job Object so this cannot recur, but the two
+  that already exist are yours to end — agents never kill a process they
+  did not spawn. Task Manager, or:
+
+  ```
+  taskkill /PID 9748 /PID 21308
+  ```
+
+  (PIDs as of 4 Sep 20:30; check Task Manager first if it is a later day.)
+
+- **U16 — Time the new startup and one reply of each kind** (5 min,
+  sensory). Double-click `start-jarvis.bat`; the last banner line now
+  prints the total seconds. Then send one text and one voice note and note
+  roughly how long each reply took. Report the three numbers. That is the
+  only way to know whether 4 Sep's connection-reuse and warm-up work is
+  felt on the phone rather than only in a probe.
+
+- **U7 is what "deploy" means.** Everything on the agent side of Phase 4 is
+  written and validated (`infra/`, `docs/tasks/phase4-runbook.md`). The
+  Oracle account needs your identity and card; that is the one sitting
+  standing between now and a bus that is up when the laptop is closed.

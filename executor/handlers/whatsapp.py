@@ -17,7 +17,6 @@ were: no NPU, no Kokoro model, and no Graph API needed to test the wiring.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import sqlite3
@@ -43,7 +42,7 @@ from executor.handlers.command_intent import (
 from executor.handlers.outcome import WHATSAPP_OUTCOME_JOB_KIND
 from executor.notify import NOTIFY_FIELD, notify_descriptor
 from memory.conversation import ConversationMemory, open_conversation_memory
-from router import RoutedResult, route
+from router import RoutedResult, route_sync
 
 logger = logging.getLogger(__name__)
 
@@ -282,19 +281,29 @@ def build_whatsapp_webhook_handler(
     """
 
     def _default_complete(task_profile: str, messages: Sequence[Mapping[str, Any]]) -> RoutedResult:
-        return asyncio.run(route(task_profile, messages, urgent=True))
+        return route_sync(task_profile, messages, urgent=True)
+
+    # One Graph client for the life of this handler, built on first use.
+    # Lazily, because DEFAULT_HANDLERS constructs this closure at import time,
+    # before load_dotenv has run, so the token is not readable yet. Until
+    # 4 Sep 2026 every cue, send, download and upload built its own client
+    # and paid a fresh 1.0 s TLS handshake to graph.facebook.com — two per
+    # text reply, four per voice reply. The client keeps one connection now.
+    graph_client: list[WhatsAppClient] = []
+
+    def _graph() -> WhatsAppClient:
+        if not graph_client:
+            graph_client.append(WhatsAppClient(WhatsAppClientConfig.from_environ()))
+        return graph_client[0]
 
     def _default_send(*, to: str, text: str) -> str:
-        client = WhatsAppClient(WhatsAppClientConfig.from_environ())
-        return client.send_text_message(to=to, text=text)
+        return _graph().send_text_message(to=to, text=text)
 
     def _default_show_typing_indicator(*, message_id: str) -> None:
-        client = WhatsAppClient(WhatsAppClientConfig.from_environ())
-        client.show_typing_indicator(message_id=message_id)
+        _graph().show_typing_indicator(message_id=message_id)
 
     def _default_download_media(media_id: str) -> tuple[bytes, str]:
-        client = WhatsAppClient(WhatsAppClientConfig.from_environ())
-        return client.download_media(media_id=media_id)
+        return _graph().download_media(media_id=media_id)
 
     def _default_transcribe_audio(audio: bytes) -> str:
         # Imported here, not at module scope: this handler runs on every
@@ -319,8 +328,7 @@ def build_whatsapp_webhook_handler(
         return text_to_voice_note(text)
 
     def _default_send_voice_note(*, to: str, audio: bytes) -> str:
-        client = WhatsAppClient(WhatsAppClientConfig.from_environ())
-        return client.send_voice_note(to=to, audio=audio)
+        return _graph().send_voice_note(to=to, audio=audio)
 
     completion = complete or _default_complete
     sender = send_text_message or _default_send

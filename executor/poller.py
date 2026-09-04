@@ -352,6 +352,43 @@ def _run_with_timeout(registration: HandlerRegistration, job: Job) -> None:
         raise outcome["error"]
 
 
+TTS_WARM_UP_ENV = "JARVIS_TTS_WARM_UP"
+
+
+def tts_warm_up_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    settings = os.environ if environ is None else environ
+    return settings.get(TTS_WARM_UP_ENV, "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _warm_tts_in_background() -> threading.Thread | None:
+    """Load Kokoro on a daemon thread so the first voice reply is not the slow one.
+
+    Measured 4 Sep 2026 on this laptop: a fresh process pays ~18s to import
+    torch and ~5s to build the pipeline before the first byte of speech, so
+    the first voice note after every worker restart answered 25-100s late.
+    Only the worker that owns ``whatsapp_webhook`` does this — it is the one
+    process that synthesises — and only when it is going to keep running.
+    Best-effort: a failure is logged and the first real reply loads it instead.
+    ``JARVIS_TTS_WARM_UP=0`` turns it off (tests, and any box without torch).
+    """
+    if not tts_warm_up_enabled():
+        return None
+
+    def _warm() -> None:
+        try:
+            from voice.speak import warm_up
+
+            started = time.monotonic()
+            warm_up()
+            logger.info("tts pipeline warmed in %.1fs", time.monotonic() - started)
+        except Exception as exc:  # noqa: BLE001 - never take the worker down for a warm-up
+            logger.warning("tts warm-up failed (%s); the first voice reply will load it", type(exc).__name__)
+
+    thread = threading.Thread(target=_warm, name="tts-warm-up", daemon=True)
+    thread.start()
+    return thread
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the local executor until interrupted, or once for diagnostics."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -396,6 +433,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     seeds_distill = kinds is None or DISTILL_JOB_KIND in kinds
     if not args.once and seeds_distill:
         _seed_distill_chain()
+    if not args.once and (kinds is None or WHATSAPP_JOB_KIND in kinds):
+        _warm_tts_in_background()
 
     handlers: JobHandlers = (
         DEFAULT_HANDLERS

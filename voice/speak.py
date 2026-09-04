@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import io
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -46,6 +47,51 @@ class SpeechError(RuntimeError):
     """Raised when text cannot be turned into a voice note."""
 
 
+#: The one Kokoro pipeline this process uses, built on first synthesis.
+#:
+#: Until 4 Sep 2026 ``synthesize`` built a fresh ``KPipeline`` on every call.
+#: Measured on this laptop that day: ``import kokoro`` 18.5s (torch), the
+#: pipeline build 5.3s, and the actual render 2.7-3.1s for 7.6s of speech.
+#: So every voice reply paid ~5s of model construction on top of the render,
+#: and the first one after a worker restart paid ~24s more. Kept per process,
+#: behind a lock, keyed on the ``KPipeline`` class it was built from so a test
+#: that injects a fake ``kokoro`` module never receives another test's fake.
+_PIPELINE_LOCK = threading.Lock()
+_pipeline: tuple[object, object] | None = None  # (KPipeline class, instance)
+
+
+def _pipeline_for(lang_code: str) -> "object":
+    from kokoro import KPipeline
+
+    global _pipeline
+    cached = _pipeline
+    if cached is not None and cached[0] is KPipeline:
+        return cached[1]
+    with _PIPELINE_LOCK:
+        cached = _pipeline
+        if cached is not None and cached[0] is KPipeline:
+            return cached[1]
+        instance = KPipeline(lang_code=lang_code)
+        _pipeline = (KPipeline, instance)
+        return instance
+
+
+def reset_pipeline_cache() -> None:
+    """Drop the cached pipeline. A test seam; production never needs it."""
+    global _pipeline
+    with _PIPELINE_LOCK:
+        _pipeline = None
+
+
+def warm_up() -> None:
+    """Load Kokoro now so the first voice reply does not pay for it.
+
+    Safe to call from a worker at startup; a failure here is logged by the
+    caller and the next ``synthesize`` simply tries again.
+    """
+    _pipeline_for(DEFAULT_TTS_LANG)
+
+
 def synthesize(text: str, *, voice: str | None = None) -> "object":
     """Render ``text`` to a mono float32 waveform at ``TTS_SAMPLE_RATE``.
 
@@ -57,10 +103,9 @@ def synthesize(text: str, *, voice: str | None = None) -> "object":
         raise SpeechError("Nothing to say: the text is empty.")
 
     import numpy as np
-    from kokoro import KPipeline
 
     chosen = voice or tts_voice()
-    pipeline = KPipeline(lang_code=DEFAULT_TTS_LANG)
+    pipeline = _pipeline_for(DEFAULT_TTS_LANG)
 
     # Kokoro yields one chunk per segment; join them so a multi-sentence reply
     # is one continuous take rather than several files.

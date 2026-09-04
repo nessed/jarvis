@@ -1,163 +1,113 @@
-# Handoff — 3 September 2026
+# Handoff — 4 September 2026
 
-Nine board tasks landed in one session. The board has nothing `ready` left
-except the recurring audit, which ran this session. **Everything else is
-waiting on you: four actions and two decisions.**
-
----
-
-## Do these four, in this order
-
-**U13 — one line, and it unblocks everything else you touch.** Every `git`
-command in this repo fails outright:
-
-```
-fatal: detected dubious ownership in repository at 'C:/Users/Ali/Desktop/Projects/Code/jarvis'
-'.../.git' is owned by: DESKTOP-68UQJNR/CodexSandboxOffline
-but the current user is: DESKTOP-68UQJNR/Ali
-```
-
-The fix:
-
-```
-git config --global --add safe.directory C:/Users/Ali/Desktop/Projects/Code/jarvis
-```
-
-`agents.md` puts global git config on the ask-first list, so it is yours to
-run. It also fails four `test_context_status.py` tests, and it is why
-`.pytest_cache` is unwritable — one fault, three symptoms. **Worth knowing
-why `.git` changed owner if you can tell.** A repo another account can write
-is a bigger question than the warning.
-
-**U14 — send one WhatsApp message** (1 min, needs `start-jarvis.bat` running).
-
-> what wifi interfaces does this laptop have?
-
-You should get **two** replies a few seconds apart:
-
-```
-On it: list wifi interfaces. Queued as job a8b4785b.
-Done: list wifi interfaces. Wi-Fi (connected).
-```
-
-The machine half is proved live end to end. The half with your thumb in it
-is not, and no test can prove it.
-
-**U2 — paste three model IDs into `.env`.** This is no longer a guess. The
-router now reports what it is refusing and why:
-
-```
-groq      no model: its default_model placeholder is unset in .env
-cerebras  no model: its default_model placeholder is unset in .env
-gemini    no model: its default_model placeholder is unset in .env
-```
-
-That leaves `openrouter, mistral, deepseek` as your entire ladder. Your own
-values from Q5 are in `docs/state.md`.
-
-**U12 — fill `SUPABASE_DB_PASSWORD`.** Unblocks `db-maintenance`'s live half.
-The runner, its ledger and migration `0003` are all built, tested and
-committed; the key is in `.env` and empty.
+You asked for one thing: make it fast. Here is where the time was going,
+what is already fixed, and the four things that are yours.
 
 ---
 
-## Decide these two
+## What was slow, measured
 
-**Q12 — drop Pipecat from the desk loop?** Recommendation filed: yes, keep
-Silero VAD. Five of six stages become custom code either way. Blocks
-`voice-loop` and `voice-command-ingress` behind it.
+Full numbers: `docs/history/infra-audit-2026-09-04.md`.
 
-**Q11 — how long is the router's verification window?** Recommendation:
-"24h + eligible-but-last". It is the last of §3.3's five clauses the code
-does not implement; the other four shipped this session.
+**Replies.** About 12-18 s of every text reply was connection setup, not
+thinking. Three clients were rebuilt on every call, each paying a fresh TLS
+handshake from Pakistan:
 
-Two more questions are filed and block nothing: **Q13** (what to do with 98
-dead-lettered rows — recommendation: leave them) and **Q14**, below.
+| Client | Per call before | Now |
+|---|---|---|
+| Supabase queue (claim, checkpoint, complete — 5 per reply) | 1.7-3.4 s | 0.30 s |
+| WhatsApp Graph API (typing cue, send; 4 for voice) | 0.8-1.1 s | 0.24 s |
+| LLM provider (2 completions per text reply) | ~2.0 s | 0.8-1.2 s |
 
----
+Mistral was also re-listing its model roster before every completion.
 
-## What landed
+**Voice.** Kokoro rebuilt its whole pipeline on every reply: 5 s of
+construction per voice note, and 25-100 s on the first one after a restart.
+Now built once and pre-warmed when the worker starts; a render is ~2.8 s.
 
-**Memory was down and is running.** It had been dead since 30 August. Two
-causes, neither in the chain's own logic: Ollama stopped at 00:35 on 31 Aug,
-and the `background-worker` process was killed at 01:53 and never restarted.
-Seven live jobs have completed since, seven turns distilled, zero failures.
+**Whisper is the laptop lag, and it is a decision, not a bug.** With the
+server already warm, a 7.6 s voice note takes 11-18 s to transcribe at
+53-89 % CPU across all eight cores. The NPU only runs the encoder; large-v3's
+32-layer decoder runs on the CPU. That is Q15 below.
 
-The 98 dead-lettered rows carried no work — the payload is scheduling
-metadata and the real backlog is local — so nothing was lost and there is
-nothing to re-queue. The re-seed loop that turned one outage into 84 rows in
-78 minutes is now rate-limited.
-
-**An action tells you whether it worked.** A WhatsApp command used to say
-"queued as job X" and then nothing, whether it succeeded, failed, or
-dead-lettered. The outcome now comes back as a second message, including on
-failure — which is the case where silence was worst.
-
-**Four router tasks, all of §3.3 except the verification window.**
-
-- A denied rung (401/402/403) no longer quietly falls through to one that
-  costs money.
-- Three rungs that sat at the front of every request unserved are now
-  excluded, with the env var that would fix each named.
-- The ladder orders by cost class first, then by measured latency inside a
-  class. Cerebras is `trial`, not `free`, since its free tier became a $5
-  credit.
-- `state.md`'s provider lists are generated, not typed.
-
-**Two things that were quietly costing time.**
-
-`pytest -q` works bare now. The flags moved into config, and a fixed
-`--basetemp` was dropped entirely — two sessions running the suite at once
-were deleting each other's temp files, which reads exactly like a flaky
-suite. Proved both ways.
-
-And the "offline" suite was reaching the internet: five tests built a live
-Supabase client they never used, so a wifi blip turned the commit gate red.
-A guard now refuses any non-loopback connection. **The suite went from 77s to
-42s** — nearly half its runtime was network it should never have touched.
+**Startup.** Everything ran in series: 57 s of tunnel probe + Meta re-point,
+then a 3 GB Whisper load, then three workers each importing 5 s of
+dependencies. And closing the launcher window orphaned every child: two
+`whisper-server.exe` from earlier today were still alive tonight, 750 MB,
+both holding port 8081, with the stack down.
 
 ---
 
-## Two things worth your attention
+## What landed today
 
-**Q14 — the backfill is stuck between two of your own answers, 49 minutes
-apart.** On 2 Sep at 01:53 you amended blueprint §1.3 to say fact extraction
-uses `json_object` with pydantic validation, *not* constrained JSON-schema
-decoding — "that is what shipped and what the code does". At 02:42 a blocker
-was filed arguing the opposite, and quoting §1.3's *pre-amendment* text as
-its justification.
+Committed, full suite green (`1434 passed`). Three subagent lanes on
+Opus 5 plus CORE integration.
 
-The measurements in that blocker are good: unconstrained decoding produced
-invalid JSON twice at real chunk sizes and aborted the run, while constrained
-held at every size tested. But the fix it recommends is now a request to
-change the spec back, which is yours. Recommendation: re-amend and file the
-task.
-
-**`backfill-run` was invisible on the board.** Nine task files are blocked;
-NEXT listed eight. It had been missing since the 2 Sep rebuild, so nobody
-would have picked it up even after its gate cleared. Now listed.
+- **Connection reuse** everywhere — queue, Graph, router. The router now
+  runs on one persistent event loop (`route_sync`), which is what lets the
+  connection survive between messages.
+- **Kokoro cached and warmed.**
+- **Launcher:** children are in a Windows Job Object and die with it however
+  it dies; Ollama is started for you if it is not running; Whisper and the
+  workers start while the tunnel is minted; an already-running Whisper is
+  reused, never stacked; every step and the final banner print seconds.
+- Ollama is running now (started for the probes) — the launcher will find it.
 
 ---
 
-## Numbers
+## Do these, in this order
+
+**U15 — kill the two orphaned whisper-servers** (30 s). They are yours to
+end; agents never kill what they did not spawn:
 
 ```
-Nine commits, bf9efc5..ba80f71
-Board: 18 done, 9 blocked, 1 ready (the recurring audit)
-
-.venv\Scripts\python.exe -m pytest -q
-1367 passed, 9 deselected in 42.38s
-
-.venv\Scripts\python.exe -m pytest -q -m live tests/live
-1 passed, 1 warning in 29.97s
+taskkill /PID 9748 /PID 21308
 ```
 
-Three design decisions were consulted rather than guessed, and each verdict's
-flip-conditions were checked against the tree rather than accepted on trust:
-`docs/consults/2026-09-02-action-outcome-reply-shape/`,
-`-router-denial-surfacing-reading/`, `-router-p50-storage-scope/`.
+**U16 — run `start-jarvis.bat` and send two messages** (5 min). The banner
+now ends with the total seconds. Then one text, one voice note. Report the
+three numbers. I could not run the launcher live from this session (the
+command classifier refused it), so the startup saving is structural until
+you measure it.
 
-**Not done, and deliberately:** `backfill-run` (Q14), `voice-loop` (Q12),
-`router-eligibility-window` (Q11), `db-maintenance` (U12), `live-routing-probe`
-(U2), and the four Phase 4 tasks behind U7/U8. The FLP writing half stays
-unbuilt per `PARKED.md`.
+**Q15 — which Whisper, and where.** Three options in `QUESTIONS.md`:
+
+- **A (recommended now):** Groq `whisper-large-v3-turbo` as primary, local
+  NPU as fallback. One env var. Already live-verified the other way round:
+  word-perfect on English in ~1-2 s. Your voice note leaves the laptop.
+- **B (when you have an evening):** local large-v3-turbo — same encoder, so
+  the NPU graph should carry over; 4 decoder layers instead of 32.
+- **C:** keep the 11-18 s.
+
+**U7 — Oracle signup.** This is what "deploy" means and it is the only thing
+between you and a bus that is up with the lid closed. Everything on the agent
+side is written and validated: `infra/terraform`, hardening scripts,
+Dockerfile, `docs/tasks/phase4-runbook.md`. The account needs your identity
+and card, one sitting with a browser agent driving. One honest caveat: Phase
+4 does not shorten a reply, because memory is laptop-only by your own rules,
+so a text reply still round-trips through the laptop executor. It buys a
+webhook that never goes down.
+
+Still open from 3 Sep and unchanged: **U2** (three model IDs into `.env`),
+**U12** (`SUPABASE_DB_PASSWORD`), **U14** (send one command, expect two
+replies), **Q11**, **Q12**.
+
+---
+
+## Your subscriptions
+
+You asked about Claude Max and ChatGPT Plus. The blueprint already settled
+both and nothing today changes it: Max is `claude -p` only — it is
+`tools/consult.py`, every second opinion — and is never a router target;
+Plus has no API. Neither can sit on the reply path.
+
+---
+
+## Not done, on purpose
+
+- **Merging the two LLM calls** (classify + reply) into one would halve
+  provider time, but the two-call shape was your Q1 answer. Say so if you
+  want it changed.
+- **Whisper model or placement** — Q15.
+- **Killing orphans** — U15.
+- **A live launcher run** — refused by the classifier; U16.

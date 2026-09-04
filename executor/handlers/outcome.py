@@ -59,11 +59,16 @@ def build_whatsapp_outcome_handler(*, send_text_message: Sender | None = None) -
     time so registering this handler never requires a token.
     """
 
+    # Built once, on first use, and kept: the client holds one connection to
+    # the Graph API, and rebuilding it per outcome cost a TLS handshake each.
+    graph_client: list[Any] = []
+
     def _default_send(*, to: str, text: str) -> str:
         from bus.whatsapp_client import WhatsAppClient, WhatsAppClientConfig
 
-        client = WhatsAppClient(WhatsAppClientConfig.from_environ())
-        return client.send_text_message(to=to, text=text)
+        if not graph_client:
+            graph_client.append(WhatsAppClient(WhatsAppClientConfig.from_environ()))
+        return graph_client[0].send_text_message(to=to, text=text)
 
     sender = send_text_message or _default_send
 

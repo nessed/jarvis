@@ -53,6 +53,30 @@ file to delete, and no way for a dead launcher to wedge every future launch.
 Recovering from the duplicate by force-killing PIDs caused a full outage on this
 machine, so nothing here ever kills, signals, or cleans up another process. The
 refusal names the holding PID and stops.
+
+Children die with the launcher
+------------------------------
+
+That rule is about processes this launcher did not spawn. Its own children are
+a different matter, and on 4 September 2026 they were the problem: two
+``whisper-server.exe`` from earlier launches were still alive with the stack
+down, holding 750 MB and both bound to 127.0.0.1:8081, because ``shutdown()``
+only runs if ``main`` reaches its ``finally``. Closing the console window --
+which ``start-jarvis.bat`` invites -- kills python outright, and a child
+spawned with ``CREATE_NEW_PROCESS_GROUP`` survives it. Every launch after that
+stacked another 3 GB model load on top of the last one.
+
+So every child is assigned to a Windows Job Object created with
+``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``. When this process ends *however* it
+ends -- Ctrl+C, window close, crash, taskkill -- the OS closes the last handle
+to the job and takes the tree with it. Same fail-open shape as the singleton
+socket: nothing to clean up, nothing to go stale, no lock left behind by a
+crash. ``process.terminate()`` in ``shutdown()`` stays for the orderly path;
+the job is what covers the paths that never reach it.
+
+The job is best-effort by construction. Missing pywin32, or a terminal that
+already runs the launcher inside a job forbidding nesting, degrades to one
+warning line and a launch that still works -- exactly what it did before.
 """
 
 from __future__ import annotations
@@ -95,6 +119,18 @@ def tunnel_protocol(environ: dict[str, str] | None = None) -> str:
     settings = os.environ if environ is None else environ
     return settings.get(TUNNEL_PROTOCOL_ENV, DEFAULT_TUNNEL_PROTOCOL).strip() or DEFAULT_TUNNEL_PROTOCOL
 
+#: Where Ollama's installer puts the binary on this machine. ``ollama serve``
+#: binds 11434 itself, so the launcher never has to pass a port.
+OLLAMA_EXE_ENV = "JARVIS_OLLAMA_EXE"
+OLLAMA_HOST = "127.0.0.1"
+OLLAMA_PORT = 11434
+OLLAMA_START_TIMEOUT = 30.0
+
+#: How long whisper-server gets to load its 3 GB model, counted from the moment
+#: it is spawned rather than from the moment we start waiting -- the tunnel work
+#: that now runs in parallel spends most of this budget for us.
+WHISPER_READY_TIMEOUT = 60.0
+
 SINGLETON_HOST = "127.0.0.1"
 SINGLETON_PORT_ENV = "JARVIS_SINGLETON_PORT"
 DEFAULT_SINGLETON_PORT = 8765
@@ -106,6 +142,37 @@ SINGLETON_PORT = int(os.environ.get(SINGLETON_PORT_ENV, str(DEFAULT_SINGLETON_PO
 #: be enough while ``main`` runs, but a module reference makes it impossible for
 #: a future refactor to drop the lock early by letting it fall out of scope.
 _singleton_lock: socket.socket | None = None
+
+#: The job object lives here for the same reason, and it matters more: closing
+#: the last handle to a kill-on-close job kills its processes, so a handle that
+#: fell out of scope early would take the whole stack down mid-launch.
+_job: object | None = None
+
+
+def create_job_object() -> object | None:
+    """A Windows job that kills its processes when its last handle closes.
+
+    ``None`` on anything but Windows, and ``None`` -- with one warning line --
+    when pywin32 is missing or the job cannot be configured. A launcher without
+    the job is the launcher we had before, not a broken one, so nothing here
+    raises.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import win32job
+    except ImportError:
+        say("pywin32 missing — children may outlive this window if it is closed")
+        return None
+    try:
+        job = win32job.CreateJobObject(None, "")
+        limits = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
+        limits["BasicLimitInformation"]["LimitFlags"] |= win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, limits)
+    except Exception as exc:  # pragma: no cover - pywintypes.error, machine-local
+        say(f"could not create the kill-on-close job ({exc}) — children may outlive this window")
+        return None
+    return job
 
 
 class Supervisor:
@@ -121,10 +188,38 @@ class Supervisor:
     ignored by :meth:`check_alive`, never treated as a reason to shut down.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, job: object | None = None) -> None:
         self.children: list[tuple[str, subprocess.Popen]] = []
         self.optional: set[str] = set()
         self._reported_dead: set[str] = set()
+        #: The kill-on-close job every child is assigned to, or ``None`` when
+        #: this platform or this machine cannot provide one.
+        self.job = job
+        self._job_warned = False
+
+    def adopt(self, process: subprocess.Popen) -> bool:
+        """Put a child in the kill-on-close job. ``False`` if it could not go in.
+
+        A failure is never fatal and never repeated: a terminal that already
+        runs us inside a job forbidding nesting makes every assignment fail, and
+        one warning line says everything a hundred would.
+        """
+        if self.job is None:
+            return False
+        try:
+            import win32job
+
+            handle = getattr(process, "_handle", None)
+            if handle is None:
+                raise OSError("the child exposes no process handle")
+            win32job.AssignProcessToJobObject(self.job, handle)
+        except Exception as exc:
+            if not self._job_warned:
+                self._job_warned = True
+                say(f"could not add children to the kill-on-close job ({exc})")
+                say("they may outlive this window if it is closed — Ctrl+C still stops them")
+            return False
+        return True
 
     def spawn(
         self,
@@ -143,6 +238,9 @@ class Supervisor:
         self.children.append((name, process))
         if optional:
             self.optional.add(name)
+        # Assigning a child created with CREATE_NEW_PROCESS_GROUP to a job works
+        # on Windows 8+; it does not need CREATE_BREAKAWAY_FROM_JOB.
+        self.adopt(process)
         return process
 
     def check_alive(self) -> str | None:
@@ -189,6 +287,15 @@ def step(message: str) -> None:
     print(f"\n{message}", flush=True)
 
 
+def took(start: float) -> str:
+    """How long a step took, for the line that announces it finished.
+
+    "Slow to start" was a complaint with no number attached to it for as long
+    as this launcher has existed. Every step now says its own.
+    """
+    return f"{time.monotonic() - start:.1f}s"
+
+
 def python_executable() -> str:
     venv = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     return str(venv) if venv.exists() else sys.executable
@@ -226,22 +333,27 @@ def acquire_singleton_lock(port: int | None = None) -> socket.socket | None:
     return lock
 
 
-def pid_holding_port(port: int) -> int | None:
-    """The PID listening on ``port`` on loopback, or ``None`` if not discoverable.
+def pids_holding_port(port: int) -> list[int]:
+    """Every PID listening on ``port`` on loopback, in the order netstat lists them.
 
     ``netstat -ano`` rather than ``psutil.net_connections`` because psutil is not
     a dependency of this repo, and a diagnostic line in an error message is not
-    worth adding one for. The PID is best-effort: a missing one changes the
-    wording of the refusal, never the refusal itself.
+    worth adding one for. The list is best-effort: an empty one changes the
+    wording of a refusal, never the refusal itself.
+
+    Plural because 4 September 2026 showed two ``whisper-server.exe`` bound to
+    8081 at once. Naming one of them would have made the leak look like a single
+    stray process instead of the pile-up it was.
     """
     try:
         result = subprocess.run(
             ["netstat", "-ano"], capture_output=True, text=True, timeout=15
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return []
     if result.returncode != 0:
-        return None
+        return []
+    found: list[int] = []
     for line in result.stdout.splitlines():
         fields = line.split()
         if len(fields) < 5 or fields[0].upper() != "TCP":
@@ -250,10 +362,28 @@ def pid_holding_port(port: int) -> int | None:
         if state.upper() != "LISTENING" or not local.endswith(f":{port}"):
             continue
         try:
-            return int(pid)
+            number = int(pid)
         except ValueError:
-            return None
-    return None
+            continue
+        if number not in found:
+            found.append(number)
+    return found
+
+
+def pid_holding_port(port: int) -> int | None:
+    """The first PID listening on ``port``, or ``None`` if not discoverable."""
+    found = pids_holding_port(port)
+    return found[0] if found else None
+
+
+def describe_holders(port: int) -> str:
+    """``"PID 4242"``, ``"PIDs 4242 and 4243"``, or an honest admission."""
+    found = pids_holding_port(port)
+    if not found:
+        return "an unknown process — netstat gave no usable answer"
+    if len(found) == 1:
+        return f"PID {found[0]}"
+    return "PIDs " + ", ".join(str(pid) for pid in found[:-1]) + f" and {found[-1]}"
 
 
 def report_duplicate(port: int) -> None:
@@ -269,6 +399,25 @@ def report_duplicate(port: int) -> None:
     say(f"if {port} is held by something unrelated, set {SINGLETON_PORT_ENV} and retry.")
 
 
+def bus_is_answering(timeout: float = 2.0) -> bool:
+    """Whether *something* already answers the bus port before we spawn one.
+
+    The singleton lock is the real guard against a second copy, but it only
+    covers copies started through this launcher. A bus left running by hand, or
+    by a launcher whose window was closed, would otherwise get a second uvicorn
+    spawned on top of it: the new one exits with "address already in use" and
+    ``wait_for_bus`` passes anyway, because an HTTP probe on loopback cannot
+    tell you whose process answered.
+    """
+    import httpx
+
+    try:
+        httpx.get(f"http://{BUS_HOST}:{BUS_PORT}/health", timeout=timeout)
+        return True
+    except httpx.HTTPError:
+        return False
+
+
 def wait_for_bus(timeout: float = 30.0) -> bool:
     """The bus is up once it answers at all — 401 counts, auth is doing its job."""
     import httpx
@@ -281,6 +430,65 @@ def wait_for_bus(timeout: float = 30.0) -> bool:
         except httpx.HTTPError:
             time.sleep(0.5)
     return False
+
+
+def whisper_server_is_ready() -> bool:
+    """Whether a whisper-server is *already* serving on the configured port.
+
+    Lazily imported for the same reason as ``httpx``: nothing outside the
+    standard library loads until after the singleton lock.
+    """
+    from voice.whisper.server_client import WhisperServerClient
+
+    return WhisperServerClient().is_ready()
+
+
+def ollama_executable(environ: dict[str, str] | None = None) -> Path | None:
+    """Where ``ollama.exe`` is, or ``None`` if it is not where it should be.
+
+    ``JARVIS_OLLAMA_EXE`` overrides the installer's default location. An
+    override that does not exist is treated as "not found" rather than spawned
+    blindly, so a typo produces the same clear message as a missing install.
+    """
+    settings = os.environ if environ is None else environ
+    override = (settings.get(OLLAMA_EXE_ENV) or "").strip()
+    if override:
+        candidate = Path(override)
+        return candidate if candidate.exists() else None
+    local_app_data = (settings.get("LOCALAPPDATA") or "").strip()
+    if not local_app_data:
+        return None
+    candidate = Path(local_app_data) / "Programs" / "Ollama" / "ollama.exe"
+    return candidate if candidate.exists() else None
+
+
+def wait_for_ollama(timeout: float = OLLAMA_START_TIMEOUT) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if ollama_ready():
+            return True
+        time.sleep(1.0)
+    return False
+
+
+def start_ollama(supervisor: "Supervisor", timeout: float = OLLAMA_START_TIMEOUT) -> bool:
+    """Spawn ``ollama serve`` and wait for it to answer. ``False`` if it cannot.
+
+    Supervised and **optional**: Ali may already be running the tray app, in
+    which case this is never reached, and an Ollama that dies later degrades
+    memory rather than taking the reply path down.
+    """
+    executable = ollama_executable()
+    if executable is None:
+        return False
+    say(f"starting {executable}")
+    supervisor.spawn(
+        "ollama",
+        [str(executable), "serve"],
+        LOG_DIR / "ollama.out.log",
+        optional=True,
+    )
+    return wait_for_ollama(timeout)
 
 
 def wait_for_tunnel_url(log: Path, timeout: float = 60.0) -> str | None:
@@ -377,6 +585,68 @@ WHATSAPP_JOB_KINDS = (
 )
 
 
+def spawn_whisper_server(supervisor: Supervisor) -> object | None:
+    """Start whisper-server if it is not already up. Returns its config, or ``None``.
+
+    ``None`` means there is nothing to wait for later: not built, not available
+    on this machine, or -- the case 4 September 2026 produced -- already
+    listening. A server that is already there is *used*, never restarted and
+    never killed: each one holds a 3 GB model, and stacking a second cost 750 MB
+    for nothing. The reply path is unaffected either way, which is why every
+    branch here warns and continues instead of failing the launch.
+    """
+    from voice.whisper.local_backend import LocalWhisperBackend, subprocess_env
+    from voice.whisper.server_client import WhisperServerConfig
+
+    server_config = WhisperServerConfig.from_environ()
+    if whisper_server_is_ready():
+        say(f"already listening on {server_config.host}:{server_config.port} — it belongs to {describe_holders(server_config.port)}.")
+        say("using the one that is there; nothing was started and nothing was stopped")
+        return None
+
+    backend = LocalWhisperBackend()
+    availability = backend.availability()
+    # backend.binary is whisper-cli.exe -- it has no --host/--port and
+    # exits on them. The server binary is a sibling in the same
+    # bin/Release/ directory, since both come out of the same
+    # build-vitisai build (voice/whisper/local_backend.py's own docstring
+    # names both artifacts landing there together).
+    server_binary = backend.binary.parent / "whisper-server.exe"
+    if not availability.available:
+        say(f"skipping: {availability.reason}")
+        say("text messages are unaffected; voice notes will not get a reply until this is built")
+        return None
+    if not server_binary.exists():
+        say(f"skipping: whisper-server not built: {server_binary} does not exist")
+        say("text messages are unaffected; voice notes will not get a reply until this is built")
+        return None
+
+    supervisor.spawn(
+        "whisper-server",
+        [
+            str(server_binary),
+            "-m",
+            str(backend.model),
+            "-l",
+            backend.language,
+            "--host",
+            server_config.host,
+            "--port",
+            str(server_config.port),
+        ],
+        LOG_DIR / "whisper-server.out.log",
+        # Same defensive PATH prepend as the CLI backend
+        # (voice/whisper/local_backend.py): flexmlrt.dll is normally
+        # staged next to the binary already, but a partial build
+        # should still run rather than die with an opaque loader error.
+        env=subprocess_env(),
+        # Optional: a dead or never-ready whisper-server must degrade
+        # to text-only, never take bus/tunnel/workers down with it.
+        optional=True,
+    )
+    return server_config
+
+
 def spawn_workers(supervisor: Supervisor, python: str, interval: str) -> None:
     """Start the three supervised pollers, each restricted to its own kinds.
 
@@ -423,7 +693,7 @@ def main(argv: list[str] | None = None) -> int:
     # Nothing is imported, loaded, probed or spawned until the bind succeeds,
     # because minting a tunnel and re-pointing Meta are the two acts that made
     # the duplicate destructive rather than merely wasteful.
-    global _singleton_lock
+    global _singleton_lock, _job
     port = singleton_port()
     _singleton_lock = acquire_singleton_lock(port)
     if _singleton_lock is None:
@@ -435,19 +705,39 @@ def main(argv: list[str] | None = None) -> int:
 
     load_dotenv(ROOT / ".env")
 
+    started = time.monotonic()
     python = python_executable()
-    supervisor = Supervisor()
     print("Starting JARVIS", flush=True)
+    # Created after the banner because its failure path prints, and before any
+    # child exists because a child spawned outside the job is one the OS will
+    # not clean up.
+    _job = create_job_object()
+    supervisor = Supervisor(job=_job)
 
     try:
-        step("[1/5] Local AI (Ollama)")
-        if not ollama_ready():
-            say("Ollama is not answering on 127.0.0.1:11434.")
-            say("Start it and run this again — memory needs it.")
-            return 1
-        say("ready")
+        step("[1/6] Local AI (Ollama)")
+        begun = time.monotonic()
+        if ollama_ready():
+            # Already serving — the tray app, or a previous launch. Leave it be.
+            say(f"ready ({took(begun)})")
+        else:
+            say(f"not answering on {OLLAMA_HOST}:{OLLAMA_PORT}")
+            if start_ollama(supervisor):
+                say(f"ready ({took(begun)})")
+            else:
+                say(f"Ollama is not answering on {OLLAMA_HOST}:{OLLAMA_PORT}.")
+                say("Start it and run this again — memory needs it.")
+                return 1
 
-        step("[2/5] Webhook receiver")
+        step("[2/6] Webhook receiver")
+        begun = time.monotonic()
+        if bus_is_answering():
+            # Same refusal as the singleton lock, for the same reason: whoever
+            # answers 8000 owns the reply path, and we cannot tell whose it is.
+            say(f"something already answers {BUS_HOST}:{BUS_PORT} — it belongs to {describe_holders(BUS_PORT)}.")
+            say("nothing was started: no tunnel minted, WhatsApp left pointed where it is.")
+            say("stop the running copy with Ctrl+C in its own window, then run this again.")
+            return 1
         bus_log = LOG_DIR / "bus.out.log"
         supervisor.spawn(
             "bus",
@@ -457,9 +747,30 @@ def main(argv: list[str] | None = None) -> int:
         if not wait_for_bus():
             say(f"never came up — see {bus_log}")
             return 1
-        say(f"listening on {BUS_HOST}:{BUS_PORT}")
+        say(f"listening on {BUS_HOST}:{BUS_PORT} ({took(begun)})")
 
-        step("[3/5] Public tunnel")
+        # Everything from here to the tunnel is started, not waited on. Whisper
+        # loads a 3 GB model and the workers only need the bus process and
+        # Supabase; none of it has anything to do with minting a tunnel or
+        # re-pointing Meta. Running them in sequence made a ~2 minute launch out
+        # of steps whose *maximum* is under one, so the two slow independent
+        # things now overlap and whisper's readiness check moves to the end.
+        step("[3/6] Voice (whisper-server)")
+        begun = time.monotonic()
+        whisper_started_at: float | None = None
+        whisper_log = LOG_DIR / "whisper-server.out.log"
+        server_config = spawn_whisper_server(supervisor)
+        if server_config is not None:
+            whisper_started_at = time.monotonic()
+            say(f"loading its model in the background ({took(begun)})")
+
+        step("[4/6] Workers")
+        begun = time.monotonic()
+        spawn_workers(supervisor, python, str(args.interval))
+        say(f"started ({took(begun)})")
+
+        step("[5/6] Public tunnel")
+        begun = time.monotonic()
         cloudflared = ROOT / "tools" / ("cloudflared.exe" if os.name == "nt" else "cloudflared")
         if not cloudflared.exists():
             say(f"cloudflared not found at {cloudflared}")
@@ -498,7 +809,7 @@ def main(argv: list[str] | None = None) -> int:
                 say("replies will not arrive until the tunnel is up")
 
         if args.skip_webhook:
-            say("skipping Meta update (--skip-webhook)")
+            say(f"skipping Meta update (--skip-webhook) ({took(begun)})")
         else:
             say("pointing WhatsApp at it...")
             command = [python, str(ROOT / "tools" / "repoint_webhook.py"), "--url", url]
@@ -506,68 +817,30 @@ def main(argv: list[str] | None = None) -> int:
                 command.append("--skip-probe")
             result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
             if result.returncode == 0:
-                say("WhatsApp updated")
+                say(f"WhatsApp updated ({took(begun)})")
             else:
                 say("could not update WhatsApp automatically:")
                 for line in (result.stderr or result.stdout).strip().splitlines()[-3:]:
                     say(f"  {line}")
                 say("replies will not arrive until this is fixed")
 
-        step("[4/5] Voice (whisper-server)")
-        from voice.whisper.local_backend import LocalWhisperBackend, subprocess_env
-        from voice.whisper.server_client import WhisperServerConfig
-
-        backend = LocalWhisperBackend()
-        availability = backend.availability()
-        # backend.binary is whisper-cli.exe -- it has no --host/--port and
-        # exits on them. The server binary is a sibling in the same
-        # bin/Release/ directory, since both come out of the same
-        # build-vitisai build (voice/whisper/local_backend.py's own docstring
-        # names both artifacts landing there together).
-        server_binary = backend.binary.parent / "whisper-server.exe"
-        if not availability.available:
-            say(f"skipping: {availability.reason}")
-            say("text messages are unaffected; voice notes will not get a reply until this is built")
-        elif not server_binary.exists():
-            say(f"skipping: whisper-server not built: {server_binary} does not exist")
-            say("text messages are unaffected; voice notes will not get a reply until this is built")
+        step("[6/6] Voice readiness")
+        if server_config is None:
+            say("nothing to wait for")
         else:
-            server_config = WhisperServerConfig.from_environ()
-            whisper_log = LOG_DIR / "whisper-server.out.log"
-            supervisor.spawn(
-                "whisper-server",
-                [
-                    str(server_binary),
-                    "-m",
-                    str(backend.model),
-                    "-l",
-                    backend.language,
-                    "--host",
-                    server_config.host,
-                    "--port",
-                    str(server_config.port),
-                ],
-                whisper_log,
-                # Same defensive PATH prepend as the CLI backend
-                # (voice/whisper/local_backend.py): flexmlrt.dll is normally
-                # staged next to the binary already, but a partial build
-                # should still run rather than die with an opaque loader error.
-                env=subprocess_env(),
-                # Optional: a dead or never-ready whisper-server must degrade
-                # to text-only, never take bus/tunnel/workers down with it.
-                optional=True,
-            )
-            if wait_for_whisper_server():
-                say(f"listening on {server_config.host}:{server_config.port}")
+            # Whatever the tunnel spent is time the model was already loading,
+            # so only the remainder of its budget is left to wait out. The floor
+            # keeps a fast tunnel from turning into a zero-length wait.
+            spent = time.monotonic() - (whisper_started_at or time.monotonic())
+            remaining = max(5.0, WHISPER_READY_TIMEOUT - spent)
+            if wait_for_whisper_server(remaining):
+                say(f"listening on {server_config.host}:{server_config.port} ({took(whisper_started_at)})")
             else:
                 say(f"never became ready — see {whisper_log}")
                 say("text messages are unaffected; voice notes will fail until this is fixed")
 
-        step("[5/5] Workers")
-        spawn_workers(supervisor, python, str(args.interval))
-
         print("\n" + "-" * 58, flush=True)
-        print("  JARVIS is running. Message it on WhatsApp.", flush=True)
+        print(f"  JARVIS is running — {time.monotonic() - started:.0f}s. Message it on WhatsApp.", flush=True)
         print("  Press Ctrl+C here to stop everything.", flush=True)
         print("-" * 58 + "\n", flush=True)
 

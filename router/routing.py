@@ -264,6 +264,53 @@ class ProviderRouter:
         self._latencies: dict[tuple[str, str], deque[float]] = defaultdict(
             lambda: deque(maxlen=LATENCY_WINDOW)
         )
+        # Keyed on (base_url, api_key), so a rotated key builds a new client
+        # rather than reusing one authenticated as the old one. Process
+        # lifetime, because ``shared_router()`` is: see ``_client_for``.
+        #
+        # This dict holds API keys. Nothing may render it — see ``__repr__``.
+        self._clients: dict[tuple[str, str], ChatClient] = {}
+        # provider name -> the model ``list_chat_models`` last returned. Only
+        # successful discoveries land here: see ``_model_for``.
+        self._discovered_models: dict[str, str] = {}
+
+    def __repr__(self) -> str:
+        """Deliberately explicit, and deliberately boring.
+
+        ``self._clients`` is keyed on ``(base_url, api_key)``, so any default
+        or generated repr that walks this object's attributes would print live
+        provider keys into a traceback, a log line, or a debugger transcript.
+        ``object.__repr__`` does not do that today; this makes it impossible
+        for a later ``@dataclass`` or attribute dump to start.
+        """
+        return f"<ProviderRouter providers={len(self._providers)}>"
+
+    def _client_for(self, provider: Provider) -> ChatClient:
+        """The cached client for a provider's current endpoint and key.
+
+        ``route()`` used to call ``self._client_factory(...)`` inside its
+        per-provider loop, so every routed request built a fresh
+        ``AsyncOpenAI``, which is a fresh ``httpx.AsyncClient``, which is a
+        fresh TLS handshake. Measured from this laptop on 4 Sep 2026:
+        openrouter 0.45 s, groq 0.92 s, mistral 0.57 s, deepseek 0.38 s per
+        connection — and a single text reply makes *two* routed completions
+        (classify, then reply), so it was 1-2 s per message spent before the
+        model saw a token.
+
+        Reuse only pays if the connection pool outlives the call, which means
+        it must outlive the event loop too: an ``httpx.AsyncClient`` pool is
+        bound to the loop it was first used on. ``asyncio.run`` per call closes
+        that loop, so synchronous callers must go through
+        ``router.route_sync`` (``router/sync_bridge.py``) rather than
+        ``asyncio.run(route(...))``.
+
+        Membership test, not ``.get``: several tests inject a factory that
+        returns ``None``, and ``None`` is a cached value like any other.
+        """
+        cache_key = (self._endpoint_for(provider), self._key_for(provider))
+        if cache_key not in self._clients:
+            self._clients[cache_key] = self._client_factory(*cache_key)
+        return self._clients[cache_key]
 
     def ordered_providers(self, task_profile: str, *, urgent: bool = False, emergency: bool = False) -> list[Provider]:
         if task_profile not in TASK_PROFILES:
@@ -379,7 +426,7 @@ class ProviderRouter:
                     f"stopped at {provider.name}: " + "; ".join(denials)
                 )
             try:
-                client = self._client_factory(self._endpoint_for(provider), self._key_for(provider))
+                client = self._client_for(provider)
                 provider_model = model or await self._model_for(provider, client)
                 if not provider_model:
                     failures.append(f"{provider.name}: no model configured")
@@ -535,12 +582,38 @@ class ProviderRouter:
         if provider.model_env and (configured_model := self._environ.get(provider.model_env)):
             return configured_model
         if provider.discover_chat_model:
-            discover = getattr(client, "list_chat_models", None)
-            if discover is None:
-                return None
-            available = await discover()
-            return available[0] if available else None
+            return await self._discovered_model_for(provider, client)
         return provider.default_model
+
+    async def _discovered_model_for(self, provider: Provider, client: ChatClient) -> str | None:
+        """Mistral's model ID, asked for once per process rather than once per request.
+
+        Measured 4 Sep 2026 before this existed: three ``route()`` calls on one
+        router made three ``models.list()`` round trips. That is a second HTTP
+        request in front of every single Mistral completion, on the rung whose
+        whole reason for discovering is that its roster is not ours to guess.
+
+        Cached for the router's lifetime, which ``shared_router()`` makes the
+        process's — the same scope, and the same reasoning, as the cooldown
+        ledger. A roster change mid-process is not a real risk here: if the
+        cached ID stops being served, the provider answers with a status the
+        cascade already handles, and a restart re-discovers.
+
+        **Only a successful discovery is cached.** A raise propagates (route()
+        turns a 4xx/5xx into a cooldown), and an empty roster returns ``None``
+        without being remembered, so a workspace that gains access later is
+        not locked out by one bad answer.
+        """
+        if (cached := self._discovered_models.get(provider.name)) is not None:
+            return cached
+        discover = getattr(client, "list_chat_models", None)
+        if discover is None:
+            return None
+        available = await discover()
+        if not available:
+            return None
+        self._discovered_models[provider.name] = available[0]
+        return available[0]
 
     def _in_cooldown(self, provider: Provider) -> bool:
         return self.health[provider.name].cooldown_until > self._clock()

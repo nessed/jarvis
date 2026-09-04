@@ -20,8 +20,10 @@ from voice.speak import (
     VOICE_NOTE_MIME_TYPE,
     SpeechError,
     encode_voice_note,
+    reset_pipeline_cache,
     synthesize,
     text_to_voice_note,
+    warm_up,
 )
 from voice.config import TTS_SAMPLE_RATE
 
@@ -120,3 +122,66 @@ def test_no_audio_from_the_model_is_reported_rather_than_encoded_as_silence(monk
 
     with pytest.raises(SpeechError):
         synthesize("anything")
+
+
+def test_the_pipeline_is_built_once_per_process_and_reused(monkeypatch):
+    """Every voice reply used to rebuild the 5s Kokoro pipeline. Now one build serves them all."""
+    built = []
+
+    class CountingPipeline:
+        def __init__(self, lang_code):
+            built.append(lang_code)
+
+        def __call__(self, text, voice):
+            return [(None, None, a_tone(seconds=0.2))]
+
+    monkeypatch.setitem(sys.modules, "kokoro", type("m", (), {"KPipeline": CountingPipeline}))
+    reset_pipeline_cache()
+
+    synthesize("first", voice="am_puck")
+    synthesize("second", voice="am_puck")
+
+    assert built == ["a"], built
+
+
+def test_warm_up_builds_the_pipeline_before_any_text_arrives(monkeypatch):
+    built = []
+
+    class CountingPipeline:
+        def __init__(self, lang_code):
+            built.append(lang_code)
+
+        def __call__(self, text, voice):
+            return [(None, None, a_tone(seconds=0.2))]
+
+    monkeypatch.setitem(sys.modules, "kokoro", type("m", (), {"KPipeline": CountingPipeline}))
+    reset_pipeline_cache()
+
+    warm_up()
+    assert built == ["a"]
+    synthesize("hello", voice="am_puck")
+    assert built == ["a"], "synthesize must reuse the warmed pipeline, not build a second"
+
+
+def test_a_different_kokoro_module_gets_its_own_pipeline(monkeypatch):
+    """The cache is keyed on the KPipeline class, so a test fake never leaks into the next test."""
+
+    class First:
+        def __init__(self, lang_code):
+            pass
+
+        def __call__(self, text, voice):
+            return [(None, None, a_tone(seconds=0.2))]
+
+    class Second(First):
+        pass
+
+    monkeypatch.setitem(sys.modules, "kokoro", type("m", (), {"KPipeline": First}))
+    reset_pipeline_cache()
+    synthesize("one", voice="am_puck")
+    import voice.speak as speak
+
+    assert isinstance(speak._pipeline[1], First)
+    monkeypatch.setitem(sys.modules, "kokoro", type("m", (), {"KPipeline": Second}))
+    synthesize("two", voice="am_puck")
+    assert isinstance(speak._pipeline[1], Second)

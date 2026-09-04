@@ -7,8 +7,10 @@ Nothing in this file starts, stops, kills or signals a real process.
 
 from __future__ import annotations
 
+import re
 import socket
 import subprocess
+import sys
 
 import pytest
 
@@ -432,8 +434,11 @@ def test_wait_for_whisper_server_gives_up_before_the_deadline(monkeypatch: pytes
 
 
 class FakeProcess:
-    def __init__(self, *, already_dead: bool = False, hangs: bool = False) -> None:
+    def __init__(self, *, already_dead: bool = False, hangs: bool = False, handle: object = 7) -> None:
         self._already_dead = already_dead
+        # Real Popen objects on Windows carry the process handle here, which is
+        # what AssignProcessToJobObject needs.
+        self._handle = handle
         self.hangs = hangs
         self.terminated = False
         self.killed = False
@@ -652,3 +657,511 @@ def test_every_worker_gets_the_requested_poll_interval_and_its_own_log() -> None
 def test_every_worker_runs_the_poller_module_with_the_given_interpreter() -> None:
     for call in _spawned().values():
         assert call["args"][:3] == ["py.exe", "-m", "executor.poller"]
+
+
+# --- the kill-on-close job object ---------------------------------------------
+#
+# 4 Sep 2026: two whisper-server.exe from earlier launches were still alive with
+# the stack down, holding 750 MB and both bound to 8081, because closing the
+# console window kills python outright and shutdown() never runs. Every child is
+# now assigned to a job created with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so the
+# OS takes the tree down when the last handle closes -- however the launcher
+# died. These fake win32job entirely: nothing here creates a real job, and
+# nothing here starts, stops, kills or signals a process.
+
+
+class FakeWin32Job:
+    """Stands in for the pywin32 module, injected through ``sys.modules``."""
+
+    JobObjectExtendedLimitInformation = 9
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+
+    def __init__(self, *, assign_error: Exception | None = None) -> None:
+        self.created: list[object] = []
+        self.limits_set: list[tuple] = []
+        self.assigned: list[tuple] = []
+        self._assign_error = assign_error
+
+    def CreateJobObject(self, security, name):  # noqa: N802 - mirrors pywin32
+        self.created.append(name)
+        return "job-handle"
+
+    def QueryInformationJobObject(self, job, kind):  # noqa: N802
+        return {"BasicLimitInformation": {"LimitFlags": 0}}
+
+    def SetInformationJobObject(self, job, kind, info):  # noqa: N802
+        self.limits_set.append((job, kind, info))
+
+    def AssignProcessToJobObject(self, job, handle):  # noqa: N802
+        if self._assign_error is not None:
+            raise self._assign_error
+        self.assigned.append((job, handle))
+
+
+def test_the_job_is_created_with_kill_on_job_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeWin32Job()
+    monkeypatch.setitem(sys.modules, "win32job", fake)
+
+    job = start_jarvis.create_job_object()
+
+    assert job == "job-handle"
+    _, kind, info = fake.limits_set[0]
+    assert kind == FakeWin32Job.JobObjectExtendedLimitInformation
+    flags = info["BasicLimitInformation"]["LimitFlags"]
+    assert flags & FakeWin32Job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+
+
+def test_a_missing_pywin32_warns_once_and_does_not_fail_the_launch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A None entry in sys.modules is how the import system spells "not here".
+    monkeypatch.setitem(sys.modules, "win32job", None)
+
+    assert start_jarvis.create_job_object() is None
+    assert "pywin32 missing" in capsys.readouterr().out
+
+
+def test_no_job_is_created_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(start_jarvis.os, "name", "posix")
+
+    assert start_jarvis.create_job_object() is None
+
+
+def test_every_spawned_child_is_put_in_the_job(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    fake = FakeWin32Job()
+    monkeypatch.setitem(sys.modules, "win32job", fake)
+    monkeypatch.setattr(start_jarvis.subprocess, "Popen", lambda *a, **k: FakeProcess(handle=7))
+    supervisor = start_jarvis.Supervisor(job="job-handle")
+
+    supervisor.spawn("bus", ["cmd"], tmp_path / "bus.log")
+    supervisor.spawn("whisper-server", ["cmd"], tmp_path / "whisper.log", optional=True)
+
+    assert fake.assigned == [("job-handle", 7), ("job-handle", 7)]
+
+
+def test_a_supervisor_without_a_job_adopts_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeWin32Job()
+    monkeypatch.setitem(sys.modules, "win32job", fake)
+
+    assert start_jarvis.Supervisor().adopt(FakeProcess()) is False
+    assert fake.assigned == []
+
+
+def test_a_job_that_refuses_the_child_warns_once_and_keeps_going(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
+) -> None:
+    """Some terminals already run us inside a job that forbids nesting."""
+    fake = FakeWin32Job(assign_error=OSError("access denied"))
+    monkeypatch.setitem(sys.modules, "win32job", fake)
+    monkeypatch.setattr(start_jarvis.subprocess, "Popen", lambda *a, **k: FakeProcess())
+    supervisor = start_jarvis.Supervisor(job="job-handle")
+
+    supervisor.spawn("bus", ["cmd"], tmp_path / "bus.log")
+    supervisor.spawn("tunnel", ["cmd"], tmp_path / "tunnel.log")
+
+    output = capsys.readouterr().out
+    assert output.count("could not add children to the kill-on-close job") == 1
+    # The launch is not failed by it: both children are still supervised.
+    assert [name for name, _ in supervisor.children] == ["bus", "tunnel"]
+
+
+def test_a_child_with_no_process_handle_is_reported_not_raised(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeWin32Job()
+    monkeypatch.setitem(sys.modules, "win32job", fake)
+    supervisor = start_jarvis.Supervisor(job="job-handle")
+
+    assert supervisor.adopt(FakeProcess(handle=None)) is False
+    assert "no process handle" in capsys.readouterr().out
+    assert fake.assigned == []
+
+
+# --- pids_holding_port / describe_holders --------------------------------------
+#
+# Plural because tonight's netstat showed *two* whisper-servers on 8081. Naming
+# one would have made a pile-up look like a single stray process.
+
+TWO_LISTENERS_SAMPLE = """
+  Proto  Local Address          Foreign Address        State
+  TCP    127.0.0.1:8081         0.0.0.0:0              LISTENING       111
+  TCP    127.0.0.1:8081         0.0.0.0:0              LISTENING       222
+  TCP    127.0.0.1:8081         127.0.0.1:5000         ESTABLISHED     333
+  TCP    127.0.0.1:8000         0.0.0.0:0              LISTENING       9001
+"""
+
+
+def test_every_listener_on_a_port_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_netstat(monkeypatch, TWO_LISTENERS_SAMPLE)
+
+    assert start_jarvis.pids_holding_port(8081) == [111, 222]
+
+
+def test_the_single_pid_helper_still_answers_with_the_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_netstat(monkeypatch, TWO_LISTENERS_SAMPLE)
+
+    assert start_jarvis.pid_holding_port(8081) == 111
+
+
+def test_two_listeners_are_described_as_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_netstat(monkeypatch, TWO_LISTENERS_SAMPLE)
+
+    assert start_jarvis.describe_holders(8081) == "PIDs 111 and 222"
+    assert start_jarvis.describe_holders(8000) == "PID 9001"
+
+
+def test_an_undiscoverable_holder_is_admitted_to(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_netstat(monkeypatch, TWO_LISTENERS_SAMPLE)
+
+    assert "unknown process" in start_jarvis.describe_holders(9999)
+
+
+def test_a_malformed_netstat_row_is_skipped_rather_than_ending_the_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sample = (
+        "  TCP    127.0.0.1:8081         0.0.0.0:0              LISTENING       bogus\n"
+        "  TCP    127.0.0.1:8081         0.0.0.0:0              LISTENING       222\n"
+    )
+    _fake_netstat(monkeypatch, sample)
+
+    assert start_jarvis.pids_holding_port(8081) == [222]
+
+
+# --- Ollama ---------------------------------------------------------------------
+#
+# Step 1 used to exit with "start it and run this again" whenever 11434 was
+# silent, which it was on 4 Sep 2026. ollama.exe ships to a known path and
+# ``ollama serve`` binds the port itself, so the launcher starts it.
+
+
+def test_the_ollama_path_comes_from_localappdata(tmp_path) -> None:
+    installed = tmp_path / "Programs" / "Ollama" / "ollama.exe"
+    installed.parent.mkdir(parents=True)
+    installed.write_text("", encoding="utf-8")
+
+    found = start_jarvis.ollama_executable({"LOCALAPPDATA": str(tmp_path)})
+
+    assert found == installed
+
+
+def test_the_ollama_path_can_be_overridden(tmp_path) -> None:
+    elsewhere = tmp_path / "ollama.exe"
+    elsewhere.write_text("", encoding="utf-8")
+
+    settings = {start_jarvis.OLLAMA_EXE_ENV: str(elsewhere), "LOCALAPPDATA": str(tmp_path)}
+
+    assert start_jarvis.ollama_executable(settings) == elsewhere
+
+
+def test_an_override_that_does_not_exist_is_not_found_rather_than_spawned(tmp_path) -> None:
+    settings = {start_jarvis.OLLAMA_EXE_ENV: str(tmp_path / "typo.exe")}
+
+    assert start_jarvis.ollama_executable(settings) is None
+
+
+def test_no_ollama_path_without_localappdata() -> None:
+    assert start_jarvis.ollama_executable({}) is None
+
+
+def test_an_uninstalled_ollama_spawns_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(start_jarvis, "ollama_executable", lambda: None)
+    supervisor = RecordingSupervisor()
+
+    assert start_jarvis.start_ollama(supervisor) is False
+    assert supervisor.calls == []
+
+
+def test_ollama_is_started_as_an_optional_child_and_waited_for(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    executable = tmp_path / "ollama.exe"
+    executable.write_text("", encoding="utf-8")
+    monkeypatch.setattr(start_jarvis, "ollama_executable", lambda: executable)
+    monkeypatch.setattr(start_jarvis, "wait_for_ollama", lambda timeout: True)
+    supervisor = RecordingSupervisor()
+
+    assert start_jarvis.start_ollama(supervisor) is True
+
+    call = supervisor.calls[0]
+    assert call["name"] == "ollama"
+    assert call["args"] == [str(executable), "serve"]
+    assert call["optional"] is True
+    assert call["log"] == start_jarvis.LOG_DIR / "ollama.out.log"
+
+
+def test_wait_for_ollama_returns_true_once_it_answers(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = iter([False, False, True])
+    monkeypatch.setattr(start_jarvis, "ollama_ready", lambda: next(answers))
+    monkeypatch.setattr(start_jarvis.time, "sleep", lambda seconds: None)
+
+    assert start_jarvis.wait_for_ollama(timeout=30) is True
+
+
+def test_wait_for_ollama_gives_up_at_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = iter([0.0, 0.1, 100.0])
+    monkeypatch.setattr(start_jarvis, "ollama_ready", lambda: False)
+    monkeypatch.setattr(start_jarvis.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(start_jarvis.time, "sleep", lambda seconds: None)
+
+    assert start_jarvis.wait_for_ollama(timeout=1) is False
+
+
+# --- spawn_whisper_server ------------------------------------------------------
+#
+# The refusal to stack a second 3 GB model load on top of one already resident.
+# It never kills the one that is there -- same rule as the singleton refusal.
+
+
+def test_a_whisper_server_already_listening_is_used_not_restarted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(start_jarvis, "whisper_server_is_ready", lambda: True)
+    _fake_netstat(monkeypatch, TWO_LISTENERS_SAMPLE)
+    monkeypatch.delenv("JARVIS_WHISPER_SERVER_PORT", raising=False)
+    supervisor = RecordingSupervisor()
+
+    assert start_jarvis.spawn_whisper_server(supervisor) is None
+
+    assert supervisor.calls == []
+    output = capsys.readouterr().out
+    assert "already listening" in output
+    assert "PIDs 111 and 222" in output
+    assert "nothing was stopped" in output
+
+
+def test_an_unbuilt_whisper_server_is_skipped_without_spawning(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
+) -> None:
+    from voice.whisper import local_backend
+
+    class Unavailable:
+        available = False
+        reason = "no NPU build on this machine"
+
+    class FakeBackend:
+        binary = tmp_path / "bin" / "whisper-cli.exe"
+        model = tmp_path / "model.bin"
+        language = "en"
+
+        def availability(self):
+            return Unavailable()
+
+    monkeypatch.setattr(start_jarvis, "whisper_server_is_ready", lambda: False)
+    monkeypatch.setattr(local_backend, "LocalWhisperBackend", FakeBackend)
+    supervisor = RecordingSupervisor()
+
+    assert start_jarvis.spawn_whisper_server(supervisor) is None
+
+    assert supervisor.calls == []
+    assert "no NPU build on this machine" in capsys.readouterr().out
+
+
+def test_a_built_whisper_server_is_spawned_optional_and_not_waited_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from voice.whisper import local_backend
+
+    binary = tmp_path / "bin" / "whisper-server.exe"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("", encoding="utf-8")
+
+    class Available:
+        available = True
+        reason = ""
+
+    class FakeBackend:
+        binary = tmp_path / "bin" / "whisper-cli.exe"
+        model = tmp_path / "model.bin"
+        language = "en"
+
+        def availability(self):
+            return Available()
+
+    monkeypatch.setattr(start_jarvis, "whisper_server_is_ready", lambda: False)
+    monkeypatch.setattr(local_backend, "LocalWhisperBackend", FakeBackend)
+    monkeypatch.setattr(local_backend, "subprocess_env", lambda: {"PATH": "x"})
+    monkeypatch.setattr(
+        start_jarvis, "wait_for_whisper_server", lambda *a, **k: pytest.fail("must not wait here")
+    )
+    supervisor = RecordingSupervisor()
+
+    config = start_jarvis.spawn_whisper_server(supervisor)
+
+    assert config is not None
+    call = supervisor.calls[0]
+    assert call["name"] == "whisper-server"
+    assert call["args"][0] == str(binary)
+    assert call["optional"] is True
+
+
+# --- main, orchestrated with fakes ---------------------------------------------
+#
+# Nothing below starts a real process, mints a tunnel or touches Meta: every
+# spawn, probe and wait is replaced, ROOT and LOG_DIR are redirected into
+# tmp_path, and the singleton port is one the OS handed out. What they prove is
+# the *order*: whisper-server and the workers now start before the tunnel work
+# rather than after it, and whisper's readiness wait is the last thing.
+
+
+class _FakeWhisperConfig:
+    host = "127.0.0.1"
+    port = 8081
+
+
+def _stub_launcher(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, *, ollama: bool = True, bus_busy: bool = False
+) -> list[str]:
+    """Fake out every side effect of ``main`` and record what it does, in order."""
+    events: list[str] = []
+    tools = tmp_path / "tools"
+    tools.mkdir(exist_ok=True)
+    for name in ("cloudflared.exe", "cloudflared"):
+        (tools / name).write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(start_jarvis, "ROOT", tmp_path)
+    monkeypatch.setattr(start_jarvis, "LOG_DIR", tools)
+    monkeypatch.setenv(start_jarvis.SINGLETON_PORT_ENV, str(free_port()))
+    monkeypatch.setattr(start_jarvis, "create_job_object", lambda: None)
+
+    def fake_spawn(self, name, args, log, env=None, *, optional=False):
+        events.append(name)
+        process = FakeProcess()
+        self.children.append((name, process))
+        if optional:
+            self.optional.add(name)
+        return process
+
+    monkeypatch.setattr(start_jarvis.Supervisor, "spawn", fake_spawn)
+    monkeypatch.setattr(start_jarvis, "ollama_ready", lambda: ollama)
+    monkeypatch.setattr(start_jarvis, "bus_is_answering", lambda *a, **k: bus_busy)
+    monkeypatch.setattr(start_jarvis, "wait_for_bus", lambda *a, **k: True)
+
+    def fake_whisper_spawn(supervisor):
+        supervisor.spawn("whisper-server", ["whisper"], tools / "whisper.log", optional=True)
+        return _FakeWhisperConfig()
+
+    monkeypatch.setattr(start_jarvis, "spawn_whisper_server", fake_whisper_spawn)
+    monkeypatch.setattr(
+        start_jarvis, "wait_for_tunnel_url", lambda *a, **k: "https://foo-bar.trycloudflare.com"
+    )
+    monkeypatch.setattr(start_jarvis, "tunnel_reachable", lambda *a, **k: True)
+
+    def fake_whisper_wait(timeout=60.0):
+        events.append(f"whisper-ready<={timeout:.1f}")
+        return True
+
+    monkeypatch.setattr(start_jarvis, "wait_for_whisper_server", fake_whisper_wait)
+
+    def fake_run(command, **kwargs):
+        if command and str(command[0]) == "netstat":
+            return subprocess.CompletedProcess(command, 0, TWO_LISTENERS_SAMPLE, "")
+        events.append("repoint")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(start_jarvis.subprocess, "run", fake_run)
+
+    def stop_the_monitor_loop(seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(start_jarvis.time, "sleep", stop_the_monitor_loop)
+    return events
+
+
+def test_whisper_and_the_workers_start_before_the_tunnel_not_after_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    events = _stub_launcher(monkeypatch, tmp_path)
+
+    assert start_jarvis.main([]) == 0
+
+    assert events[:6] == [
+        "bus",
+        "whisper-server",
+        "whatsapp-worker",
+        "background-worker",
+        "action-worker",
+        "tunnel",
+    ]
+
+
+def test_the_webhook_is_repointed_before_whisper_is_waited_for(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The whole point of the reordering: the model loads *during* the tunnel work."""
+    events = _stub_launcher(monkeypatch, tmp_path)
+
+    assert start_jarvis.main([]) == 0
+
+    assert events.index("whisper-server") < events.index("repoint")
+    assert events[-1].startswith("whisper-ready")
+
+
+def test_whisper_only_gets_the_time_left_on_its_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    events = _stub_launcher(monkeypatch, tmp_path)
+
+    assert start_jarvis.main([]) == 0
+
+    waited = float(events[-1].split("<=")[1])
+    # The tunnel work is instant under fakes, so nearly the whole budget is left
+    # -- but never more than the budget, and never less than the floor.
+    assert 5.0 <= waited <= start_jarvis.WHISPER_READY_TIMEOUT
+
+
+def test_the_final_banner_says_how_long_the_launch_took(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stub_launcher(monkeypatch, tmp_path)
+
+    assert start_jarvis.main([]) == 0
+
+    output = capsys.readouterr().out
+    assert re.search(r"JARVIS is running . \d+s", output)
+    # And each step says its own elapsed time.
+    assert re.search(r"listening on 127\.0\.0\.1:8000 \(\d+\.\d+s\)", output)
+
+
+def test_a_bus_port_that_already_answers_stops_the_launch_before_anything_spawns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same refusal as the singleton lock, and just as bloodless: no tunnel, no kill."""
+    events = _stub_launcher(monkeypatch, tmp_path, bus_busy=True)
+
+    assert start_jarvis.main([]) == 1
+
+    assert events == []
+    output = capsys.readouterr().out
+    assert "already answers 127.0.0.1:8000" in output
+    assert "PID 9001" in output
+    assert "no tunnel minted" in output
+
+
+def test_a_silent_ollama_is_started_rather_than_sending_the_user_away(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    events = _stub_launcher(monkeypatch, tmp_path, ollama=False)
+    executable = tmp_path / "ollama.exe"
+    executable.write_text("", encoding="utf-8")
+    monkeypatch.setenv(start_jarvis.OLLAMA_EXE_ENV, str(executable))
+    monkeypatch.setattr(start_jarvis, "wait_for_ollama", lambda timeout: True)
+
+    assert start_jarvis.main([]) == 0
+
+    assert events[0] == "ollama"
+
+
+def test_an_ollama_that_cannot_be_found_still_stops_the_launch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    events = _stub_launcher(monkeypatch, tmp_path, ollama=False)
+    monkeypatch.delenv(start_jarvis.OLLAMA_EXE_ENV, raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "nowhere"))
+
+    assert start_jarvis.main([]) == 1
+
+    assert events == []
+    assert "Start it and run this again" in capsys.readouterr().out

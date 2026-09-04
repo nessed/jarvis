@@ -8,21 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `669b47b Write this week's handoff` on `main`, in sync with origin.
+**HEAD** `ca8a767 Bring the README back in line with what the code does` on `main`, in sync with origin.
 
-**Working tree:** 2 changed
+**Working tree:** 38 changed
 
 ```
-  M  README.md
+  M  bus/whatsapp_client.py
+  M  conftest.py
+  M  db/jobs.py
+  M  docs/board/HANDOFF.md
+  M  docs/board/QUESTIONS.md
+  M  docs/board/README.md
+  M  docs/board/USER-TASKS.md
+  A  docs/board/tasks/client-connection-reuse.md
+  A  docs/board/tasks/launcher-fast-start.md
+  A  docs/board/tasks/stt-latency-decision.md
+  A  docs/board/tasks/tts-pipeline-cache.md
   M  docs/context.md
+  ...and 26 more
 ```
 
-**Offline suite:** [32m[32m[1m1367 passed[0m, [33m9 deselected[0m[32m in 41.40s[0m[0m _(recorded 2026-09-03)_
+**Offline suite:** 1434 passed, 9 deselected in 65.11s (0:01:05) _(recorded 2026-09-04)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `ca8a767` Bring the README back in line with what the code does  _(2026-09-03)_
 - `669b47b` Write this week's handoff  _(2026-09-03)_
 - `ba80f71` Keep the commit gate off the internet  _(2026-09-03)_
 - `7647c67` Audit the board, and find backfill blocked on a contradiction  _(2026-09-03)_
@@ -30,27 +42,28 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `e0609bc` Generate the provider lists instead of typing them  _(2026-09-03)_
 - `d8b1970` Order the ladder by what a rung costs, then by how fast it actually is  _(2026-09-03)_
 - `d57beb0` Keep a rung that cannot name a model out of the ladder  _(2026-09-02)_
-- `210e07d` Stop a denied rung from quietly handing the bill to a paid one  _(2026-09-02)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-**Nothing on the board is `ready` except `board-audit`.** Eight tasks landed
-2-3 Sep; everything left is `blocked` on Ali. Detail in `docs/state.md`.
+**4 Sep: the lag audit landed.** Ali asked for speed. Measured, then fixed
+inline: every client was rebuilt per call (queue claim 2 s -> 0.3 s, Graph
+0.8 s -> 0.24 s, routed call 2.0 s -> 0.8 s), Kokoro rebuilt per reply
+(now cached + warmed), the launcher ran serially and orphaned children (now
+parallel, job-object). `docs/history/infra-audit-2026-09-04.md` has every
+number. Nothing `ready` remains but `board-audit`.
 
-**Six things are his, and only these** — all with recommendations:
+**His, and only these:**
 
-- **U13** — one `git config --global --add safe.directory` line. `.git` is
-  owned by another Windows account, so every git command fails.
-- **U14** — send one WhatsApp command, confirm **two** replies arrive.
-- **U2** — three router rungs are dead for want of model IDs in `.env`.
-- **U12** — `SUPABASE_DB_PASSWORD` is empty, so `0003` cannot be applied.
-- **Q11** — how long is the router's verification window?
-- **Q12** — drop Pipecat from the desk loop?
-
-**Q13** (98 dead-lettered rows) and **Q14** (backfill's two contradictory
-answers) block nothing and nothing respectively.
+- **U15** — kill the two orphaned whisper-servers (PIDs in USER-TASKS).
+- **U16** — run `start-jarvis.bat`, report the banner's seconds and how
+  long a text and a voice reply take now.
+- **Q15** — Groq Whisper primary (one env var), local turbo, or keep the
+  11-18 s lag. Recommendation: A now, B later.
+- **U7** — Oracle signup. That *is* "deploy": `infra/` and the runbook are
+  written and validated; the account needs his card.
+- Still open from 3 Sep: **U2**, **U12**, **U14**, **Q11**, **Q12**.
 
 **Standing constraint:** the FLP writing half stays unbuilt — `PARKED.md`.
 

@@ -88,3 +88,16 @@ def no_outbound_network(request, monkeypatch):
         return real_getaddrinfo(host, port, *args, **kwargs)
 
     monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
+
+
+@pytest.fixture(autouse=True)
+def no_tts_warm_up(monkeypatch):
+    """Keep the executor's Kokoro warm-up out of the offline suite.
+
+    ``executor.poller.main`` starts a daemon thread that imports torch and
+    builds the Kokoro pipeline (~24s, ~1 GB) whenever it owns the
+    ``whatsapp_webhook`` kind. Every test that drives ``main`` would pay that
+    and leak the thread; the env switch it honours is set off here for all of
+    them, so a test that wants the real warm-up has to say so explicitly.
+    """
+    monkeypatch.setenv("JARVIS_TTS_WARM_UP", "0")

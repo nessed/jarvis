@@ -8,7 +8,9 @@ id, never a URL a webhook payload can use directly.
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
+from types import TracebackType
 from typing import Mapping
 
 import httpx
@@ -54,11 +56,63 @@ class WhatsAppClientConfig:
 
 
 class WhatsAppClient:
-    """Synchronous adapter for Meta's ``POST /{phone_number_id}/messages`` endpoint."""
+    """Synchronous adapter for Meta's ``POST /{phone_number_id}/messages`` endpoint.
+
+    One instance owns one ``httpx.Client``, created on first use and kept open.
+    Every method used to open and close its own, so each call paid a fresh TLS
+    handshake to ``graph.facebook.com`` — measured at about 1.0 s from this
+    machine. A text reply makes two of those calls (typing cue, then send) and
+    a voice reply four, so the handshakes alone were seconds of user-visible
+    latency on every message.
+
+    The instance is meant to be long-lived: build one per process (the WhatsApp
+    handler builds one closure that keeps it) rather than one per message. Use
+    it as a context manager, or call ``close()``, when the lifetime is short.
+    Closing is not final — the next call rebuilds the transport lazily.
+    """
 
     def __init__(self, config: WhatsAppClientConfig, *, transport: httpx.BaseTransport | None = None) -> None:
         self._config = config
         self._transport = transport
+        self._httpx_client: httpx.Client | None = None
+        # Guards creation only. httpx.Client is itself thread-safe; two of them
+        # would just mean two pools, which is the cost being removed here.
+        self._client_lock = threading.Lock()
+
+    @property
+    def _http(self) -> httpx.Client:
+        """The kept-open client, rebuilt if it was never created or was closed."""
+        client = self._httpx_client
+        if client is not None and not client.is_closed:
+            return client
+        with self._client_lock:
+            client = self._httpx_client
+            if client is None or client.is_closed:
+                client = httpx.Client(
+                    base_url=self._config.base_url.rstrip("/"),
+                    timeout=httpx.Timeout(self._config.timeout_seconds),
+                    transport=self._transport,
+                )
+                self._httpx_client = client
+            return client
+
+    def close(self) -> None:
+        """Release the kept-open connection. Calling again rebuilds it."""
+        with self._client_lock:
+            client, self._httpx_client = self._httpx_client, None
+        if client is not None and not client.is_closed:
+            client.close()
+
+    def __enter__(self) -> "WhatsAppClient":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
 
     def send_text_message(self, *, to: str, text: str) -> str:
         """Send a text message and return the provider-assigned message id."""
@@ -75,17 +129,12 @@ class WhatsAppClient:
             "text": {"body": text},
         }
         try:
-            with httpx.Client(
-                base_url=self._config.base_url.rstrip("/"),
-                timeout=httpx.Timeout(self._config.timeout_seconds),
-                transport=self._transport,
-            ) as client:
-                response = client.post(
-                    f"/{GRAPH_API_VERSION}/{self._config.phone_number_id}/messages",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {self._config.access_token}"},
-                )
-                response.raise_for_status()
+            response = self._http.post(
+                f"/{GRAPH_API_VERSION}/{self._config.phone_number_id}/messages",
+                json=payload,
+                headers={"Authorization": f"Bearer {self._config.access_token}"},
+            )
+            response.raise_for_status()
         except httpx.TimeoutException as exc:
             raise WhatsAppSendError("WhatsApp send timed out. Confirm the Graph API is reachable.") from exc
         except httpx.ConnectError as exc:
@@ -122,17 +171,12 @@ class WhatsAppClient:
             "typing_indicator": {"type": "text"},
         }
         try:
-            with httpx.Client(
-                base_url=self._config.base_url.rstrip("/"),
-                timeout=httpx.Timeout(self._config.timeout_seconds),
-                transport=self._transport,
-            ) as client:
-                response = client.post(
-                    f"/{GRAPH_API_VERSION}/{self._config.phone_number_id}/messages",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {self._config.access_token}"},
-                )
-                response.raise_for_status()
+            response = self._http.post(
+                f"/{GRAPH_API_VERSION}/{self._config.phone_number_id}/messages",
+                json=payload,
+                headers={"Authorization": f"Bearer {self._config.access_token}"},
+            )
+            response.raise_for_status()
         except httpx.TimeoutException as exc:
             raise WhatsAppSendError("WhatsApp typing indicator timed out. Confirm the Graph API is reachable.") from exc
         except httpx.ConnectError as exc:
@@ -167,25 +211,26 @@ class WhatsAppClient:
             raise WhatsAppReceiveError("Media id is required.")
 
         headers = {"Authorization": f"Bearer {self._config.access_token}"}
+        # A media transfer is a bigger request than a text POST, so it asks for
+        # the longer timeout per request rather than building a second client.
+        media_timeout = httpx.Timeout(self._config.media_timeout_seconds)
         try:
-            with httpx.Client(
-                base_url=self._config.base_url.rstrip("/"),
-                timeout=httpx.Timeout(self._config.media_timeout_seconds),
-                transport=self._transport,
-            ) as client:
-                lookup = client.get(f"/{GRAPH_API_VERSION}/{identifier}", headers=headers)
-                lookup.raise_for_status()
-                try:
-                    resolved = lookup.json()
-                    url = resolved["url"]
-                    mime_type = resolved.get("mime_type", "application/octet-stream")
-                except (KeyError, TypeError, ValueError) as exc:
-                    raise WhatsAppReceiveError(
-                        "WhatsApp media lookup returned an unexpected response shape."
-                    ) from exc
+            client = self._http
+            lookup = client.get(
+                f"/{GRAPH_API_VERSION}/{identifier}", headers=headers, timeout=media_timeout
+            )
+            lookup.raise_for_status()
+            try:
+                resolved = lookup.json()
+                url = resolved["url"]
+                mime_type = resolved.get("mime_type", "application/octet-stream")
+            except (KeyError, TypeError, ValueError) as exc:
+                raise WhatsAppReceiveError(
+                    "WhatsApp media lookup returned an unexpected response shape."
+                ) from exc
 
-                fetched = client.get(url, headers=headers)
-                fetched.raise_for_status()
+            fetched = client.get(url, headers=headers, timeout=media_timeout)
+            fetched.raise_for_status()
         except httpx.TimeoutException as exc:
             raise WhatsAppReceiveError("WhatsApp media download timed out. Confirm the Graph API is reachable.") from exc
         except httpx.ConnectError as exc:
@@ -220,18 +265,15 @@ class WhatsAppClient:
             raise WhatsAppSendError("Media upload requires a MIME type.")
 
         try:
-            with httpx.Client(
-                base_url=self._config.base_url.rstrip("/"),
+            response = self._http.post(
+                f"/{GRAPH_API_VERSION}/{self._config.phone_number_id}/media",
+                files={"file": (filename, content, mime_type)},
+                data={"messaging_product": "whatsapp", "type": mime_type},
+                headers={"Authorization": f"Bearer {self._config.access_token}"},
+                # The upload is the one call that needs the longer timeout.
                 timeout=httpx.Timeout(self._config.media_timeout_seconds),
-                transport=self._transport,
-            ) as client:
-                response = client.post(
-                    f"/{GRAPH_API_VERSION}/{self._config.phone_number_id}/media",
-                    files={"file": (filename, content, mime_type)},
-                    data={"messaging_product": "whatsapp", "type": mime_type},
-                    headers={"Authorization": f"Bearer {self._config.access_token}"},
-                )
-                response.raise_for_status()
+            )
+            response.raise_for_status()
         except httpx.TimeoutException as exc:
             raise WhatsAppSendError(
                 "WhatsApp media upload timed out. Confirm the Graph API is reachable."
@@ -285,17 +327,12 @@ class WhatsAppClient:
             "audio": {"id": media_id, "voice": True},
         }
         try:
-            with httpx.Client(
-                base_url=self._config.base_url.rstrip("/"),
-                timeout=httpx.Timeout(self._config.timeout_seconds),
-                transport=self._transport,
-            ) as client:
-                response = client.post(
-                    f"/{GRAPH_API_VERSION}/{self._config.phone_number_id}/messages",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {self._config.access_token}"},
-                )
-                response.raise_for_status()
+            response = self._http.post(
+                f"/{GRAPH_API_VERSION}/{self._config.phone_number_id}/messages",
+                json=payload,
+                headers={"Authorization": f"Bearer {self._config.access_token}"},
+            )
+            response.raise_for_status()
         except httpx.TimeoutException as exc:
             raise WhatsAppSendError(
                 "WhatsApp voice note timed out. Confirm the Graph API is reachable."

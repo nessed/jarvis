@@ -334,3 +334,124 @@ def test_download_media_surfaces_a_failed_fetch_without_the_token():
     message = str(exc_info.value)
     assert "code=404" in message
     assert "a-generic-test-token" not in message
+
+
+def _counting_httpx_client(monkeypatch, constructed):
+    """Record every ``httpx.Client`` the module builds, and build a real one."""
+    real_client = httpx.Client
+
+    def counting(*args, **kwargs):
+        instance = real_client(*args, **kwargs)
+        constructed.append(instance)
+        return instance
+
+    monkeypatch.setattr(httpx, "Client", counting)
+
+
+def test_every_call_on_one_instance_shares_a_single_http_client(monkeypatch):
+    """A text reply is two Graph calls and a voice reply four. Each used to open
+    and close its own client, paying a ~1.0s TLS handshake to graph.facebook.com
+    every time."""
+    constructed = []
+    _counting_httpx_client(monkeypatch, constructed)
+
+    def handler(request):
+        if request.url.path.endswith("/media"):
+            return httpx.Response(200, json={"id": "media-id-1"})
+        if "message_id" in request.content.decode():
+            return httpx.Response(200, json={"success": True})
+        return httpx.Response(200, json={"messages": [{"id": "wamid.shared"}]})
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    client = WhatsAppClient(config, transport=fake_transport(handler))
+
+    client.show_typing_indicator(message_id="wamid.inbound-id")
+    client.send_text_message(to="15550001111", text="first")
+    client.send_text_message(to="15550001111", text="second")
+    client.send_voice_note(to="15550001111", audio=b"OggS-fake-opus-bytes")
+
+    assert len(constructed) == 1
+    assert client._http is client._http
+    assert client._http is constructed[0]
+    assert not constructed[0].is_closed
+
+
+def test_the_client_is_not_built_until_the_first_request(monkeypatch):
+    constructed = []
+    _counting_httpx_client(monkeypatch, constructed)
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    client = WhatsAppClient(config, transport=fake_transport(lambda request: pytest.fail("must not post")))
+
+    assert constructed == []
+    with pytest.raises(WhatsAppSendError):
+        client.send_text_message(to="  ", text="hello")
+    assert constructed == []
+
+
+def test_close_releases_the_connection_and_a_later_call_rebuilds_it(monkeypatch):
+    """The WhatsApp handler holds one client in a long-lived closure, so a close
+    must not turn every later send into an error."""
+    constructed = []
+    _counting_httpx_client(monkeypatch, constructed)
+
+    def handler(request):
+        return httpx.Response(200, json={"messages": [{"id": "wamid.rebuilt"}]})
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    client = WhatsAppClient(config, transport=fake_transport(handler))
+
+    client.send_text_message(to="15550001111", text="before close")
+    first = constructed[0]
+
+    client.close()
+    assert first.is_closed
+    client.close()  # idempotent
+
+    assert client.send_text_message(to="15550001111", text="after close") == "wamid.rebuilt"
+    assert len(constructed) == 2
+    assert constructed[1] is not first
+
+
+def test_the_context_manager_closes_the_connection_on_exit(monkeypatch):
+    constructed = []
+    _counting_httpx_client(monkeypatch, constructed)
+
+    def handler(request):
+        return httpx.Response(200, json={"messages": [{"id": "wamid.ctx"}]})
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    with WhatsAppClient(config, transport=fake_transport(handler)) as client:
+        assert client.send_text_message(to="15550001111", text="inside") == "wamid.ctx"
+
+    assert len(constructed) == 1
+    assert constructed[0].is_closed
+
+
+def test_media_calls_keep_their_longer_timeout_on_the_shared_client():
+    """One client cannot carry two default timeouts, so the media calls ask for
+    the longer one per request. 10s is tight for a multipart audio upload."""
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.extensions.get("timeout")))
+        if request.url.path.endswith("/media"):
+            return httpx.Response(200, json={"id": "media-id-1"})
+        if request.url.path.endswith("/media-id-777"):
+            return httpx.Response(200, json={"url": "https://lookaside.fbsbx.com/x", "mime_type": "audio/ogg"})
+        if request.url.host == "lookaside.fbsbx.com":
+            return httpx.Response(200, content=b"OggS-fake-opus-bytes")
+        return httpx.Response(200, json={"messages": [{"id": "wamid.timeouts"}]})
+
+    config = WhatsAppClientConfig(phone_number_id="1234567890", access_token="a-generic-test-token")
+    client = WhatsAppClient(config, transport=fake_transport(handler))
+
+    client.send_text_message(to="15550001111", text="text")
+    client.upload_media(content=b"bytes", mime_type="audio/ogg", filename="reply.ogg")
+    client.download_media(media_id="media-id-777")
+
+    timeouts = {path: timeout["read"] for path, timeout in seen}
+    assert timeouts["/v21.0/1234567890/messages"] == config.timeout_seconds
+    assert timeouts["/v21.0/1234567890/media"] == config.media_timeout_seconds
+    assert timeouts["/v21.0/media-id-777"] == config.media_timeout_seconds
+    assert timeouts["/x"] == config.media_timeout_seconds

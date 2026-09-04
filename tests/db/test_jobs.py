@@ -342,3 +342,138 @@ class TestQueueClientTimeout:
         jobs.SupabaseJobsRepository.from_env()
 
         assert seen["timeout"] == 7
+
+
+class TestDefaultRepositoryIsReused:
+    """Every queue call used to build its own Supabase client, and so paid its
+    own TLS handshake. Measured 4 Sep 2026: four consecutive ``claim_next``
+    calls took 4.34, 2.02, 2.05, 1.77s against ~0.3s for the same RPC over one
+    kept-open connection. A single text reply makes about five queue calls."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        """No cached repository leaks into — or out of — a test in this class."""
+        import db.jobs as jobs
+
+        jobs.reset_default_repository()
+        yield
+        jobs.reset_default_repository()
+
+    @staticmethod
+    def _fake_supabase(monkeypatch, created):
+        monkeypatch.setitem(
+            sys.modules,
+            "supabase",
+            SimpleNamespace(
+                create_client=lambda url, key, options=None: created.append(url) or object()
+            ),
+        )
+        monkeypatch.setitem(
+            sys.modules,
+            "supabase.lib.client_options",
+            SimpleNamespace(ClientOptions=lambda **kwargs: SimpleNamespace(**kwargs)),
+        )
+
+    def test_the_default_repository_is_built_once_and_then_reused(self, monkeypatch):
+        import db.jobs as jobs
+
+        created: list[str] = []
+        monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+        monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test_only")
+        self._fake_supabase(monkeypatch, created)
+
+        first = jobs._repository_or_default(None)
+        second = jobs._repository_or_default(None)
+
+        assert first is second
+        assert len(created) == 1
+
+    def test_a_changed_environment_yields_a_fresh_repository(self, monkeypatch):
+        """A cached client still points at the project it was built for, so the
+        cache is keyed on the credentials rather than on 'has one been built'."""
+        import db.jobs as jobs
+
+        created: list[str] = []
+        monkeypatch.setenv("SUPABASE_URL", "https://first.supabase.co")
+        monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test_only")
+        self._fake_supabase(monkeypatch, created)
+
+        first = jobs._repository_or_default(None)
+        monkeypatch.setenv("SUPABASE_URL", "https://second.supabase.co")
+        second = jobs._repository_or_default(None)
+
+        assert first is not second
+        assert created == ["https://first.supabase.co", "https://second.supabase.co"]
+
+        monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_rotated")
+        third = jobs._repository_or_default(None)
+        assert third is not second
+        assert len(created) == 3
+
+    def test_reset_clears_the_cache_and_can_seed_one(self, monkeypatch):
+        import db.jobs as jobs
+
+        created: list[str] = []
+        monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+        monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test_only")
+        self._fake_supabase(monkeypatch, created)
+
+        first = jobs._repository_or_default(None)
+        assert jobs.current_default_repository() is first
+
+        jobs.reset_default_repository()
+        assert jobs.current_default_repository() is None
+        assert jobs._repository_or_default(None) is not first
+        assert len(created) == 2
+
+        seeded = InMemoryJobsRepository()
+        assert jobs.reset_default_repository(seeded) is seeded
+        # A seeded repository answers regardless of the environment: a test put
+        # it there on purpose.
+        monkeypatch.setenv("SUPABASE_URL", "https://somewhere-else.supabase.co")
+        assert jobs._repository_or_default(None) is seeded
+        assert len(created) == 2
+
+    def test_module_level_helpers_go_through_the_cached_repository(self, monkeypatch):
+        import db.jobs as jobs
+
+        seeded = InMemoryJobsRepository()
+        jobs.reset_default_repository(seeded)
+
+        queued = enqueue("cached", {"via": "default"})
+        claimed = claim_next("cached")
+
+        assert claimed is not None and claimed.id == queued.id
+        assert seeded.jobs[queued.id].status == "running"
+
+    def test_an_explicit_repository_bypasses_the_cache_entirely(self, monkeypatch):
+        import db.jobs as jobs
+
+        created: list[str] = []
+        monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+        monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test_only")
+        self._fake_supabase(monkeypatch, created)
+
+        explicit = InMemoryJobsRepository()
+        enqueue("explicit", {}, repository=explicit)
+        claim_next("explicit", repository=explicit)
+
+        assert created == []
+        assert jobs.current_default_repository() is None
+
+    def test_missing_credentials_still_raise_every_call_and_cache_nothing(self, monkeypatch):
+        """The bus's ``jobs=None`` fallback depends on this: a webhook must fail
+        loudly rather than be answered by a repository cached earlier."""
+        import db.jobs as jobs
+
+        created: list[str] = []
+        monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+        monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test_only")
+        self._fake_supabase(monkeypatch, created)
+        jobs._repository_or_default(None)
+
+        monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+        for _ in range(2):
+            with pytest.raises(RuntimeError, match="server-only"):
+                jobs._repository_or_default(None)

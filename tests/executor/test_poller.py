@@ -1070,3 +1070,59 @@ def test_poll_once_notifies_nobody_for_a_job_that_asked_for_nothing():
 
     assert poll_once(repository=repository, handler=broken_handler) is not None
     assert [c for c in repository.calls if c[0] == "enqueue"] == []
+
+
+class TestTtsWarmUp:
+    """The whatsapp worker pre-loads Kokoro; nobody else does, and --once never does."""
+
+    def _run(self, monkeypatch, argv):
+        started = []
+
+        def fake_poll_once(**kwargs):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+        monkeypatch.setattr(poller, "poll_once", fake_poll_once)
+        monkeypatch.setattr(poller, "seed_distill_chain", lambda: None)
+        monkeypatch.setattr(poller, "_warm_tts_in_background", lambda: started.append(True))
+        assert poller.main(argv) == 0
+        return started
+
+    def test_the_whatsapp_worker_warms_tts(self, monkeypatch):
+        assert self._run(monkeypatch, ["--kind", "whatsapp_webhook", "--no-heartbeat"]) == [True]
+
+    def test_an_unfiltered_executor_warms_tts_too(self, monkeypatch):
+        assert self._run(monkeypatch, []) == [True]
+
+    def test_the_action_worker_does_not(self, monkeypatch):
+        assert self._run(monkeypatch, ["--kind", "system_control", "--no-heartbeat"]) == []
+
+    def test_once_never_warms(self, monkeypatch):
+        started = []
+        monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+        monkeypatch.setattr(poller, "poll_once", lambda **kwargs: None)
+        monkeypatch.setattr(poller, "_warm_tts_in_background", lambda: started.append(True))
+        assert poller.main(["--once", "--kind", "whatsapp_webhook", "--no-heartbeat"]) == 0
+        assert started == []
+
+    def test_the_env_switch_turns_it_off(self, monkeypatch):
+        monkeypatch.setenv(poller.TTS_WARM_UP_ENV, "0")
+        assert poller._warm_tts_in_background() is None
+
+    def test_the_thread_loads_speak_and_survives_a_failure(self, monkeypatch, caplog):
+        import sys
+        import types
+
+        monkeypatch.setenv(poller.TTS_WARM_UP_ENV, "1")
+        calls = []
+
+        def boom():
+            calls.append("warm")
+            raise RuntimeError("no torch here")
+
+        monkeypatch.setitem(sys.modules, "voice.speak", types.SimpleNamespace(warm_up=boom))
+        thread = poller._warm_tts_in_background()
+        assert thread is not None
+        thread.join(timeout=5)
+        assert calls == ["warm"]
+        assert "tts warm-up failed" in caplog.text

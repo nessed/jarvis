@@ -118,6 +118,11 @@ Ready now:
 
 Blocked, in the order they'll matter once unblocked:
 
+0. `stt-latency-decision` — **Q15**. Whisper large-v3's CPU decoder is 11-18 s
+   per clip at up to 89 % CPU; Groq-primary is one env var, local turbo is
+   an evening. Filed 4 Sep from `docs/history/infra-audit-2026-09-04.md`,
+   which also closed `client-connection-reuse`, `tts-pipeline-cache` and
+   `launcher-fast-start` the same day
 2. `db-maintenance` — **U12**. Runner, ledger and `0003` are built, tested and committed;
    `SUPABASE_DB_PASSWORD` is an empty placeholder so the DDL cannot be applied
 3. `voice-loop` — **Q12** — drop Pipecat from the desk loop? Recommendation filed

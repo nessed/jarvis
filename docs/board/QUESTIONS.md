@@ -413,3 +413,49 @@ Full evidence: `docs/blockers/mem0-extraction-not-schema-constrained.md`.
 Blocks: `backfill-run`, and therefore blueprint 1.3.
 
 **Answer:** _pending_
+
+## Q15 — Which Whisper answers voice notes, and where does it run?
+
+Measured 4 Sep 2026 on this laptop with `whisper-server` already warm and
+the large-v3 encoder on the NPU (`docs/history/infra-audit-2026-09-04.md`):
+
+```
+7.6 s clip, lang=en : 11.2-17.6 s wall, CPU 53-69 % avg / 73-89 % peak, all 8 cores
+7.6 s clip, lang=ur : 13.8 s wall, CPU 69 % avg / 89 % peak
+```
+
+That is the lag you feel. The NPU only runs the encoder; large-v3's
+32-layer decoder runs on the CPU and dominates — `whisper-server.out.log`
+says `no GPU found` for the decode side. It is also why a voice reply takes
+40-50 s end to end even after every connection-reuse fix.
+
+Three options. None is an agent's to pick: A sends your voice off the
+laptop, B changes the model the blueprint names, C keeps the lag.
+
+- **A (recommended for now): Groq `whisper-large-v3-turbo` as the primary
+  STT, local NPU as the fallback.** Already built and live-verified the
+  other way round (`stt-groq-fallback`, 2 Sep): word-perfect on English in
+  about 1-2 s round trip. Cost: PKR 0 (free tier, ~2,000 clips/day). Trade:
+  every voice note leaves the laptop. This is not memory content, so no
+  non-negotiable is crossed, and the blueprint's own threshold says exactly
+  this — "NPU Whisper too slow for live voice -> Groq Whisper free tier".
+  What is unknown is Urdu quality under the forced `ur` hint on the cloud
+  tier; U11 is the one-minute test that settles it, and if it degrades, the
+  fallback gets its own language setting. A one-line env switch
+  (`JARVIS_STT_PREFER_CLOUD=1`) is the whole implementation.
+- **B: local large-v3-turbo.** Same encoder as large-v3, so the compiled
+  `.rai` NPU graph should carry over; the decoder drops from 32 layers to 4.
+  Expect roughly 3-5x faster decode and a 1.6 GB model instead of 3.1 GB,
+  with Urdu still supported. Needs a build-and-verify session (download,
+  confirm the NPU encoder loads, measure) and it changes the model named in
+  blueprint §2. Voice stays on the laptop. Can be done after A, as the
+  fallback tier's upgrade.
+- **C: keep large-v3 on the laptop.** Nothing changes; the 11-18 s and the
+  CPU load stay.
+
+A and B are not exclusive. Recommend **A now, B when there is a spare
+evening**, in that order, because A is one env var and measurable in a day.
+
+Blocks: `stt-latency-decision`.
+
+**Answer:** _pending_

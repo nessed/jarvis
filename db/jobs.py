@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
+import threading
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -306,8 +307,76 @@ def _legacy_key_role(key: str) -> str | None:
     return role if isinstance(role, str) else None
 
 
+#: One default repository per process, built on first use. Guarded because the
+#: lock only protects *creation*: two repositories would mean two Supabase
+#: clients and two connection pools, which is exactly the cost being removed.
+_DEFAULT_REPOSITORY_LOCK = threading.Lock()
+_default_repository: JobRepository | None = None
+#: The ``(SUPABASE_URL, key)`` the cached repository was built from, so a test
+#: that changes the environment gets a fresh repository instead of a client
+#: still pointed at the old project. Compared, never logged or printed.
+#: ``_PINNED`` marks a repository handed in by ``reset_default_repository``,
+#: which answers for every environment because a test seeded it deliberately.
+_PINNED = object()
+_default_repository_env: object | tuple[str | None, str | None] | None = None
+
+
+def default_repository() -> JobRepository:
+    """The process-lifetime job repository, built on first use.
+
+    Before this existed, every module-level helper — ``claim_next``,
+    ``checkpoint``, ``complete``, one per queue call — built a new Supabase
+    client, and each one paid a fresh TLS handshake. Measured on 4 September
+    2026: four consecutive ``claim_next`` calls took 4.34, 2.02, 2.05 and
+    1.77 s, against 0.3-0.7 s for the same RPC over one kept-open connection.
+    A single text reply makes about five queue calls on its critical path, so
+    that was several seconds of a reply's latency spent on connection setup.
+
+    This is a **process-lifetime connection**, not a claim that supabase-py is
+    thread-safe. The queue is used from one thread per process here: the
+    executor's poller is a single serial loop, and the bus builds its own
+    repository in ``create_app``'s ``_default_jobs()``, which does not go
+    through this cache.
+    """
+    global _default_repository, _default_repository_env
+
+    cached = _default_repository
+    if cached is not None and _default_repository_env is _PINNED:
+        return cached
+
+    environment = (os.environ.get("SUPABASE_URL"), _server_key_from_env())
+    if cached is not None and _default_repository_env == environment:
+        return cached
+
+    with _DEFAULT_REPOSITORY_LOCK:
+        cached = _default_repository
+        if cached is not None and (
+            _default_repository_env is _PINNED or _default_repository_env == environment
+        ):
+            return cached
+        # from_env() raises when the credentials are missing or wrong, and it
+        # must keep raising every call: nothing is cached until it succeeds.
+        built = SupabaseJobsRepository.from_env()
+        _default_repository = built
+        _default_repository_env = environment
+        return built
+
+
+def current_default_repository() -> JobRepository | None:
+    """The default repository if one has been built, without building one."""
+    return _default_repository
+
+
+def reset_default_repository(repository: JobRepository | None = None) -> JobRepository | None:
+    """Replace (or clear) the default repository. A test seam, not a runtime path."""
+    global _default_repository, _default_repository_env
+    _default_repository = repository
+    _default_repository_env = _PINNED if repository is not None else None
+    return repository
+
+
 def _repository_or_default(repository: JobRepository | None) -> JobRepository:
-    return repository if repository is not None else SupabaseJobsRepository.from_env()
+    return repository if repository is not None else default_repository()
 
 
 def enqueue(

@@ -1075,3 +1075,42 @@ class TestWhatsAppCommands:
         assert commands_enabled({"JARVIS_WHATSAPP_COMMANDS": "1"}) is True
         assert commands_enabled({"JARVIS_WHATSAPP_COMMANDS": "0"}) is False
         assert commands_enabled({"JARVIS_WHATSAPP_COMMANDS": "off"}) is False
+
+
+def test_the_default_graph_client_is_built_once_per_handler_not_per_call(monkeypatch):
+    """Every cue and send used to build a fresh WhatsAppClient and pay a TLS handshake."""
+    import executor.handlers.whatsapp as module
+
+    built: list[object] = []
+
+    class FakeConfig:
+        @classmethod
+        def from_environ(cls):
+            return cls()
+
+    class FakeClient:
+        def __init__(self, config):
+            built.append(config)
+
+        def send_text_message(self, *, to, text):
+            return "wamid.sent"
+
+        def show_typing_indicator(self, *, message_id):
+            return None
+
+    monkeypatch.setattr(module, "WhatsAppClient", FakeClient)
+    monkeypatch.setattr(module, "WhatsAppClientConfig", FakeConfig)
+
+    memory = FakeMemory([])
+    handler = build_whatsapp_webhook_handler(
+        handle_commands=False,
+        open_memory=lambda: memory,
+        open_seen_messages=FakeSeenStore,
+        complete=lambda *_: _fake_completion_response("ok"),
+        write_memory=False,
+    )
+
+    handler(_job(_text_message_payload(message_id="wamid.one")))
+    handler(_job(_text_message_payload(message_id="wamid.two")))
+
+    assert len(built) == 1, f"expected one client for two messages, built {len(built)}"

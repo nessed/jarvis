@@ -1,5 +1,7 @@
 @echo off
-REM Double-click this to run JARVIS. Closing the window, or Ctrl+C, stops it.
+REM Double-click this to run JARVIS. Ctrl+C stops it, and so does closing
+REM the window: every child is in a kill-on-close Windows job object, so the
+REM OS takes the whole tree down with this process however it dies.
 cd /d "%~dp0"
 
 if exist ".venv\Scripts\python.exe" (

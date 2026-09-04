@@ -402,11 +402,13 @@ def _real_dedup_verdict(message_id: str | None) -> Callable[[], bool]:
 
 
 def _real_completion(task_profile: str, messages: Sequence[Mapping[str, Any]]) -> Any:
-    import asyncio
+    # ``route_sync``, not ``asyncio.run(route(...))``: the router caches a
+    # client per provider, and those clients hold connection pools bound to
+    # the loop they were first used on. ``asyncio.run`` closes its loop per
+    # call, so a replay of several jobs would re-handshake every time.
+    from router import route_sync
 
-    from router import route
-
-    return asyncio.run(route(task_profile, messages, urgent=True))
+    return route_sync(task_profile, messages, urgent=True)
 
 
 def _real_transcriber(audio: bytes) -> str:
