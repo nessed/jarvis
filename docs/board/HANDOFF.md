@@ -1,113 +1,101 @@
-# Handoff — 4 September 2026
+# Handoff — 9 September 2026
 
-You asked for one thing: make it fast. Here is where the time was going,
-what is already fixed, and the four things that are yours.
+Five board tasks done. The reply path got measurably faster, gained a real
+deadline, and gained an identity check it did not have.
 
----
+**One thing needs you before the bot works at all again:** paste
+`JARVIS_OWNER_WA_ID` into `.env` (**U18**). The new owner check is live and
+fail-closed, so until that line exists JARVIS answers every message —
+including yours — with "Sorry, I can't help with that." The worker says so
+once at startup, naming the variable.
 
-## What was slow, measured
+## What landed
 
-Full numbers: `docs/history/infra-audit-2026-09-04.md`.
+| Commit | Task |
+|---|---|
+| `d7c19ef` | `router-client-timeouts` |
+| `305a2eb` | `hotpath-quick-wins` |
+| `75034ac` | router deadline follow-up |
+| `673636a` | `owner-identity-check` |
+| `ca95383` | `single-call-classify-reply` |
 
-**Replies.** About 12-18 s of every text reply was connection setup, not
-thinking. Three clients were rebuilt on every call, each paying a fresh TLS
-handshake from Pakistan:
+**Recall stopped costing 1.2 s on every message.** It is 0.10 s now, and it
+runs beside the classifier instead of after it, so on the reply path it costs
+nothing. Measured both sides the same way — a worktree at the pre-change
+commit, same laptop, same prompt, same database. Per-message `recall_ms`
+before: 1333, 1283, 1240, 1211, 1311, 1212. After: 1238, 101, 103, 85, 82. The
+first message in a process pays; nothing after it does.
 
-| Client | Per call before | Now |
-|---|---|---|
-| Supabase queue (claim, checkpoint, complete — 5 per reply) | 1.7-3.4 s | 0.30 s |
-| WhatsApp Graph API (typing cue, send; 4 for voice) | 0.8-1.1 s | 0.24 s |
-| LLM provider (2 completions per text reply) | ~2.0 s | 0.8-1.2 s |
+**The router now has a deadline it can actually hit.** The OpenAI SDK was on
+its defaults — two retries and a 600 s timeout, which is twice the worker's own
+job timeout, so it could never be the thing that fired. Now: no SDK retries,
+20 s per call on the interactive path, and a whole-cascade budget of one
+attempt plus one fallback.
 
-Mistral was also re-listing its model roster before every completion.
+**JARVIS checks who is messaging it.** The webhook signature proved Meta sent
+the request; it never proved you did, and that path recalls your private
+memory and enqueues actions on your laptop. A stranger now gets one flat line,
+no recall, no action, and nothing written into memory.
 
-**Voice.** Kokoro rebuilt its whole pipeline on every reply: 5 s of
-construction per voice note, and 25-100 s on the first one after a restart.
-Now built once and pre-warmed when the worker starts; a render is ~2.8 s.
+**One model call instead of two is built, evaluated, and still off.**
 
-**Whisper is the laptop lag, and it is a decision, not a bug.** With the
-server already warm, a 7.6 s voice note takes 11-18 s to transcribe at
-53-89 % CPU across all eight cores. The NPU only runs the encoder; large-v3's
-32-layer decoder runs on the CPU. That is Q15 below.
+## What needs you
 
-**Startup.** Everything ran in series: 57 s of tunnel probe + Meta re-point,
-then a 3 GB Whisper load, then three workers each importing 5 s of
-dependencies. And closing the launcher window orphaned every child: two
-`whisper-server.exe` from earlier today were still alive tonight, 750 MB,
-both holding port 8081, with the stack down.
+- **U18 — paste `JARVIS_OWNER_WA_ID`.** One line. Everything else on the
+  reply path is blocked behind it in practice, because the bot is currently
+  refusing you.
+- **Q17-D4 — flip the single-call default?** The evaluation table you asked
+  for is now pasted under D4 in `QUESTIONS.md`. 23 fixtures, both modes,
+  against the live router: **100% agreement on every axis** — action, refusal,
+  and confirm-first. Your bar was ≥95% on the first two. Recommend flipping
+  it; it is a one-line default change plus a test.
+- **U20 — the live latency probe.** Two tasks now have a deferred half
+  waiting on it. It needs the stack up and a recipient number, and it sends a
+  real WhatsApp message, so it is yours to trigger.
 
----
+Everything else outstanding is unchanged in `USER-TASKS.md` and `QUESTIONS.md`.
+Nothing there was silently answered.
 
-## What landed today
+## What was found along the way, and not asked about
 
-Committed, full suite green (`1434 passed`). Three subagent lanes on
-Opus 5 plus CORE integration.
+Three things turned up mid-task that were fixed or recorded rather than
+raised as questions:
 
-- **Connection reuse** everywhere — queue, Graph, router. The router now
-  runs on one persistent event loop (`route_sync`), which is what lets the
-  connection survive between messages.
-- **Kokoro cached and warmed.**
-- **Launcher:** children are in a Windows Job Object and die with it however
-  it dies; Ollama is started for you if it is not running; Whisper and the
-  workers start while the tunnel is minted; an already-running Whisper is
-  reused, never stacked; every step and the final banner print seconds.
-- Ollama is running now (started for the probes) — the launcher will find it.
+- **A timeout used to abort the whole provider cascade.** It carries no HTTP
+  status, so `route()` read it as a malformed request. Survivable while the
+  SDK retried internally; with retries off it would have made things worse.
+- **The deadline was not a wall clock.** A `latency` call was measured at
+  **92.3 s** on a tree that already had the new deadlines: httpx timeouts are
+  per-operation, so a slow-dripping response never trips one. Each attempt is
+  now bounded for real (`75034ac`).
+- **A stranger's words could still be written into your memory.** The owner
+  check in the service did not cover the WhatsApp path, which calls
+  `remember_turn` directly. Both call sites now ask the same predicate.
 
----
+## What was deliberately not done
 
-## Do these, in this order
+- **The sqlite handles are still opened per message.** The task asked for them
+  to be cached. Measured: the Ollama probe is 463-674 ms and both sqlite opens
+  are 7 ms, and caching a connection would need `check_same_thread=False` plus
+  a lock in two modules the task does not own, in the path of the poller's
+  known abandoned-thread bug. Consulted before deciding, not after —
+  `docs/consults/2026-09-09-jarvis-board-task-hotpath-quick-wins`.
+- **The single-call default was not flipped.** That is D4, and D4 is yours.
+- **No live probe was run.** It sends a real WhatsApp message and needs a
+  number that is not in the environment. That is U20, and it is named in both
+  affected task logs rather than quietly skipped.
+- **The poller still abandons a timed-out handler thread.** The router
+  deadlines make it far less likely to fire and do not fix it. Recorded in
+  `router-client-timeouts`' log as the remaining gap.
 
-**U15 — kill the two orphaned whisper-servers** (30 s). They are yours to
-end; agents never kill what they did not spawn:
+## Verification
 
 ```
-taskkill /PID 9748 /PID 21308
+$ .venv/Scripts/python.exe -m pytest -q --basetemp=.pytest-basetemp-lane-1
+1575 passed, 10 deselected in 60.02s (0:01:00)
 ```
 
-**U16 — run `start-jarvis.bat` and send two messages** (5 min). The banner
-now ends with the total seconds. Then one text, one voice note. Report the
-three numbers. I could not run the launcher live from this session (the
-command classifier refused it), so the startup saving is structural until
-you measure it.
-
-**Q15 — which Whisper, and where.** Three options in `QUESTIONS.md`:
-
-- **A (recommended now):** Groq `whisper-large-v3-turbo` as primary, local
-  NPU as fallback. One env var. Already live-verified the other way round:
-  word-perfect on English in ~1-2 s. Your voice note leaves the laptop.
-- **B (when you have an evening):** local large-v3-turbo — same encoder, so
-  the NPU graph should carry over; 4 decoder layers instead of 32.
-- **C:** keep the 11-18 s.
-
-**U7 — Oracle signup.** This is what "deploy" means and it is the only thing
-between you and a bus that is up with the lid closed. Everything on the agent
-side is written and validated: `infra/terraform`, hardening scripts,
-Dockerfile, `docs/tasks/phase4-runbook.md`. The account needs your identity
-and card, one sitting with a browser agent driving. One honest caveat: Phase
-4 does not shorten a reply, because memory is laptop-only by your own rules,
-so a text reply still round-trips through the laptop executor. It buys a
-webhook that never goes down.
-
-Still open from 3 Sep and unchanged: **U2** (three model IDs into `.env`),
-**U12** (`SUPABASE_DB_PASSWORD`), **U14** (send one command, expect two
-replies), **Q11**, **Q12**.
-
----
-
-## Your subscriptions
-
-You asked about Claude Max and ChatGPT Plus. The blueprint already settled
-both and nothing today changes it: Max is `claude -p` only — it is
-`tools/consult.py`, every second opinion — and is never a router target;
-Plus has no API. Neither can sit on the reply path.
-
----
-
-## Not done, on purpose
-
-- **Merging the two LLM calls** (classify + reply) into one would halve
-  provider time, but the two-call shape was your Q1 answer. Say so if you
-  want it changed.
-- **Whisper model or placement** — Q15.
-- **Killing orphans** — U15.
-- **A live launcher run** — refused by the classifier; U16.
+Every commit went through the pre-commit gate, which runs the same full suite
+and refuses a red tree. Per-task evidence, including the before/after latency
+tables and the two-mode evaluation, is in each task's `## Log` under
+`docs/board/tasks/`.

@@ -8,30 +8,27 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `673636a Check who is actually messaging before answering them` on `main`, 4 ahead, 0 behind origin.
+**HEAD** `ca95383 Ask both questions in one call, behind a flag that stays off` on `main`, 5 ahead, 0 behind origin.
 
-**Working tree:** 11 changed (plus 19 untracked)
+**Working tree:** 7 changed (plus 19 untracked)
 
 ```
   M CLAUDE.md
-   M docs/board/HANDOFF.md
-  M  docs/board/QUESTIONS.md
+   M README.md
+  M  docs/board/HANDOFF.md
    M docs/board/README.md
    M docs/board/tasks/bus-offbox-packaging.md
-  A  docs/board/tasks/single-call-classify-reply.md
    M docs/board/tasks/vps-harden-deploy.md
-  M  docs/state.md
-  M  executor/conversation/service.py
-  M  executor/handlers/command_intent.py
-  M  tests/executor/test_conversation_service.py
+  M  docs/context.md
 ```
 
-**Offline suite:** 1575 passed, 10 deselected in 64.13s (0:01:04) _(recorded 2026-09-09)_
+**Offline suite:** 1575 passed, 10 deselected in 60.95s (0:01:00) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `ca95383` Ask both questions in one call, behind a flag that stays off  _(2026-09-09)_
 - `673636a` Check who is actually messaging before answering them  _(2026-09-09)_
 - `75034ac` Make the router's deadline an actual wall clock  _(2026-09-09)_
 - `305a2eb` Stop paying the same 1.2 seconds on every message  _(2026-09-09)_
@@ -39,20 +36,20 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `14cdbd0` Say where the seconds went, instead of guessing  _(2026-09-09)_
 - `9598d37` Pull the reply brain out of the WhatsApp closure  _(2026-09-09)_
 - `ddfd7ed` Measure the reply path instead of adding up its parts  _(2026-09-05)_
-- `8b90d89` Stop paying a TLS handshake per call, and start the stack in parallel  _(2026-09-04)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-Two architecture reviews landed 8 Sep (`docs/history/architecture-review-*-2026-09-08.md`);
-Q17 in `docs/board/QUESTIONS.md` reconciles them. Ali answered the two real
-conflicts the same day: memory may live on a rented server he controls
-(CLAUDE.md #3 amended), extraction stays on the laptop; conversation answers
-right away, queue only for laptop kinds. The board is loaded from those
-answers — ten `ready` tasks, lanes marked in `docs/board/README.md` NEXT.
-`go` runs it. Still Ali's: Q17.2 (Urdu TTS, `claude -p` scope, roster cleanup,
-D13 process change), U17 (the rented box), Q11-Q15.
+Five board tasks landed 9 Sep: the router got real per-call and cascade
+deadlines, the reply path stopped paying ~1.2s per message on recall, the
+sender is now checked against `JARVIS_OWNER_WA_ID` before any recall or
+action, and one-call classify+reply is built and evaluated behind a flag that
+is still off. `docs/board/HANDOFF.md` is this week's handoff.
+
+**The bot is refusing everyone until U18 is pasted** — the owner check is
+fail-closed and the variable is unset. Also Ali's: Q17-D4 (the single-call
+table is under it now), U20 (the live latency probe), U17, Q11-Q15.
 
 ## Where facts go
 
