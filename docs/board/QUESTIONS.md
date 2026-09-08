@@ -1,5 +1,8 @@
 # Questions for Ali — one sitting
 
+The September improvement review is now available. See Q16 at the end for
+the proposed package; the older answers below remain authoritative.
+
 Every open decision, batched. Each has a recommendation so the whole file
 is answerable in one message like: `1 yes, 2 A, 3 A, 4 go + window Sat
 morning, 5 pasted, 6 A, 7 A, 8 A, 9 yes + psycopg, 10 yes`.
@@ -457,5 +460,262 @@ A and B are not exclusive. Recommend **A now, B when there is a spare
 evening**, in that order, because A is one env var and measurable in a day.
 
 Blocks: `stt-latency-decision`.
+
+**Answer:** _pending_
+
+## Q16 — September architecture improvement package
+
+Ali requested a review and plan, not implementation. The complete frozen
+proposal, source evidence, costs, September sequence and acceptance criteria:
+
+[Architecture review and September plan](../history/architecture-review-2026-09-08.md)
+
+Review its section 11 as one package. Recommendation: an always-on cloud
+conversation core, predictable interactive model routing, bounded Claude/Codex
+task workers, local private memory, then activated voice and the presence UI.
+The package identifies the hosting/budget, data scope, one-pass conversation,
+speech routing, Pipecat integration and workflow decisions explicitly.
+It does not supersede Q1, Q5, Q8, Q12, Q15 or the blueprint without an answer.
+No proposed task has been marked ready and no architecture was implemented.
+
+Separate review-only gate: automatic approval review rejected sending the
+prepared project briefs to Claude. Permission to send those briefs and the
+referenced non-secret source/docs to Claude for the Opus 5 cross-check would
+unblock independent review, not deployment or access to personal data.
+Exact scope and failure: [review-export blocker](../blockers/architecture-review-opus-export.md).
+
+**Architecture package answer:** _pending_
+
+**Independent review export answer:** _pending_
+
+## Q17 — Reconciling Astra's and Fable's reviews
+
+Fable 5.1 wrote a second, independent architecture review at your request
+(`docs/history/architecture-review-fable-2026-09-08.md`), without reading
+Astra's. Its own D1-D13 decision list was never added here. Both reviews
+agree on the diagnosis; two of their recommendations directly contradict
+each other, and both are architecture-shape or non-negotiable calls, which
+`agents.md` reserves for you regardless of how obvious either side's case
+looks to an agent. The rest of Fable's D-list is new ground, not yet
+tracked anywhere answerable.
+
+### 17.1 — The two real conflicts, no recommendation given
+
+**Memory placement (non-negotiable #3).** Astra: keep it as written —
+embeddings/extraction/recall stay laptop-only, the cloud core only holds
+short-term turn state. Fable: amend it to permit memory on a VPS Ali
+controls, or extraction via a contractual zero-retention provider (Groq,
+Fireworks) — arguing the rule's *purpose* (no training on private content,
+no geo-blocked/free-tier exposure) survives the amendment, only its
+"loopback-only" wording doesn't. This is the one call that decides whether
+recall works with the laptop off at all.
+
+**Does conversation skip the durable queue?** Astra: keep enqueue-before-ack
+for everything, including chat — that discipline is what the enqueue-only
+bus rule exists for. Fable: webhook returns 200 and hands the message to an
+in-process handler on the VPS; only laptop-bound actions still go through
+Supabase. Fable's own case for this depends on memory also living on the
+VPS (17.1's first question) — if memory stays on the laptop, this one's
+moot and Astra's shape is probably right by default.
+
+**Recommend, on reflection — a synthesis of both, not a pick between them:**
+
+**Memory: amend #3's *scope*, not its guarantee.** The rule's own text gives
+its reason: no hosted fallback because a provider might train on private
+content or be unreliably geo-blocked. That reasoning objects to a
+*third-party model provider* seeing private content — it says nothing
+about which of Ali's own machines runs the code. Fable's memo ("the
+brother's offer removes constraint 1; amend constraint 2 in one sentence")
+treats the cash constraint and the privacy constraint as one thing; they
+aren't. Recommend: reword "loopback-only" to mean *infrastructure Ali owns
+and administers* (laptop or his own VPS), which unblocks always-on recall
+without weakening the guarantee at all. Recommend declining the other half
+of Fable's D2 — routing extraction/embeddings through a third-party
+"zero-retention" API (Groq, Fireworks) — because a contractual promise not
+to retain is a materially weaker guarantee than data never leaving Ali's
+own boxes, and closing exactly that gap is what #3 was written for. Keep
+extraction as a nightly local batch (laptop or the new VPS) either way;
+Fable's own alternative (b) already describes this and it costs nothing
+extra.
+
+**Performance note, 8 Sep 2026 (reasoned from measured specs, not a fresh
+benchmark):** recall/lookup is under 1 s either place and moving it to a
+rented box is a wash on speed — its value is laptop-off availability, not
+speed. Extraction (`llama3.1:8b`, 15-55 s/chunk measured on the laptop's 8
+real cores today) is the opposite case: a budget VPS in the $10-12/month
+class (2 shared vCPUs, 2-4 GB RAM) would likely run this *slower* than the
+laptop, not faster — the model needs ~5 GB just to load, and shared/
+burstable vCPUs are typically weaker per-core than dedicated laptop cores.
+Don't move extraction to the cheap VPS tier under discussion. Either keep
+it on the laptop with a lighter, GPU-capable model (Qwen3-4B via llama.cpp
+Vulkan — no rental needed, should beat today's CPU-only 8B model on this
+same machine), or send it to Groq's cloud, which is the third-party-privacy
+tradeoff already declined above. A VPS big enough to beat the laptop at
+this specific job is a much bigger box than the one being priced.
+
+**Queue: keep durable-enqueue, kill the idle-poll wait, not the queue.**
+Astra's durability point holds — an in-process fire-and-forget reply task
+that dies with the process on a crash or redeploy is silently lost, with no
+row anywhere to show it happened; the current bus is tested precisely
+against that failure. But the 3-5 s Fable is objecting to isn't durability
+overhead, it's *poll-sleep* overhead: 0-3 s of idle sleep plus three
+separate RPC round trips because a claim/checkpoint/complete cycle assumes
+an unrelated process wakes up later and asks. Astra's own §5.2 already
+names the fix — persist the job, then wake the consumer directly instead of
+polling on an interval — and that closes nearly all of the latency gap
+Fable is chasing without dropping the durability property. Recommend: build
+that, not a full queue bypass. This also makes the memory question above
+mostly moot for D5's own stated reason (Fable's case for skipping the queue
+was "the queue's benefit is smaller once memory is already local to the
+same process") — the notify-on-enqueue version gets there either way.
+
+Neither half of this needs a new architecture; both are within reach of the
+code that already exists. The #3 rewording still needs your explicit
+sign-off since it touches a non-negotiable's wording, even though the
+guarantee itself is unchanged.
+
+**Answer (queue question, 8 Sep 2026): for now, answer right away.** Skip
+durable-enqueue-before-ack for ordinary conversation; reply in-process
+immediately rather than writing a job and waiting on a worker to pick it
+up. Explicitly interim, not a permanent architecture call — if lost
+messages during a crash/redeploy turn out to matter in practice, this gets
+revisited rather than silently kept. Note the dependency: this only pays
+off once the reply path doesn't have to call back to the laptop for
+memory, so its real effect rides on the memory answer below, which is
+still open.
+
+**Answer (memory question, 8 Sep 2026): yes, as recommended.** Reword
+non-negotiable #3's "loopback-only" to mean infrastructure Ali owns and
+administers (laptop or a rented server he controls) — recall/lookup moves
+to the rented server for laptop-off availability. Extraction stays off the
+cheap rented tier per the performance note above: local batch (laptop,
+lighter GPU-capable model) rather than the VPS or a third-party API.
+Third-party "zero-retention" providers for extraction/embeddings remain
+declined; that guarantee doesn't move.
+
+### 17.2 — New decisions from Fable's D-list, not yet asked anywhere
+
+- **D1 — Hosting.** Brother's AWS (Fable: Mumbai, smallest ≥2 GB plan) vs.
+  Oracle Always Free (free, but idle-reclaim terminates a quiet box after 7
+  days under 20% utilization at p95 — a heartbeat job avoids it) vs. Fly.io.
+  Astra leaves this an open menu pending quotes; Fable picks AWS decisively.
+  Recommend: AWS via your brother if the offer is still open — it removes
+  the idle-reclaim risk and the account-speed unknown.
+  *8 Sep 2026: Ali said "idm rented" and did not object to the AWS 2 GB
+  Mumbai recommendation when it was restated; taken as the working answer.
+  The physical step is U17. If he provisions something else, U17 and
+  `vps-harden-deploy` adapt — the runbook keeps both sections.*
+- **D4 — Flip the single-call default.** Both reviews want classify+reply
+  merged into one model call (constants still dispose). It is being built
+  behind `JARVIS_SINGLE_CALL_REPLY` (default off) by
+  `single-call-classify-reply`, which will paste its two-mode evaluation
+  table here. The decision is only whether to make it the default once the
+  table exists. Recommend: yes, if action/refusal agreement is ≥ 95% on
+  the fixture set.
+
+  *9 Sep 2026 — the table exists now (`single-call-classify-reply`). Built
+  behind `JARVIS_SINGLE_CALL_REPLY`, default off. 23 fixtures, both modes,
+  live router, through the real service:*
+
+| # | category | message | two-call | one-call | agree |
+|---|---|---|---|---|---|
+| 1 | chat | hey, what's up? | conversation | conversation | yes |
+| 2 | chat | In one sentence, what is the boiling point of water at se... | conversation | conversation | yes |
+| 3 | chat | can you explain what a hash map is, briefly | conversation | conversation | yes |
+| 4 | chat | what's a good way to remember someone's name | conversation | conversation | yes |
+| 5 | chat | thanks, that helped | conversation | conversation | yes |
+| 6 | chat | how many days are there in a leap year | conversation | conversation | yes |
+| 7 | chat | I'm thinking about learning the guitar | conversation | conversation | yes |
+| 8 | command | turn wifi off | action (wifi.set_enabled) | action (wifi.set_enabled) | yes |
+| 9 | command | turn the wifi back on | action (wifi.set_enabled) | action (wifi.set_enabled) | yes |
+| 10 | command | switch to the balanced power plan | action (power.set_plan) | action (power.set_plan) | yes |
+| 11 | command | what power plan am I on | action (power.get_active_plan) | action (power.get_active_plan) | yes |
+| 12 | command | list my bluetooth devices | action (bluetooth.list_devices) | action (bluetooth.list_devices) | yes |
+| 13 | command | turn bluetooth off please | action (bluetooth.set_enabled) | action (bluetooth.set_enabled) | yes |
+| 14 | command | switch my display to the second monitor | action (display.switch) | action (display.switch) | yes |
+| 15 | destructive | kill the chrome process | confirm | confirm | yes |
+| 16 | destructive | print the file at C:/tmp/report.txt | confirm | confirm | yes |
+| 17 | destructive | zip up the folder C:/tmp/notes | confirm | confirm | yes |
+| 18 | destructive | rename C:/tmp/a.txt to C:/tmp/b.txt | confirm | confirm | yes |
+| 19 | excluded | send a whatsapp message to the group saying I'm running late | refuse | refuse | yes |
+| 20 | excluded | sort the mixer tracks in my FL Studio project | refuse | refuse | yes |
+| 21 | follow-up | and the other one? | conversation | conversation | yes |
+| 22 | follow-up | do that again | conversation | conversation | yes |
+| 23 | long | Here is a long note I want you to read: the quick brown f... | conversation | conversation | yes |
+
+| metric | result |
+|---|---|
+| Full agreement (decision + kind + action) | 100% (23/23) |
+| Action agreement | 100% (7/7) |
+| Refusal agreement | 100% (2/2) |
+| Confirm-first agreement | 100% (4/4) |
+| Reply present, two-call | 100% (23/23) |
+| Reply present, one-call | 100% (23/23) |
+| Median seconds, two-call | 1.1s |
+| Median seconds, one-call | 0.9s |
+| Errors | two-call 0, one-call 0 |
+
+  *Every category agreed: 7 chat, 7 reversible commands, 4 destructive (all
+  held for confirmation by the table, both modes), 2 excluded kinds (refused
+  with their own reason), 2 follow-ups, 1 over-length. Zero disagreements,
+  zero errors, a reply present on all 46 runs. **Your bar was action/refusal
+  agreement ≥ 95%; both are 100%, and so is confirm-first.** Two caveats: the
+  latency columns are weak evidence (openrouter was unusually fast during the
+  run — the same provider varied 1.0-12.0 s earlier the same day), and this is
+  one provider, because the ladder is collapsed to one rung until U2. The
+  recommendation stands: flip it. Say the word and it is a one-line default
+  change plus a test.*
+- **D6 — TTS and Urdu.** Fable found Kokoro has **no Urdu support at all**
+  — a factual gap Astra's review doesn't check, since Astra's plan keeps
+  Kokoro (`am_puck`) on the reply path. If you want Urdu replies, Kokoro is
+  disqualified regardless of which architecture wins; the choice is then
+  Inworld TTS-2 or Azure `ur-PK`, by ear (~$1/month either way). Also
+  decide, separately: should JARVIS answer in Urdu at all?
+- **D7 — `claude -p` as a general unattended laptop executor.** Both
+  reviews want Claude wired into task execution; the open question is
+  scope — Fable recommends starting read-only plus the existing action
+  table, widening per task class after a week of logs. This is the
+  highest-blast-radius change either review proposes (unattended tool use
+  on your machine) and needs its own explicit yes, not a bundled one.
+- **D9 — Provider roster cleanup + a purchase.** Drop NIM and Cerebras from
+  `providers.yaml` (NIM is confirmed Pakistan-blocked; Cerebras is dead
+  weight per Q6's own answer), route DeepSeek overflow via OpenRouter
+  instead of direct (cheaper, sidesteps the Pakistani-card problem), and
+  buy the one-time $10 OpenRouter credit that lifts its free tier from 50 to
+  1,000 requests/day. The $10 is the only real spend in this item.
+- **D10 — Skip paid Gemini 2.5 Flash-Lite as a second latency lane.** Both
+  reviews treat this as low-value while Groq's free tier covers the
+  expected volume. Recommend: skip, revisit only if Groq's rate limit is
+  actually hit.
+- **D13 — Process change.** Adopt the latency targets either review states
+  as `tests/live` acceptance criteria, and let agents pull any lever that
+  keeps constants-dispose/secrets/destructive-op rules intact without a
+  fresh Class C question per lever. This is what turns "ten questions
+  accumulated while agents optimized connection reuse" (Fable §2.6) into
+  actual throughput. Recommend: yes.
+
+**Answer (each):** _pending_
+
+### 17.3 — Existing questions this new evidence touches
+
+- **Q12 (Pipecat)** has fresh, conflicting input: Astra now argues to
+  reopen it for one timeboxed integration spike; Fable reaffirms the
+  existing "drop" recommendation. Q12 itself is still unanswered, so this
+  doesn't reopen a closed decision — it just adds a third position to
+  weigh when you get to it.
+- **Q15 (STT)** is unaffected — Fable's D3 independently confirms Q15's
+  recommendation A (Groq Whisper turbo primary, NPU fallback).
+- **`docs/state.md`'s provider tables** should absorb Fable's §3 "facts
+  that moved" table regardless of which architecture direction you pick —
+  it's corrections, not a proposal: Groq's Llama rungs dead since 16 Aug,
+  Cerebras' context cap wrong (65K/131K, not 8K), Hetzner's cost-optimized
+  tier currently unbuyable, Kokoro's missing Urdu, NIM's confirmed
+  Pakistan block. This can happen as ordinary housekeeping, same precedent
+  as Q10a, without waiting on 17.1-17.2.
+
+**Nothing downstream builds differently based on 17.2 or 17.3 — those are
+safe to answer now.** 17.1's two questions are the actual bottleneck: every
+other line in both reviews' plans (hosting size, budget, what week 1
+delivers) branches on where memory ends up living.
 
 **Answer:** _pending_

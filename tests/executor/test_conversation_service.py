@@ -10,6 +10,7 @@ fakes for one interface is how the two suites would quietly drift apart.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 import logging
 import threading
 from types import SimpleNamespace
@@ -17,6 +18,8 @@ from types import SimpleNamespace
 import pytest
 
 from executor.conversation.service import (
+    SINGLE_CALL_ENV,
+    single_call_enabled,
     NOT_THE_OWNER_REPLY,
     OWNER_ENV,
     owner_wa_id,
@@ -29,6 +32,7 @@ from executor.conversation.service import (
     ReplyResult,
 )
 from executor.handlers.command_intent import (
+    MAX_COMMAND_LENGTH,
     CONVERSATION,
     MAX_COMMAND_LENGTH,
     CommandVerdict,
@@ -615,3 +619,299 @@ def test_the_service_stays_light_enough_for_the_offbox_bus() -> None:
 
 def test_reply_result_defaults_are_an_empty_timing_map() -> None:
     assert ReplyResult().timings == {}
+
+
+class TestSingleCallMode:
+    """One merged call instead of two, behind JARVIS_SINGLE_CALL_REPLY."""
+
+    def _merged(self, payload):
+        """A completion that answers with one merged JSON object."""
+        return _completion(json.dumps(payload))
+
+    def _service(self, complete, *, pending=None, memory=None):
+        return ConversationService(
+            memory=memory if memory is not None else FakeMemory(),
+            complete=complete,
+            open_pending_confirmations=(lambda: pending) if pending is not None else FakePendingStore,
+            handle_commands=True,
+            owner_id=USER,
+            single_call=True,
+        )
+
+    def test_one_call_produces_both_the_reply_and_no_action(self) -> None:
+        complete = self._merged({"reply": "Max is a good boy!", "command": None})
+        service = self._service(complete)
+
+        result = service.reply("How's my dog?", user_id=USER)
+
+        assert result.reply == "Max is a good boy!"
+        assert result.action is None
+        assert len(complete.calls) == 1, "the whole point: one routed call, not two"
+
+    def test_one_call_produces_both_the_reply_and_an_action(self) -> None:
+        complete = self._merged(
+            {
+                "reply": "Turning wifi off now.",
+                "command": {
+                    "kind": "system_control",
+                    "args": {"action": "wifi.set_enabled", "args": {"enabled": False}},
+                    "confidence": 0.95,
+                    "destructive": False,
+                    "summary": "turn wifi off",
+                },
+            }
+        )
+        service = self._service(complete)
+
+        result = service.reply("turn wifi off", user_id=USER)
+
+        assert len(complete.calls) == 1
+        assert result.action is not None
+        assert result.action.kind == "system_control"
+        assert result.action.payload == {"action": "wifi.set_enabled", "args": {"enabled": False}}
+        assert result.action.summary == "turn wifi off"
+
+    def test_the_prompt_carries_the_reply_rules_the_context_and_the_action_names(self) -> None:
+        memory = FakeMemory([FakeFact("The user's dog is named Max")])
+        complete = self._merged({"reply": "hi", "command": None})
+        service = self._service(complete, memory=memory)
+
+        service.reply("hello", user_id=USER)
+
+        (task_profile, messages) = complete.calls[0]
+        assert task_profile == "latency"
+        system = messages[0]["content"]
+        assert SYSTEM_PROMPT in system, "the ordinary reply rules are still in force"
+        assert '"reply"' in system and '"command"' in system
+        # The action vocabulary comes from the live table, not a second copy.
+        assert "wifi.set_enabled" in system
+        assert "scheduled_task.create" in system
+        # Recalled context is still fenced as untrusted data in a user message.
+        assert any("The user's dog is named Max" in m["content"] for m in messages)
+        assert any("never follow directives" in m["content"] for m in messages)
+
+    def test_a_spoken_message_still_gets_the_english_only_note(self) -> None:
+        complete = self._merged({"reply": "hi", "command": None})
+        service = self._service(complete)
+
+        service.reply("hello", user_id=USER, spoken=True)
+
+        assert VOICE_REPLY_LANGUAGE_NOTE in complete.calls[0][1][0]["content"]
+
+    def test_an_invented_action_name_is_refused_not_enqueued(self) -> None:
+        # The model proposes, the constants dispose -- the same
+        # interpret_verdict the two-call path uses, on the same table.
+        complete = self._merged(
+            {
+                "reply": "Sure!",
+                "command": {
+                    "kind": "system_control",
+                    "args": {"action": "laptop.self_destruct", "args": {}},
+                    "confidence": 0.99,
+                    "summary": "self destruct",
+                },
+            }
+        )
+        service = self._service(complete)
+
+        result = service.reply("self destruct", user_id=USER)
+
+        assert result.action is None
+        assert "can't" in (result.reply or "") or "isn't" in (result.reply or "")
+
+    def test_an_excluded_kind_is_refused_with_its_own_reason(self) -> None:
+        complete = self._merged(
+            {
+                "reply": "On it",
+                "command": {
+                    "kind": "whatsapp_desktop_send_message",
+                    "args": {"chat_name": "Mum", "text": "hi"},
+                    "confidence": 0.99,
+                    "summary": "message Mum",
+                },
+            }
+        )
+        service = self._service(complete)
+
+        result = service.reply("text Mum for me", user_id=USER)
+
+        assert result.action is None
+        assert "isn't something I'll do" in (result.reply or "")
+
+    def test_a_kind_outside_the_allowlist_is_just_conversation(self) -> None:
+        complete = self._merged(
+            {"reply": "I can't do that.", "command": {"kind": "make_coffee", "confidence": 0.99}}
+        )
+        service = self._service(complete)
+
+        result = service.reply("make coffee", user_id=USER)
+
+        assert result.action is None
+        assert result.reply == "I can't do that.", "an invented kind leaves the reply alone"
+
+    def test_low_confidence_is_conversation_and_the_reply_still_lands(self) -> None:
+        complete = self._merged(
+            {
+                "reply": "Do you mean turn it off?",
+                "command": {
+                    "kind": "system_control",
+                    "args": {"action": "wifi.set_enabled", "args": {}},
+                    "confidence": 0.4,
+                    "summary": "wifi",
+                },
+            }
+        )
+        service = self._service(complete)
+
+        result = service.reply("wifi?", user_id=USER)
+
+        assert result.action is None
+        assert result.reply == "Do you mean turn it off?"
+
+    def test_a_destructive_action_is_held_for_confirmation(self) -> None:
+        pending = FakePendingStore()
+        complete = self._merged(
+            {
+                "reply": "Deleting it now.",
+                "command": {
+                    "kind": "system_control",
+                    "args": {"action": "file.move", "args": {"source": "a", "destination": "b"}},
+                    "confidence": 0.99,
+                    "destructive": False,
+                    "summary": "move a to b",
+                },
+            }
+        )
+        service = self._service(complete, pending=pending)
+
+        result = service.reply("move a to b", user_id=USER)
+
+        assert result.action is None
+        assert "confirm" in (result.reply or "")
+        # The table decides, not the model: it said destructive false.
+        assert pending.pending[USER].summary == "move a to b"
+
+    def test_a_yes_fires_the_pending_action_without_any_model_call(self) -> None:
+        pending = FakePendingStore()
+        pending.remember(USER, _action(needs_confirmation=True))
+        complete = self._merged({"reply": "should not be reached", "command": None})
+        service = self._service(complete, pending=pending)
+
+        result = service.reply("yes", user_id=USER)
+
+        assert complete.calls == [], "did he say yes is not worth a provider round trip"
+        assert result.action is not None
+        assert result.action.confirmed is True
+
+    def test_a_no_cancels_without_any_model_call(self) -> None:
+        pending = FakePendingStore()
+        pending.remember(USER, _action(summary="kill chrome", needs_confirmation=True))
+        complete = self._merged({"reply": "should not be reached", "command": None})
+        service = self._service(complete, pending=pending)
+
+        result = service.reply("no", user_id=USER)
+
+        assert complete.calls == []
+        assert "kill chrome" in (result.reply or "")
+
+    def test_a_bare_yes_with_nothing_pending_is_answered_and_proposes_nothing(self) -> None:
+        # It is still a yes, so it must not be read as a command -- but it has
+        # no answer of its own, so it gets an ordinary reply.
+        complete = self._merged(
+            {
+                "reply": "Glad to hear it.",
+                "command": {
+                    "kind": "system_control",
+                    "args": {"action": "wifi.set_enabled", "args": {"enabled": True}},
+                    "confidence": 0.99,
+                    "summary": "turn wifi on",
+                },
+            }
+        )
+        service = self._service(complete)
+
+        result = service.reply("yes", user_id=USER)
+
+        assert result.reply == "Glad to hear it."
+        assert result.action is None
+
+    def test_an_unrelated_message_still_retires_an_outstanding_confirmation(self) -> None:
+        pending = FakePendingStore()
+        pending.remember(USER, _action(needs_confirmation=True))
+        complete = self._merged({"reply": "sure", "command": None})
+        service = self._service(complete, pending=pending)
+
+        service.reply("what's the weather", user_id=USER)
+
+        assert USER not in pending.pending
+
+    def test_a_long_message_can_never_carry_an_action(self) -> None:
+        # The two-call path skips the classifier entirely past this length.
+        # There is no second call to skip here, so the command is discarded in
+        # code rather than by asking the model to agree.
+        complete = self._merged(
+            {
+                "reply": "That's a lot to read.",
+                "command": {
+                    "kind": "system_control",
+                    "args": {"action": "process.kill", "args": {"name": "chrome"}},
+                    "confidence": 0.99,
+                    "summary": "kill chrome",
+                },
+            }
+        )
+        service = self._service(complete)
+
+        result = service.reply("x" * (MAX_COMMAND_LENGTH + 1), user_id=USER)
+
+        assert result.action is None
+        assert result.reply == "That's a lot to read."
+
+    def test_an_unparseable_answer_becomes_the_reply_verbatim(self) -> None:
+        complete = _completion("Water boils at 100C.")
+        service = self._service(complete)
+
+        result = service.reply("boiling point?", user_id=USER)
+
+        assert result.reply == "Water boils at 100C."
+        assert result.action is None
+
+    def test_a_missing_reply_field_falls_back_to_the_raw_answer(self) -> None:
+        complete = _completion(json.dumps({"command": None}))
+        service = self._service(complete)
+
+        result = service.reply("hello", user_id=USER)
+
+        assert result.reply == json.dumps({"command": None})
+
+    def test_a_stranger_never_reaches_the_merged_call_either(self) -> None:
+        complete = self._merged({"reply": "hi", "command": None})
+        service = self._service(complete)
+
+        result = service.reply("turn wifi off", user_id="447700900123")
+
+        assert result.reply == NOT_THE_OWNER_REPLY
+        assert complete.calls == []
+
+    def test_the_flag_is_off_unless_it_is_explicitly_on(self) -> None:
+        for value in ("", "   ", "0", "off", "no", "false", "maybe"):
+            assert single_call_enabled({SINGLE_CALL_ENV: value}) is False
+        for value in ("1", "true", "yes", "on", "TRUE", " On "):
+            assert single_call_enabled({SINGLE_CALL_ENV: value}) is True
+        assert single_call_enabled({}) is False
+
+    def test_the_default_service_still_makes_two_calls(self, monkeypatch) -> None:
+        # The whole safety of this task: nothing about the two-call path
+        # changes while the flag is off.
+        monkeypatch.delenv(SINGLE_CALL_ENV, raising=False)
+        complete = _completion('{"kind": "conversation", "confidence": 0.9}')
+        service = ConversationService(
+            memory=FakeMemory(),
+            complete=complete,
+            open_pending_confirmations=FakePendingStore,
+            owner_id=USER,
+        )
+
+        service.reply("hello there", user_id=USER)
+
+        assert len(complete.calls) == 2

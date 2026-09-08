@@ -35,13 +35,18 @@ from time import perf_counter
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from executor.handlers.command_intent import (
+    CONVERSATION,
+    MAX_COMMAND_LENGTH,
     CommandVerdict,
     PendingConfirmationStore,
     cancelled_reply,
     classify_command,
+    completion_json,
     confirmation_request,
+    interpret_verdict,
     is_affirmative,
     is_negative,
+    merged_command_instructions,
     refusal_reply,
 )
 
@@ -73,6 +78,21 @@ VOICE_REPLY_LANGUAGE_NOTE = (
 
 _CONTEXT_OPEN = "<remembered_context>"
 _CONTEXT_CLOSE = "</remembered_context>"
+
+#: One model call per message instead of two, behind a flag and **off**.
+#: Q17-D4 owns the decision to flip it; this only makes the numbers gettable.
+SINGLE_CALL_ENV = "JARVIS_SINGLE_CALL_REPLY"
+
+
+def single_call_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether one merged call replaces the classifier-then-reply pair.
+
+    Default **off**, and read the strict way round: only an explicit on value
+    enables it, so a typo leaves the two-call path exactly as it is.
+    """
+    settings = os.environ if environ is None else environ
+    return (settings.get(SINGLE_CALL_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
+
 
 #: The WhatsApp sender id this assistant belongs to. The value is Ali's to
 #: paste (U18); only the key name lives in the repository.
@@ -218,6 +238,7 @@ class ConversationService:
         handle_commands: bool = True,
         system_prompt: str = SYSTEM_PROMPT,
         owner_id: str | None = None,
+        single_call: bool | None = None,
     ) -> None:
         if handle_commands and open_pending_confirmations is None:
             raise ValueError("handle_commands=True needs open_pending_confirmations")
@@ -230,6 +251,7 @@ class ConversationService:
         self._open_pending_confirmations = open_pending_confirmations
         self._handle_commands = handle_commands
         self._system_prompt = system_prompt
+        self._single_call = single_call_enabled() if single_call is None else single_call
 
     def reply(self, text: str, *, user_id: str, spoken: bool = False) -> ReplyResult:
         """Classify, recall, route -- and hand back what to say.
@@ -251,6 +273,9 @@ class ConversationService:
         if not self.is_owner(user_id):
             logger.info("message from a non-owner sender answered generically (sender=%s)", user_id)
             return ReplyResult(reply=NOT_THE_OWNER_REPLY, timings=timings)
+
+        if self._handle_commands and self._single_call:
+            return self._single_call_reply(text, user_id=user_id, spoken=spoken, timings=timings)
 
         if not self._handle_commands:
             started = perf_counter()
@@ -296,6 +321,146 @@ class ConversationService:
         return self._owner_id is not None and user_id.strip() == self._owner_id
 
     # -- internals ---------------------------------------------------------
+
+    def _single_call_reply(
+        self, text: str, *, user_id: str, spoken: bool, timings: dict[str, float]
+    ) -> ReplyResult:
+        """One routed call that answers *and* says whether this was a command.
+
+        Two serial model calls per message is the largest avoidable cost left
+        on the reply path -- measured 4 Sep 2026 at roughly 2.5 s each, and the
+        pair is most of what a person waits for. This asks both questions at
+        once.
+
+        **Q1's rule is untouched: the model proposes, the constants dispose.**
+        The ``command`` object it returns goes through the very same
+        :func:`interpret_verdict` the two-call path uses, against the same
+        closed allowlist, the same confirmation table and the same confidence
+        floor. Merging the prompt changes how many round trips the asking
+        takes and nothing about what an answer is allowed to do.
+
+        Three things stay exactly where they were, deliberately:
+
+        - **The yes/no machinery runs first, before any model call.** A bare
+          "yes" answering a pending action fires it with no round trip at all,
+          in both modes, because "did he say yes" is not a judgment worth a
+          provider.
+        - **The over-``MAX_COMMAND_LENGTH`` rule survives as code.** The
+          two-call path skips the classifier for a long message; there is no
+          separate call to skip here, so any ``command`` on a long message is
+          discarded instead. A long message falling through to conversation is
+          the safe direction and it must not depend on the model agreeing.
+        - **Recall happens first**, because its result goes into the prompt. It
+          has nothing left to run beside, which is fine: it is 0.1 s since
+          ``hotpath-quick-wins``.
+
+        An unparseable answer becomes the reply, verbatim, with no action. The
+        model said something; returning it beats discarding a working reply
+        because the JSON wrapper around it was wrong.
+        """
+        assert self._open_pending_confirmations is not None  # guarded in __init__
+        with self._open_pending_confirmations() as pending_store:
+            consumed, answered = self._answer_to_pending(text, pending_store, user_id=user_id)
+            if consumed and answered is not None:
+                return ReplyResult(reply=answered.reply, action=answered.action, timings=timings)
+
+            started = perf_counter()
+            recalled = self._memory.recall(text, user_id=user_id)
+            timings["recall"] = perf_counter() - started
+
+            started = perf_counter()
+            result = self._complete("latency", self._merged_messages(text, recalled, spoken=spoken))
+            timings["model"] = perf_counter() - started
+
+            raw = completion_json(result)
+            if raw is None:
+                logger.info("single-call reply returned no usable JSON; answering with it verbatim")
+                return ReplyResult(reply=extract_reply_text(result.response), timings=timings)
+
+            reply = raw.get("reply")
+            if not (isinstance(reply, str) and reply.strip()):
+                reply = extract_reply_text(result.response)
+            else:
+                reply = reply.strip()
+
+            command = raw.get("command")
+            # ``consumed`` here means a bare yes/no with nothing pending, which
+            # the two-call path treats as plain conversation and never
+            # classifies. Same here: answer it, propose nothing.
+            if consumed or len(text) > MAX_COMMAND_LENGTH or not isinstance(command, Mapping):
+                verdict = CONVERSATION
+            else:
+                verdict = interpret_verdict(command)
+
+            if verdict.is_refusal:
+                return ReplyResult(reply=refusal_reply(verdict.refusal), timings=timings)
+            if not verdict.is_action:
+                return ReplyResult(reply=reply, timings=timings)
+            if verdict.needs_confirmation:
+                pending_store.remember(user_id, verdict)
+                return ReplyResult(reply=confirmation_request(verdict.summary), timings=timings)
+
+        return ReplyResult(
+            action=ActionProposal(
+                kind=verdict.kind or "",
+                payload=dict(verdict.payload),
+                summary=verdict.summary,
+            ),
+            timings=timings,
+        )
+
+    def _merged_messages(self, text: str, recalled: Any, *, spoken: bool) -> list[dict[str, str]]:
+        """The reply prompt and the command prompt, in one conversation.
+
+        Both fences are unchanged: recalled context and the message are still
+        data, still stripped of their own markers first, and the merged
+        instructions say so a second time in their own words.
+        """
+        messages = self._build_messages(text, recalled, spoken=spoken)
+        messages[0] = {
+            "role": "system",
+            "content": messages[0]["content"] + merged_command_instructions(),
+        }
+        return messages
+
+    def _answer_to_pending(
+        self, text: str, pending_store: PendingConfirmationStore, *, user_id: str
+    ) -> tuple[bool, ReplyResult | None]:
+        """Resolve a yes/no against an outstanding confirmation, or clear one.
+
+        Returns ``(was_a_yes_or_no, result)``. Both flags matter and they are
+        not the same question: a "yes" with nothing pending is still a yes --
+        it must not be classified as a command -- but it has no answer of its
+        own, so it falls through to an ordinary reply.
+
+        Lifted out of ``_command_result`` unchanged so both modes share one
+        copy. Two implementations of "did he say yes" is exactly the kind of
+        pair that drifts.
+        """
+        if is_negative(text):
+            pending = pending_store.take(user_id)
+            if pending is None:
+                return True, None
+            return True, ReplyResult(reply=cancelled_reply(pending.summary))
+        if is_affirmative(text):
+            pending = pending_store.take(user_id)
+            if pending is None:
+                # A bare "yes" answering something conversational. Nothing
+                # is pending, so nothing runs.
+                return True, None
+            return True, ReplyResult(
+                action=ActionProposal(
+                    kind=pending.kind,
+                    payload=dict(pending.payload),
+                    summary=pending.summary,
+                    confirmed=True,
+                )
+            )
+        # Any other message retires an outstanding confirmation. The user
+        # has moved on; a "yes" later in the conversation must not reach
+        # back and fire something they were no longer talking about.
+        pending_store.clear(user_id)
+        return False, None
 
     def _classify_while_recalling(
         self, text: str, *, user_id: str, timings: dict[str, float]
@@ -370,29 +535,9 @@ class ConversationService:
         """
         assert self._open_pending_confirmations is not None  # guarded in __init__
         with self._open_pending_confirmations() as pending_store:
-            if is_negative(text):
-                pending = pending_store.take(user_id)
-                if pending is None:
-                    return None
-                return ReplyResult(reply=cancelled_reply(pending.summary))
-            if is_affirmative(text):
-                pending = pending_store.take(user_id)
-                if pending is None:
-                    # A bare "yes" answering something conversational. Nothing
-                    # is pending, so nothing runs.
-                    return None
-                return ReplyResult(
-                    action=ActionProposal(
-                        kind=pending.kind,
-                        payload=dict(pending.payload),
-                        summary=pending.summary,
-                        confirmed=True,
-                    )
-                )
-            # Any other message retires an outstanding confirmation. The user
-            # has moved on; a "yes" later in the conversation must not reach
-            # back and fire something they were no longer talking about.
-            pending_store.clear(user_id)
+            consumed, answered = self._answer_to_pending(text, pending_store, user_id=user_id)
+            if consumed:
+                return answered
 
             verdict = self._classify(text)
             if verdict.is_refusal:
