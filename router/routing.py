@@ -23,6 +23,24 @@ TASK_PROFILES = frozenset({"latency", "batch", "long_context", "vision", "reason
 PEAK_DEEPSEEK_WINDOWS_UTC = ((1, 4), (6, 10))
 DEFAULT_BACKOFF_SECONDS = 60
 
+#: Per-call wall-clock budget, in seconds, for a completion on the ``latency``
+#: profile — the interactive path, where a person is waiting on a phone.
+#: Env: ``JARVIS_ROUTER_CALL_TIMEOUT_SECONDS``.
+DEFAULT_CALL_TIMEOUT_SECONDS = 20.0
+
+#: The same budget for everything that is not ``latency``: batch, long_context,
+#: vision, reasoning. Nobody is waiting on these, and a long-context call is
+#: legitimately slow. Env: ``JARVIS_ROUTER_BATCH_TIMEOUT_SECONDS``.
+DEFAULT_BATCH_TIMEOUT_SECONDS = 120.0
+
+#: How many per-call budgets an interactive cascade may spend in total. Two, so
+#: a ``latency`` request gets one attempt and *one* deliberate fallback before
+#: the deadline stops it — Astra §5.3: "at most one deliberate fallback inside
+#: an overall interaction deadline". Rungs that fail instantly (no model, an
+#: immediate 401) cost almost no wall time and so do not consume the budget;
+#: the deadline counts seconds, not attempts.
+INTERACTION_DEADLINE_CALL_BUDGETS = 2
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,6 +50,22 @@ class RouterError(RuntimeError):
 
 class NoEligibleProvider(RouterError):
     """No configured, available provider can handle a request."""
+
+
+class RouterDeadlineExceeded(NoEligibleProvider):
+    """The interaction budget ran out before the ladder did.
+
+    Raised only on the ``latency`` profile, and only *before* an attempt: the
+    router will not start a call it already knows cannot finish inside the
+    budget a waiting person has. The rungs it did not reach are named, because
+    "we ran out of time" and "nothing was eligible" are different problems and
+    the second one is the only one the bare ``NoEligibleProvider`` message fits.
+
+    A subclass of :class:`NoEligibleProvider` for the same reason
+    :class:`ProviderDenied` is: ``executor/poller.py`` catches bare
+    ``Exception``, and every existing caller keyed on ``NoEligibleProvider``
+    keeps behaving as it did.
+    """
 
 
 #: The statuses blueprint §3.3 calls a *denial*: a rung saying "not you"
@@ -141,11 +175,35 @@ ClientFactory = Callable[[str, str], ChatClient]
 class OpenAIChatClient:
     """Small async adapter around the official OpenAI SDK."""
 
-    def __init__(self, base_url: str, api_key: str):
+    def __init__(self, base_url: str, api_key: str, *, timeout: float | None = None, environ: Mapping[str, str] | None = None):
+        """Construct the SDK client with *this* codebase's retry and timeout policy.
+
+        Two SDK defaults are wrong for a router that already has both
+        behaviours of its own:
+
+        ``max_retries=2`` retries inside a call the router is *also* prepared
+        to retry, on a ladder the poller is *also* prepared to retry. A hung
+        provider was therefore retried three deep while the worker's own 300 s
+        job timeout fired underneath the whole stack, leaving the thread
+        running (``executor/poller.py``, ``_run_with_timeout``). One layer owns
+        fallback and it is the router: ``max_retries=0``.
+
+        ``timeout=600`` is twice the job timeout, so the SDK's own limit could
+        never be the thing that fired. ``route()`` passes a per-call ``timeout``
+        sized to the task profile, which is the budget that matters; this
+        client-level default only bounds the calls ``route()`` does not pass
+        one to — today, ``list_chat_models`` during model discovery.
+        """
         # Import lazily so config/tests do not need credentials or the SDK installed.
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        environ = environ if environ is not None else os.environ
+        self._client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            max_retries=0,
+            timeout=timeout if timeout is not None else _batch_timeout_seconds(environ),
+        )
         self.last_response_headers: dict[str, str] = {}
 
     async def create_chat_completion(
@@ -169,6 +227,41 @@ class OpenAIChatClient:
         payload = raw_response.parse()
         entries = getattr(payload, "data", payload)
         return [model_id for item in entries if (model_id := _chat_model_id(item))]
+
+
+def _positive_float(environ: Mapping[str, str], name: str, default: float) -> float:
+    """An env-configured number of seconds, or ``default`` if it is unusable.
+
+    A blank, malformed, zero or negative value falls back and says so once:
+    the alternative is a router whose deadline is whatever typo is in ``.env``,
+    and a zero timeout would fail every call instantly.
+    """
+    raw = (environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        logger.warning("%s=%r is not a positive number of seconds; using %s", name, raw, default)
+        return default
+    return value
+
+
+def _call_timeout_seconds(environ: Mapping[str, str], task_profile: str) -> float:
+    """The per-call budget for one profile.
+
+    ``latency`` is the interactive path and gets the short budget; everything
+    else is background work and gets the long one.
+    """
+    if task_profile == "latency":
+        return _positive_float(environ, "JARVIS_ROUTER_CALL_TIMEOUT_SECONDS", DEFAULT_CALL_TIMEOUT_SECONDS)
+    return _batch_timeout_seconds(environ)
+
+
+def _batch_timeout_seconds(environ: Mapping[str, str]) -> float:
+    return _positive_float(environ, "JARVIS_ROUTER_BATCH_TIMEOUT_SECONDS", DEFAULT_BATCH_TIMEOUT_SECONDS)
 
 
 def openai_client_factory(base_url: str, api_key: str) -> OpenAIChatClient:
@@ -409,12 +502,30 @@ class ProviderRouter:
         if not candidates:
             raise NoEligibleProvider("no configured provider is currently eligible")
 
+        # A caller that names its own timeout owns it; the budget below is then
+        # measured against the caller's number, not the profile's.
+        call_timeout = request_options.get("timeout")
+        if call_timeout is None:
+            call_timeout = _call_timeout_seconds(self._environ, task_profile)
+            request_options = {**request_options, "timeout": call_timeout}
+        deadline = self._interaction_deadline(task_profile, float(call_timeout))
+        cascade_started = self._clock()
+
         failures: list[str] = []
         # Per request, never persistent. The cooldown ledger already handles
         # repetition across requests; barring the paid rungs persistently would
         # let one bad key disable paid overflow indefinitely.
         denials: list[str] = []
-        for provider in candidates:
+        for index, provider in enumerate(candidates):
+            # The interaction budget, checked before the attempt for the same
+            # reason the paid boundary is: after it, the time is already spent.
+            # Never on the first rung — there is always budget for one attempt,
+            # and a request that reached here is a request we mean to make.
+            if deadline is not None and index and self._clock() - cascade_started + float(call_timeout) > deadline:
+                raise RouterDeadlineExceeded(
+                    f"the {task_profile} interaction budget of {deadline:g}s would be exceeded by trying "
+                    f"{provider.name}, so the cascade stopped: " + ("; ".join(failures) or "no failures recorded")
+                )
             # §3.3's paid boundary, checked before the attempt rather than
             # after it, because after it the money is already spent.
             # ``emergency`` is the documented exception: the adjacent bullet
@@ -442,6 +553,19 @@ class ProviderRouter:
             except Exception as exc:  # SDK exception types intentionally vary by provider.
                 status, headers = _response_metadata(exc)
                 denied = status in DENIAL_STATUSES
+                if status is None and _is_transport_failure(exc):
+                    # A call that timed out or never connected carries no HTTP
+                    # status, so without this it took the ``raise`` branch and
+                    # aborted a cascade that still had rungs left. That was
+                    # survivable while the SDK retried twice inside the call;
+                    # with ``max_retries=0`` and a real per-call deadline it is
+                    # not, and the deadline exists precisely so the router can
+                    # give up on one rung and try the next. A hang says "not
+                    # now" every bit as much as a 503 does, so it is treated as
+                    # one: cool the rung down, fall through.
+                    self._record_cooldown(provider, status, headers)
+                    failures.append(f"{provider.name}: {type(exc).__name__}")
+                    continue
                 if denied or status == 429 or (status is not None and 500 <= status <= 599):
                     # A denial is not a malformed request. A 401 is a key this
                     # workspace cannot use, a 402 is a plan with nothing left,
@@ -466,6 +590,21 @@ class ProviderRouter:
             # the user can fix, and a 429 is a thing they wait out.
             raise ProviderDenied("all eligible providers failed: " + "; ".join(failures))
         raise NoEligibleProvider("all eligible providers failed: " + "; ".join(failures))
+
+    def _interaction_deadline(self, task_profile: str, call_timeout: float) -> float | None:
+        """The whole-cascade budget, or ``None`` where there is not one.
+
+        Only ``latency`` has one. A batch job walking the full ladder is the
+        ladder doing its job; an interactive reply walking it is a person
+        watching a phone do nothing, and Astra §5.3 asks for at most one
+        deliberate fallback inside an overall deadline. Two call budgets is
+        exactly that — one attempt, one fallback — and it moves automatically
+        when the operator retunes ``JARVIS_ROUTER_CALL_TIMEOUT_SECONDS``,
+        so there is no second number to keep in step with the first.
+        """
+        if task_profile != "latency":
+            return None
+        return call_timeout * INTERACTION_DEADLINE_CALL_BUDGETS
 
     def _configured(self, provider: Provider) -> bool:
         if provider.name == "deepseek" and self._environ.get("DEEPSEEK_VIA_OPENROUTER", "").lower() == "true":
@@ -668,6 +807,32 @@ class ProviderRouter:
         }
         if rate_limit_headers:
             self.health[provider.name].rate_limit_headers = rate_limit_headers
+
+
+#: Exception class names that mean "this rung did not answer" rather than
+#: "this rung said no". Matched by name across the exception's MRO instead of
+#: by ``isinstance``, because ``routing.py`` imports the OpenAI SDK lazily (so
+#: config and tests need neither credentials nor the package) and because the
+#: adjacent code already notes that SDK exception types vary by provider —
+#: httpx's, the SDK's wrappers around them, and a bare ``asyncio`` timeout all
+#: reach this line for the same underlying event.
+TRANSPORT_FAILURE_CLASS_NAMES = frozenset(
+    {
+        "APIConnectionError",
+        "APITimeoutError",
+        "ConnectError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "TimeoutError",
+        "TimeoutException",
+        "TransportError",
+        "WriteTimeout",
+    }
+)
+
+
+def _is_transport_failure(exc: BaseException) -> bool:
+    return any(cls.__name__ in TRANSPORT_FAILURE_CLASS_NAMES for cls in type(exc).__mro__)
 
 
 def _response_metadata(exc: BaseException) -> tuple[int | None, Mapping[str, str]]:

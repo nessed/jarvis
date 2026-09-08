@@ -11,6 +11,8 @@ from dataclasses import replace
 from router import NoEligibleProvider, Provider, ProviderRequestError, ProviderRouter, load_providers
 from router.routing import (
     COST_CLASS_ORDER,
+    DEFAULT_BATCH_TIMEOUT_SECONDS,
+    DEFAULT_CALL_TIMEOUT_SECONDS,
     LATENCY_WINDOW,
     MIN_LATENCY_SAMPLES,
     ProviderDenied,
@@ -1416,3 +1418,249 @@ def test_an_empty_model_roster_is_never_cached():
     assert second.provider == "mistral"
     assert second.model == "now-granted-model"
     assert mistral_client.model_discovery_calls == 2
+
+
+# --- Per-call deadlines instead of the SDK's 600 s / 2 retries ------------
+
+
+class _FakeClock:
+    """A monotonic clock the test advances by hand.
+
+    The deadline tests are about wall time, and a real clock would mean a suite
+    that sleeps for the budget it is checking. Everything the router measures
+    with ``monotonic`` -- latency samples, cooldowns, and now the interaction
+    budget -- reads this instead.
+    """
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+class RecordingClient(FakeClient):
+    """A FakeClient that keeps the request options route() passed it."""
+
+    def __init__(self, provider, outcomes, calls, kwargs_seen):
+        super().__init__(provider, outcomes, calls)
+        self.kwargs_seen = kwargs_seen
+
+    async def create_chat_completion(self, *, model, messages, **kwargs):
+        self.kwargs_seen.append(kwargs)
+        return await super().create_chat_completion(model=model, messages=messages, **kwargs)
+
+
+class HangingClient(FakeClient):
+    """Burns its whole per-call timeout, then fails the way a real hang does.
+
+    The SDK raises ``APITimeoutError`` when its deadline fires, and that error
+    carries no HTTP status -- the exact shape that used to abort the cascade.
+    """
+
+    def __init__(self, provider, calls, clock):
+        super().__init__(provider, {}, calls)
+        self._fake_clock = clock
+
+    async def create_chat_completion(self, *, model, messages, **kwargs):
+        self.calls.append((self.provider, model))
+        self._fake_clock.now += float(kwargs["timeout"])
+        raise openai.APITimeoutError(
+            request=httpx.Request("POST", f"https://{self.provider}.example/v1/chat/completions")
+        )
+
+
+def recording_router_for(names, outcomes, *, environ=None):
+    calls, kwargs_seen = [], []
+    env = dict(environ or {})
+    for name in names:
+        env.setdefault(f"{name.upper()}_KEY", "test-key")
+    endpoint_to_name = {f"https://{name}.example/v1": name for name in names}
+    router = ProviderRouter(
+        providers(names),
+        environ=env,
+        client_factory=lambda endpoint, _key: RecordingClient(
+            endpoint_to_name[endpoint], outcomes, calls, kwargs_seen
+        ),
+    )
+    return router, calls, kwargs_seen
+
+
+def hanging_router_for(names, clock, *, environ=None):
+    calls = []
+    env = dict(environ or {})
+    for name in names:
+        env.setdefault(f"{name.upper()}_KEY", "test-key")
+    endpoint_to_name = {f"https://{name}.example/v1": name for name in names}
+    router = ProviderRouter(
+        providers(names),
+        environ=env,
+        client_factory=lambda endpoint, _key: HangingClient(endpoint_to_name[endpoint], calls, clock),
+        clock=clock,
+    )
+    return router, calls
+
+
+def test_openai_chat_client_disables_sdk_retries_and_bounds_its_own_timeout():
+    # The SDK defaults are max_retries=2 and timeout=600 -- a retry inside a
+    # call the router already retries, and a limit twice the worker's own 300 s
+    # job timeout, so it could never be the thing that fired.
+    client = OpenAIChatClient("https://example.test/v1", "test-key", environ={})
+
+    assert client._client.max_retries == 0
+    assert client._client.timeout == DEFAULT_BATCH_TIMEOUT_SECONDS
+
+
+def test_openai_chat_client_takes_its_default_timeout_from_the_environment():
+    client = OpenAIChatClient(
+        "https://example.test/v1", "test-key", environ={"JARVIS_ROUTER_BATCH_TIMEOUT_SECONDS": "45"}
+    )
+
+    assert client._client.timeout == 45.0
+
+
+@pytest.mark.parametrize(
+    ("task_profile", "expected"),
+    [
+        ("latency", DEFAULT_CALL_TIMEOUT_SECONDS),
+        ("batch", DEFAULT_BATCH_TIMEOUT_SECONDS),
+        ("long_context", DEFAULT_BATCH_TIMEOUT_SECONDS),
+    ],
+)
+def test_route_gives_each_profile_its_own_per_call_deadline(task_profile, expected):
+    router, _calls, kwargs_seen = recording_router_for(["one"], {})
+
+    asyncio.run(router.route(task_profile, [{"role": "user", "content": "hi"}]))
+
+    assert kwargs_seen == [{"timeout": expected}]
+
+
+def test_route_reads_both_call_deadlines_from_the_environment():
+    env = {
+        "JARVIS_ROUTER_CALL_TIMEOUT_SECONDS": "7.5",
+        "JARVIS_ROUTER_BATCH_TIMEOUT_SECONDS": "300",
+    }
+    router, _calls, kwargs_seen = recording_router_for(["one"], {}, environ=env)
+
+    asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+    asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert kwargs_seen == [{"timeout": 7.5}, {"timeout": 300.0}]
+
+
+@pytest.mark.parametrize("bad_value", ["", "   ", "soon", "0", "-5"])
+def test_an_unusable_timeout_env_value_falls_back_to_the_default(bad_value):
+    # A blank or mistyped .env line must not become the router's deadline, and
+    # a zero would fail every call instantly.
+    env = {"JARVIS_ROUTER_CALL_TIMEOUT_SECONDS": bad_value}
+    router, _calls, kwargs_seen = recording_router_for(["one"], {}, environ=env)
+
+    asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert kwargs_seen == [{"timeout": DEFAULT_CALL_TIMEOUT_SECONDS}]
+
+
+def test_a_caller_supplied_timeout_is_left_alone():
+    router, _calls, kwargs_seen = recording_router_for(["one"], {})
+
+    asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}], timeout=3))
+
+    assert kwargs_seen == [{"timeout": 3}]
+
+
+def test_a_hung_provider_falls_through_to_the_next_rung_instead_of_aborting():
+    # APITimeoutError carries no HTTP status, so before this it took route()'s
+    # `raise` branch and killed a cascade that still had working rungs left.
+    clock = _FakeClock()
+    calls = []
+    hung = HangingClient("one", calls, clock)
+    working = FakeClient("two", {"two": {"provider": "two"}}, calls)
+    router = ProviderRouter(
+        providers(["one", "two"]),
+        environ={"ONE_KEY": "test-key", "TWO_KEY": "test-key"},
+        client_factory=lambda endpoint, _key: hung if "one" in endpoint else working,
+        clock=clock,
+    )
+
+    result = asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert result.provider == "two"
+    assert [name for name, _model in calls] == ["one", "two"]
+
+
+def test_a_hung_provider_cools_down_like_a_5xx_rather_than_being_retried():
+    clock = _FakeClock()
+    router, _calls = hanging_router_for(["one"], clock)
+
+    with pytest.raises(NoEligibleProvider):
+        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert router.health["one"].cooldown_until == clock.now + routing.DEFAULT_BACKOFF_SECONDS
+    # No status to record, and none is invented: a hang is not an HTTP answer.
+    assert router.health["one"].last_status is None
+
+
+def test_the_latency_budget_stops_the_cascade_after_one_deliberate_fallback():
+    # Three rungs, each burning the full 20 s call budget. The interaction
+    # deadline is two budgets, so the third attempt is never started.
+    clock = _FakeClock()
+    router, calls = hanging_router_for(["one", "two", "three"], clock)
+
+    with pytest.raises(routing.RouterDeadlineExceeded) as excinfo:
+        asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert [name for name, _model in calls] == ["one", "two"]
+    assert clock.now <= DEFAULT_CALL_TIMEOUT_SECONDS * routing.INTERACTION_DEADLINE_CALL_BUDGETS
+    assert "three" in str(excinfo.value)
+    # Still a NoEligibleProvider, so poller.py and every existing caller keyed
+    # on that type behaves exactly as it did.
+    assert isinstance(excinfo.value, NoEligibleProvider)
+
+
+def test_the_batch_profile_keeps_its_longer_budget_and_walks_the_whole_ladder():
+    clock = _FakeClock()
+    router, calls = hanging_router_for(["one", "two", "three"], clock)
+
+    with pytest.raises(NoEligibleProvider) as excinfo:
+        asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert [name for name, _model in calls] == ["one", "two", "three"]
+    assert not isinstance(excinfo.value, routing.RouterDeadlineExceeded)
+
+
+def test_the_latency_deadline_tracks_the_configured_call_timeout():
+    # No second number to keep in step: halve the call budget and the whole
+    # interaction budget halves with it.
+    clock = _FakeClock()
+    router, calls = hanging_router_for(
+        ["one", "two", "three"], clock, environ={"JARVIS_ROUTER_CALL_TIMEOUT_SECONDS": "5"}
+    )
+
+    with pytest.raises(routing.RouterDeadlineExceeded):
+        asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert [name for name, _model in calls] == ["one", "two"]
+    assert clock.now == 10.0
+
+
+def test_rungs_that_fail_instantly_do_not_spend_the_interaction_budget():
+    # The budget counts seconds, not attempts: a rung that answers 503 in no
+    # time has cost the waiting person nothing, so the cascade keeps going.
+    clock = _FakeClock()
+    calls = []
+    clients = {
+        "one": FakeClient("one", {"one": ProviderRequestError("boom", status_code=503)}, calls),
+        "two": FakeClient("two", {"two": ProviderRequestError("boom", status_code=503)}, calls),
+        "three": FakeClient("three", {"three": {"provider": "three"}}, calls),
+    }
+    router = ProviderRouter(
+        providers(["one", "two", "three"]),
+        environ={"ONE_KEY": "test-key", "TWO_KEY": "test-key", "THREE_KEY": "test-key"},
+        client_factory=lambda endpoint, _key: clients[endpoint.split("//")[1].split(".")[0]],
+        clock=clock,
+    )
+
+    result = asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert result.provider == "three"
+    assert [name for name, _model in calls] == ["one", "two", "three"]

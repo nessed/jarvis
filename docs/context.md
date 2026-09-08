@@ -8,32 +8,32 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `9598d37 Pull the reply brain out of the WhatsApp closure` on `main`, 3 ahead, 0 behind origin.
+**HEAD** `14cdbd0 Say where the seconds went, instead of guessing` on `main`, in sync with origin.
 
-**Working tree:** 17 changed (plus 22 untracked)
+**Working tree:** 12 changed (plus 21 untracked)
 
 ```
-  M CLAUDE.md
+  M  .env.example
+   M CLAUDE.md
    M docs/board/HANDOFF.md
    M docs/board/QUESTIONS.md
    M docs/board/README.md
-  M  docs/board/USER-TASKS.md
    M docs/board/tasks/bus-offbox-packaging.md
-  A  docs/board/tasks/latency-spans.md
+  A  docs/board/tasks/router-client-timeouts.md
    M docs/board/tasks/vps-harden-deploy.md
   M  docs/state.md
-  M  executor/handlers/whatsapp.py
-  A  executor/latency.py
-  M  executor/poller.py
-  ...and 5 more
+  M  router/__init__.py
+  M  router/routing.py
+  M  tests/router/test_routing.py
 ```
 
-**Offline suite:** 1503 passed, 10 deselected in 66.69s (0:01:06) _(recorded 2026-09-09)_
+**Offline suite:** 1521 passed, 10 deselected in 65.74s (0:01:05) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `14cdbd0` Say where the seconds went, instead of guessing  _(2026-09-09)_
 - `9598d37` Pull the reply brain out of the WhatsApp closure  _(2026-09-09)_
 - `ddfd7ed` Measure the reply path instead of adding up its parts  _(2026-09-05)_
 - `8b90d89` Stop paying a TLS handshake per call, and start the stack in parallel  _(2026-09-04)_
@@ -41,7 +41,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `669b47b` Write this week's handoff  _(2026-09-03)_
 - `ba80f71` Keep the commit gate off the internet  _(2026-09-03)_
 - `7647c67` Audit the board, and find backfill blocked on a contradiction  _(2026-09-03)_
-- `ec8ae8e` Let a bare pytest work, and stop two lanes deleting each other's temp files  _(2026-09-03)_
 
 <!-- END GENERATED -->
 
