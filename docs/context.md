@@ -8,21 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `8b90d89 Stop paying a TLS handshake per call, and start the stack in parallel` on `main`, 1 ahead, 0 behind origin.
+**HEAD** `ddfd7ed Measure the reply path instead of adding up its parts` on `main`, 2 ahead, 0 behind origin.
 
-**Working tree:** 2 changed
+**Working tree:** 14 changed (plus 23 untracked)
 
 ```
-  M  docs/board/USER-TASKS.md
-  M  docs/history/infra-audit-2026-09-04.md
+  M CLAUDE.md
+   M docs/board/HANDOFF.md
+   M docs/board/QUESTIONS.md
+   M docs/board/README.md
+   M docs/board/USER-TASKS.md
+   M docs/board/tasks/bus-offbox-packaging.md
+  A  docs/board/tasks/conversation-service-extract.md
+   M docs/board/tasks/vps-harden-deploy.md
+   M docs/context.md
+  M  docs/state.md
+  A  executor/conversation/__init__.py
+  A  executor/conversation/service.py
+  ...and 2 more
 ```
 
-**Offline suite:** 1434 passed, 9 deselected in 62.42s (0:01:02) _(recorded 2026-09-05)_
+**Offline suite:** 1461 passed, 9 deselected in 56.07s _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `ddfd7ed` Measure the reply path instead of adding up its parts  _(2026-09-05)_
 - `8b90d89` Stop paying a TLS handshake per call, and start the stack in parallel  _(2026-09-04)_
 - `ca8a767` Bring the README back in line with what the code does  _(2026-09-03)_
 - `669b47b` Write this week's handoff  _(2026-09-03)_
@@ -30,31 +42,19 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `7647c67` Audit the board, and find backfill blocked on a contradiction  _(2026-09-03)_
 - `ec8ae8e` Let a bare pytest work, and stop two lanes deleting each other's temp files  _(2026-09-03)_
 - `e0609bc` Generate the provider lists instead of typing them  _(2026-09-03)_
-- `d8b1970` Order the ladder by what a rung costs, then by how fast it actually is  _(2026-09-03)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-**4 Sep: the lag audit landed.** Ali asked for speed. Measured, then fixed
-inline: every client was rebuilt per call (queue claim 2 s -> 0.3 s, Graph
-0.8 s -> 0.24 s, routed call 2.0 s -> 0.8 s), Kokoro rebuilt per reply
-(now cached + warmed), the launcher ran serially and orphaned children (now
-parallel, job-object). `docs/history/infra-audit-2026-09-04.md` has every
-number. Nothing `ready` remains but `board-audit`.
-
-**His, and only these:**
-
-- **U15** — kill the two orphaned whisper-servers (PIDs in USER-TASKS).
-- **U16** — run `start-jarvis.bat`, report the banner's seconds and how
-  long a text and a voice reply take now.
-- **Q15** — Groq Whisper primary (one env var), local turbo, or keep the
-  11-18 s lag. Recommendation: A now, B later.
-- **U7** — Oracle signup. That *is* "deploy": `infra/` and the runbook are
-  written and validated; the account needs his card.
-- Still open from 3 Sep: **U2**, **U12**, **U14**, **Q11**, **Q12**.
-
-**Standing constraint:** the FLP writing half stays unbuilt — `PARKED.md`.
+Two architecture reviews landed 8 Sep (`docs/history/architecture-review-*-2026-09-08.md`);
+Q17 in `docs/board/QUESTIONS.md` reconciles them. Ali answered the two real
+conflicts the same day: memory may live on a rented server he controls
+(CLAUDE.md #3 amended), extraction stays on the laptop; conversation answers
+right away, queue only for laptop kinds. The board is loaded from those
+answers — ten `ready` tasks, lanes marked in `docs/board/README.md` NEXT.
+`go` runs it. Still Ali's: Q17.2 (Urdu TTS, `claude -p` scope, roster cleanup,
+D13 process change), U17 (the rented box), Q11-Q15.
 
 ## Where facts go
 
