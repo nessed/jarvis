@@ -8,31 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `14cdbd0 Say where the seconds went, instead of guessing` on `main`, in sync with origin.
+**HEAD** `d7c19ef Give the router a deadline it can actually hit` on `main`, 1 ahead, 0 behind origin.
 
-**Working tree:** 12 changed (plus 21 untracked)
+**Working tree:** 19 changed (plus 21 untracked)
 
 ```
-  M  .env.example
-   M CLAUDE.md
+  M CLAUDE.md
    M docs/board/HANDOFF.md
    M docs/board/QUESTIONS.md
    M docs/board/README.md
    M docs/board/tasks/bus-offbox-packaging.md
-  A  docs/board/tasks/router-client-timeouts.md
+  A  docs/board/tasks/hotpath-quick-wins.md
    M docs/board/tasks/vps-harden-deploy.md
   M  docs/state.md
-  M  router/__init__.py
-  M  router/routing.py
-  M  tests/router/test_routing.py
+  M  executor/conversation/service.py
+  M  memory/embeddings.py
+  M  memory/runtime.py
+  M  tests/executor/test_conversation_service.py
+  ...and 7 more
 ```
 
-**Offline suite:** 1521 passed, 10 deselected in 65.74s (0:01:05) _(recorded 2026-09-09)_
+**Offline suite:** 1535 passed, 10 deselected in 66.99s (0:01:06) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `d7c19ef` Give the router a deadline it can actually hit  _(2026-09-09)_
 - `14cdbd0` Say where the seconds went, instead of guessing  _(2026-09-09)_
 - `9598d37` Pull the reply brain out of the WhatsApp closure  _(2026-09-09)_
 - `ddfd7ed` Measure the reply path instead of adding up its parts  _(2026-09-05)_
@@ -40,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `ca8a767` Bring the README back in line with what the code does  _(2026-09-03)_
 - `669b47b` Write this week's handoff  _(2026-09-03)_
 - `ba80f71` Keep the commit gate off the internet  _(2026-09-03)_
-- `7647c67` Audit the board, and find backfill blocked on a contradiction  _(2026-09-03)_
 
 <!-- END GENERATED -->
 

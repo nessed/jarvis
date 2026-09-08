@@ -6,8 +6,10 @@ provider keys and should never send personal-memory text to a hosted service.
 
 from __future__ import annotations
 
+import atexit
 import math
 import os
+import threading
 from dataclasses import dataclass
 from typing import Mapping, Protocol, Sequence
 from urllib.parse import urlparse
@@ -127,6 +129,54 @@ def validate_ollama_loopback_url(base_url: str) -> None:
         )
 
 
+#: One ``httpx.Client`` per (base_url, timeout, transport), for the life of the
+#: process. Every embedding call used to build and tear down its own inside a
+#: ``with`` block, which meant a fresh connection per call: the reply path
+#: embeds at least twice (the recall query, then both halves of the turn), and
+#: the distill chain embeds continuously.
+#:
+#: Keyed rather than global because ``transport=`` is a test seam -- two
+#: providers with different fake transports must not share a client, or one
+#: test's stub answers another's request.
+#:
+#: This dict holds no credentials. Ollama is loopback and unauthenticated, and
+#: ``validate_ollama_loopback_url`` has already refused anything else by the
+#: time a client is built here.
+_CLIENTS: dict[tuple[str, float, int], httpx.Client] = {}
+_CLIENTS_LOCK = threading.Lock()
+
+
+def _shared_client(
+    base_url: str, timeout_seconds: float, transport: httpx.BaseTransport | None
+) -> httpx.Client:
+    key = (base_url, timeout_seconds, id(transport))
+    with _CLIENTS_LOCK:
+        client = _CLIENTS.get(key)
+        if client is None or client.is_closed:
+            client = httpx.Client(
+                base_url=base_url,
+                timeout=httpx.Timeout(timeout_seconds),
+                transport=transport,
+            )
+            _CLIENTS[key] = client
+        return client
+
+
+def close_shared_clients() -> None:
+    """Close every pooled embedding client. Registered at exit; a test seam too."""
+    with _CLIENTS_LOCK:
+        clients = list(_CLIENTS.values())
+        _CLIENTS.clear()
+    for client in clients:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+atexit.register(close_shared_clients)
+
+
 class OllamaEmbeddingProvider:
     """Synchronous adapter for Ollama's local ``POST /api/embed`` endpoint."""
 
@@ -144,13 +194,11 @@ class OllamaEmbeddingProvider:
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         normalized_texts = _validate_texts(texts)
         try:
-            with httpx.Client(
-                base_url=self._config.base_url.rstrip("/"),
-                timeout=httpx.Timeout(self._config.timeout_seconds),
-                transport=self._transport,
-            ) as client:
-                response = client.post("/api/embed", json={"model": self._config.model, "input": normalized_texts})
-                response.raise_for_status()
+            client = _shared_client(
+                self._config.base_url.rstrip("/"), self._config.timeout_seconds, self._transport
+            )
+            response = client.post("/api/embed", json={"model": self._config.model, "input": normalized_texts})
+            response.raise_for_status()
         except httpx.TimeoutException as exc:
             raise EmbeddingError(
                 "Local Ollama embedding request timed out. Confirm Ollama is running and the configured model is available.",

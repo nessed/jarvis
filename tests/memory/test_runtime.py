@@ -58,6 +58,11 @@ def reset_fakes():
     FakeEmbeddings.calls = []
     FakeStore.instances = []
     FakeIndex.instances = []
+    # The dimension probe is cached for the life of the process now, so one
+    # test's probe would otherwise satisfy the next one's model.
+    runtime.forget_probed_dimensions()
+    yield
+    runtime.forget_probed_dimensions()
 
 
 def _patch_runtime(monkeypatch, *, provider=FakeEmbeddings, store=FakeStore, index=FakeIndex):
@@ -124,3 +129,75 @@ def test_partial_index_initialization_failure_closes_both_resources(monkeypatch,
     assert FakeStore.instances[0].initialized is True
     assert FakeStore.instances[0].closed is True
     assert FakeIndex.instances[0].closed is True
+
+
+def test_the_dimension_is_probed_once_per_process(monkeypatch, tmp_path):
+    # The probe is one Ollama embed call and it was paid on every message,
+    # because the WhatsApp handler opens a conversation memory per job.
+    # Measured 9 Sep 2026: 463-674 ms for the probe against 7 ms for both
+    # sqlite opens, so this is essentially the whole cost of opening.
+    _patch_runtime(monkeypatch)
+    settings = {"OLLAMA_EMBEDDING_MODEL": "one-model", "OLLAMA_BASE_URL": "http://127.0.0.1:11434"}
+
+    first = runtime.open_local_memory(tmp_path / "facts.db", environ=settings)
+    second = runtime.open_local_memory(tmp_path / "facts.db", environ=settings)
+
+    assert FakeEmbeddings.calls == [runtime.DIMENSION_PROBE]
+    # The sqlite handles are still per-open, deliberately: every job runs on a
+    # fresh thread and sqlite3 connections refuse cross-thread use.
+    assert len(FakeStore.instances) == 2
+    assert len(FakeIndex.instances) == 2
+    assert FakeIndex.instances[1].dimensions == 3
+    first.close()
+    second.close()
+
+
+def test_a_different_model_is_probed_again_rather_than_inheriting_a_width(monkeypatch, tmp_path):
+    # The cache must never be the cause of dimension drift. Its key is the
+    # model and the Ollama URL, so changing either asks again.
+    _patch_runtime(monkeypatch)
+
+    runtime.open_local_memory(
+        tmp_path / "facts.db", environ={"OLLAMA_EMBEDDING_MODEL": "one-model"}
+    ).close()
+    runtime.open_local_memory(
+        tmp_path / "facts.db", environ={"OLLAMA_EMBEDDING_MODEL": "another-model"}
+    ).close()
+    runtime.open_local_memory(
+        tmp_path / "facts.db",
+        environ={"OLLAMA_EMBEDDING_MODEL": "one-model", "OLLAMA_BASE_URL": "http://localhost:11434"},
+    ).close()
+
+    assert FakeEmbeddings.calls == [runtime.DIMENSION_PROBE] * 3
+
+
+def test_the_index_still_verifies_its_identity_on_every_open(monkeypatch, tmp_path):
+    # The probe no longer re-proves anything on later opens, so the drift check
+    # that matters is SQLiteVecIndex's -- and it runs per open, which is more
+    # often than the cached probe would have.
+    _patch_runtime(monkeypatch)
+    settings = {"OLLAMA_EMBEDDING_MODEL": "one-model"}
+
+    runtime.open_local_memory(tmp_path / "facts.db", environ=settings).close()
+    runtime.open_local_memory(tmp_path / "facts.db", environ=settings).close()
+
+    assert [index.embedding_model for index in FakeIndex.instances] == ["one-model", "one-model"]
+    assert [index.initialized for index in FakeIndex.instances] == [True, True]
+
+
+def test_a_dead_ollama_still_fails_closed_before_any_store_is_built(monkeypatch, tmp_path):
+    # The first open in a process is still the liveness check it always was.
+    class UnavailableEmbeddings(FakeEmbeddings):
+        def embed_one(self, text):
+            raise EmbeddingError("Ollama is unavailable")
+
+    _patch_runtime(monkeypatch, provider=UnavailableEmbeddings)
+
+    with pytest.raises(EmbeddingError, match="unavailable"):
+        runtime.open_local_memory(tmp_path / "facts.db", environ={"OLLAMA_EMBEDDING_MODEL": "one-model"})
+
+    assert FakeStore.instances == []
+    # And nothing was cached, so a later open re-probes rather than proceeding
+    # on a width it never learned.
+    with pytest.raises(EmbeddingError, match="unavailable"):
+        runtime.open_local_memory(tmp_path / "facts.db", environ={"OLLAMA_EMBEDDING_MODEL": "one-model"})

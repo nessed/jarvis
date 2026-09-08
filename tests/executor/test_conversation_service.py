@@ -10,6 +10,7 @@ fakes for one interface is how the two suites would quietly drift apart.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -255,7 +256,12 @@ class TestCommandPath:
             confirmed=False,
         )
 
-    def test_an_action_never_recalls_or_routes_a_reply(self) -> None:
+    def test_an_action_never_routes_a_reply(self) -> None:
+        # It *does* recall now: recall runs beside the classifier rather than
+        # after it, so a command pays for a local search it will not use. That
+        # is the deliberate trade -- see _classify_while_recalling. What must
+        # never happen is the expensive half: a routed completion for a
+        # message that turned out to be a command.
         memory = FakeMemory([FakeFact("something")])
         complete = _completion()
         service = _service(
@@ -264,8 +270,55 @@ class TestCommandPath:
 
         service.reply("turn wifi off", user_id=USER)
 
-        assert memory.recall_calls == []
         assert complete.calls == []
+        assert [query for query, _kwargs in memory.recall_calls] == ["turn wifi off"]
+
+    def test_recall_and_the_classifier_run_at_the_same_time(self) -> None:
+        # Both halves must be in flight together, not merely both called. Each
+        # waits for the other to arrive, so this times out and fails if they
+        # are still serialized -- which asserting on call order could not
+        # detect.
+        classifier_running = threading.Event()
+        recall_running = threading.Event()
+
+        def classify(text):
+            classifier_running.set()
+            assert recall_running.wait(timeout=5), "recall never started beside the classifier"
+            return CONVERSATION
+
+        class ConcurrentMemory(FakeMemory):
+            def recall(self, query, **kwargs):
+                recall_running.set()
+                assert classifier_running.wait(timeout=5), "the classifier never started beside recall"
+                return super().recall(query, **kwargs)
+
+        service = _service(
+            memory=ConcurrentMemory([FakeFact("something")]),
+            classify=classify,
+            pending=FakePendingStore(),
+        )
+
+        result = service.reply("hello", user_id=USER)
+
+        assert result.reply
+        assert "classify" in result.timings
+        assert "recall" in result.timings
+
+    def test_a_classifier_failure_still_reaches_the_caller_unchanged(self) -> None:
+        # It is raised on another thread now. The service documents that every
+        # exception propagates unchanged, and Future.result() re-raises the
+        # original object rather than a copy or a wrapper.
+        boom = RuntimeError("classifier down")
+
+        def classify(text):
+            raise boom
+
+        service = _service(classify=classify, pending=FakePendingStore())
+
+        with pytest.raises(RuntimeError) as excinfo:
+            service.reply("hello", user_id=USER)
+
+        assert excinfo.value is boom
 
     def test_a_destructive_action_is_held_for_confirmation_instead(self) -> None:
         pending = FakePendingStore()

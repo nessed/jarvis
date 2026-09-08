@@ -3,6 +3,7 @@ import json
 import httpx
 import pytest
 
+import memory.embeddings as embeddings
 from memory.embeddings import (
     EMBEDDING_FAILURE_CAUSES,
     EmbeddingError,
@@ -193,3 +194,77 @@ def test_a_cause_never_carries_interpolated_content():
     assert error.value.cause == "http_404"
     assert "do-not-expose-this-body" not in error.value.cause
     assert "private turn" not in error.value.cause
+
+
+def test_one_httpx_client_serves_every_embedding_call(monkeypatch):
+    # A fresh client per call meant a fresh connection per call, and the reply
+    # path embeds at least twice per message while the distill chain embeds
+    # continuously.
+    built = []
+    real_client = httpx.Client
+
+    def counting_client(**kwargs):
+        built.append(kwargs)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(embeddings.httpx, "Client", counting_client)
+    embeddings.close_shared_clients()
+    provider = OllamaEmbeddingProvider(
+        OllamaEmbeddingConfig(model="chosen"),
+        transport=fake_transport(lambda request: httpx.Response(200, json={"embeddings": [[1.0, 2.0]]})),
+    )
+
+    provider.embed_one("first")
+    provider.embed_one("second")
+    provider.embed_one("third")
+
+    assert len(built) == 1
+    embeddings.close_shared_clients()
+
+
+def test_two_providers_with_different_transports_do_not_share_a_client():
+    # transport= is the test seam. Sharing across it would let one stub answer
+    # another's request, which is a silently wrong test rather than a failing
+    # one.
+    embeddings.close_shared_clients()
+    first = OllamaEmbeddingProvider(
+        OllamaEmbeddingConfig(model="chosen"),
+        transport=fake_transport(lambda request: httpx.Response(200, json={"embeddings": [[1.0]]})),
+    )
+    second = OllamaEmbeddingProvider(
+        OllamaEmbeddingConfig(model="chosen"),
+        transport=fake_transport(lambda request: httpx.Response(200, json={"embeddings": [[2.0]]})),
+    )
+
+    assert first.embed_one("hello") == [1.0]
+    assert second.embed_one("hello") == [2.0]
+    embeddings.close_shared_clients()
+
+
+def test_a_closed_shared_client_is_rebuilt_rather_than_reused():
+    # close_shared_clients() runs at interpreter exit, and a test may call it
+    # mid-process. Handing back a closed client afterwards would turn every
+    # later embedding into a RuntimeError.
+    transport = fake_transport(lambda request: httpx.Response(200, json={"embeddings": [[1.0]]}))
+    provider = OllamaEmbeddingProvider(OllamaEmbeddingConfig(model="chosen"), transport=transport)
+
+    assert provider.embed_one("hello") == [1.0]
+    embeddings.close_shared_clients()
+    assert provider.embed_one("hello again") == [1.0]
+    embeddings.close_shared_clients()
+
+
+def test_a_transport_failure_still_maps_to_its_documented_cause():
+    # The pooled client must not change what a caller sees when Ollama is down.
+    def refuse(request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    provider = OllamaEmbeddingProvider(
+        OllamaEmbeddingConfig(model="chosen"), transport=fake_transport(refuse)
+    )
+
+    with pytest.raises(EmbeddingError) as excinfo:
+        provider.embed_one("hello")
+
+    assert excinfo.value.cause == "unavailable"
+    embeddings.close_shared_clients()

@@ -1165,3 +1165,14 @@ def test_an_ollama_that_cannot_be_found_still_stops_the_launch(
 
     assert events == []
     assert "Start it and run this again" in capsys.readouterr().out
+
+
+def test_the_launcher_polls_once_a_second_by_default(capsys) -> None:
+    # Dead time before any work starts: nothing on the reply path can begin
+    # until a poller notices the job, and the launcher used to pass 3. The
+    # poller's own default stays 5 for anyone running it by hand, where the
+    # sleep is between background sweeps and nobody is waiting on it.
+    with pytest.raises(SystemExit):
+        start_jarvis.main(["--help"])
+
+    assert "default 1" in capsys.readouterr().out

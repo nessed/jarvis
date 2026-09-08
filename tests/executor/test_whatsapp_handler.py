@@ -1174,7 +1174,7 @@ class TestReplyLatencyLine:
         assert "stt_ms=" in line
         assert "tts_ms=" in line
 
-    def test_a_command_reply_reports_the_classifier_and_no_recall(self, caplog) -> None:
+    def test_a_command_reply_reports_the_classifier_but_never_the_model(self, caplog) -> None:
         handler = self._handler(
             handle_commands=True,
             open_pending_confirmations=FakePendingStore,
@@ -1186,7 +1186,11 @@ class TestReplyLatencyLine:
 
         line = self._lines(caplog)[0]
         assert "classify_ms=" in line
-        assert "recall_ms=" not in line
+        # recall_ms is present now: recall runs beside the classifier instead
+        # of after it, so a command pays for a local search it does not use.
+        assert "recall_ms=" in line
+        # model_ms is the one that must stay absent -- a command never spends a
+        # routed completion.
         assert "model_ms=" not in line
 
     def test_a_duplicate_message_is_not_timed(self, caplog) -> None:

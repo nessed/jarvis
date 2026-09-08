@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol
 
@@ -126,6 +127,12 @@ class GroqSttClient:
     ) -> None:
         self._config = config
         self._client_factory = client_factory or _default_openai_client
+        # Built on the first transcription, then reused. It used to be built on
+        # every one, and an ``OpenAI`` client is an ``httpx`` client, which is a
+        # connection pool and a TLS handshake to api.groq.com. Still lazy, so
+        # importing this module -- which the WhatsApp handler does on every
+        # message -- costs nothing and a text-only process never builds one.
+        self._client: Any | None = None
 
     @property
     def model(self) -> str:
@@ -135,7 +142,9 @@ class GroqSttClient:
         """Transcribe 16 kHz mono PCM WAV bytes. Same contract as the local client."""
         if not wav_bytes:
             raise CloudSttError("No audio content to transcribe.")
-        client = self._client_factory(self._config)
+        if self._client is None:
+            self._client = self._client_factory(self._config)
+        client = self._client
         request: dict[str, Any] = {
             "model": self._config.model,
             # The SDK's (filename, content, content_type) upload form. A
@@ -253,6 +262,24 @@ def _default_local_backend() -> LocalBackend:
     return WhisperServerClient()
 
 
+#: The process's cloud backend, built on first use. ``None`` is a real cached
+#: answer ("no key configured"), so the sentinel is the missing key, not the
+#: value -- otherwise an unconfigured process re-reads the environment and
+#: rebuilds nothing, forever, on every voice note.
+_CLOUD_BACKEND: dict[str, "CloudBackend | None"] = {}
+_CLOUD_BACKEND_LOCK = threading.Lock()
+
+
 def _default_cloud_backend() -> CloudBackend | None:
-    config = GroqSttConfig.from_environ()
-    return None if config is None else GroqSttClient(config)
+    """One Groq STT client per process, so each voice note reuses the last one's pool."""
+    with _CLOUD_BACKEND_LOCK:
+        if "backend" not in _CLOUD_BACKEND:
+            config = GroqSttConfig.from_environ()
+            _CLOUD_BACKEND["backend"] = None if config is None else GroqSttClient(config)
+        return _CLOUD_BACKEND["backend"]
+
+
+def forget_default_cloud_backend() -> None:
+    """Drop the cached backend so a changed environment is read again. Test seam."""
+    with _CLOUD_BACKEND_LOCK:
+        _CLOUD_BACKEND.clear()

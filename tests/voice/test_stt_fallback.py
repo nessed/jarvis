@@ -285,6 +285,14 @@ def test_the_cloud_tier_is_on_by_default_and_switchable_off() -> None:
     assert cloud_fallback_enabled({CLOUD_FALLBACK_ENV: "off"}) is False
 
 
+@pytest.fixture(autouse=True)
+def _forget_the_cached_cloud_backend():
+    """The default backend is process-wide now, so it must not leak between tests."""
+    stt_fallback.forget_default_cloud_backend()
+    yield
+    stt_fallback.forget_default_cloud_backend()
+
+
 def test_the_default_cloud_backend_is_absent_without_a_key(monkeypatch) -> None:
     monkeypatch.delenv(GROQ_API_KEY_ENV, raising=False)
 
@@ -298,3 +306,40 @@ def test_the_default_cloud_backend_appears_with_a_key(monkeypatch) -> None:
 
     assert isinstance(backend, GroqSttClient)
     assert backend.model == DEFAULT_STT_MODEL
+
+
+def test_the_default_cloud_backend_is_built_once_per_process(monkeypatch) -> None:
+    # An OpenAI client is an httpx client, which is a connection pool and a TLS
+    # handshake to api.groq.com. One per process, not one per voice note.
+    monkeypatch.setenv(GROQ_API_KEY_ENV, "test-key")
+
+    assert stt_fallback._default_cloud_backend() is stt_fallback._default_cloud_backend()
+
+
+def test_an_unconfigured_process_caches_the_absence_too(monkeypatch) -> None:
+    # None is a real answer, not a cache miss: otherwise a process with no key
+    # re-reads the environment on every single voice note forever.
+    monkeypatch.delenv(GROQ_API_KEY_ENV, raising=False)
+    assert stt_fallback._default_cloud_backend() is None
+
+    monkeypatch.setenv(GROQ_API_KEY_ENV, "test-key")
+    assert stt_fallback._default_cloud_backend() is None
+
+    stt_fallback.forget_default_cloud_backend()
+    assert isinstance(stt_fallback._default_cloud_backend(), GroqSttClient)
+
+
+def test_the_sdk_client_is_built_once_and_reused_across_transcriptions() -> None:
+    built: list[object] = []
+
+    def factory(config):
+        built.append(config)
+        return SimpleNamespace(
+            audio=SimpleNamespace(transcriptions=FakeTranscriptions(SimpleNamespace(text="salam"), None))
+        )
+
+    client = GroqSttClient(GroqSttConfig(api_key="test-key"), client_factory=factory)
+
+    assert client.transcribe(WAV) == "salam"
+    assert client.transcribe(WAV) == "salam"
+    assert len(built) == 1

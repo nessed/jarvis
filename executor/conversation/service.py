@@ -28,6 +28,7 @@ job id it gets back.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Callable, Mapping, Protocol, Sequence
@@ -201,16 +202,14 @@ class ConversationService:
         """
         timings: dict[str, float] = {}
 
-        if self._handle_commands:
+        if not self._handle_commands:
             started = perf_counter()
-            command = self._command_result(text, user_id=user_id)
-            timings["classify"] = perf_counter() - started
+            recalled = self._memory.recall(text, user_id=user_id)
+            timings["recall"] = perf_counter() - started
+        else:
+            command, recalled = self._classify_while_recalling(text, user_id=user_id, timings=timings)
             if command is not None:
                 return ReplyResult(reply=command.reply, action=command.action, timings=timings)
-
-        started = perf_counter()
-        recalled = self._memory.recall(text, user_id=user_id)
-        timings["recall"] = perf_counter() - started
 
         messages = self._build_messages(text, recalled, spoken=spoken)
 
@@ -226,6 +225,60 @@ class ConversationService:
         self._memory.remember_turn(reply, user_id=user_id, role="assistant")
 
     # -- internals ---------------------------------------------------------
+
+    def _classify_while_recalling(
+        self, text: str, *, user_id: str, timings: dict[str, float]
+    ) -> tuple[ReplyResult | None, Any]:
+        """Ask the classifier and search memory at the same time.
+
+        These used to run one after the other, and the classifier is a routed
+        model call while recall is local: measured 8 Sep 2026, classify p50
+        8.2 s and recall p50 1.3 s, strictly in series, on a path a person is
+        waiting on. Nothing makes them ordered -- the classifier reads the
+        message text, recall reads the message text, neither reads the other's
+        answer.
+
+        **The classifier is the half that moves to the other thread, not
+        recall,** and that is a constraint rather than a preference. Recall
+        touches the sqlite handles the caller opened, sqlite3 connections
+        refuse use from a thread other than the one that created them
+        (``check_same_thread`` defaults true), and the same memory object is
+        used again for ``remember_turn`` back on this thread once the reply is
+        out. So recall stays here. The classifier touches only the router and
+        its own short-lived confirmation store, which it opens and closes
+        inside the call, so it moves cleanly.
+
+        A command message pays for a recall it will not use. That is the trade
+        the parallelism buys and it is a good one: the recall is local, it is
+        free in wall-clock terms because the classifier is slower, and the
+        alternative is every conversational message -- the common case --
+        paying 1.3 s it does not have to.
+
+        The executor is a context manager so no thread outlives this call, on
+        the error path included. If the classifier raises, its exception
+        arrives here from ``Future.result()`` unchanged, which is the contract
+        ``reply`` documents.
+
+        The two spans now overlap, so ``classify`` + ``recall`` no longer sums
+        to the time spent here. That is the point of the change, and nothing
+        adds them up: ``executor/latency.py`` measures ``total`` end to end,
+        and ``tools/reply_latency.py`` reports each stage's own percentiles.
+        """
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="jarvis-classify") as pool:
+            classify_started = perf_counter()
+            classification = pool.submit(self._command_result, text, user_id=user_id)
+
+            recall_started = perf_counter()
+            try:
+                recalled = self._memory.recall(text, user_id=user_id)
+            finally:
+                timings["recall"] = perf_counter() - recall_started
+
+            try:
+                command = classification.result()
+            finally:
+                timings["classify"] = perf_counter() - classify_started
+        return command, recalled
 
     def _build_messages(self, text: str, recalled: Any, *, spoken: bool) -> list[dict[str, str]]:
         system_prompt = self._system_prompt + (VOICE_REPLY_LANGUAGE_NOTE if spoken else "")

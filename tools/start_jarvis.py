@@ -684,7 +684,11 @@ def spawn_workers(supervisor: Supervisor, python: str, interval: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Start the whole JARVIS stack")
     parser.add_argument("--skip-webhook", action="store_true", help="don't re-point Meta")
-    parser.add_argument("--interval", default="3", help="executor poll seconds (default 3)")
+    # 1, not 3. This is dead time a person spends staring at a phone before
+    # any work starts: the reply path cannot begin until a poller notices the
+    # job. The poller's own default stays 5 for anyone running it by hand,
+    # where the sleep is between background sweeps and nobody is waiting.
+    parser.add_argument("--interval", default="1", help="executor poll seconds (default 1)")
     args = parser.parse_args(argv)
 
     # The lock is the first thing that touches the outside world. Argument
