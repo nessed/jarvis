@@ -80,11 +80,23 @@ class MemoryService:
             raise
         return fact
 
-    def recall(self, query: str, *, limit: int = 10) -> list[Fact]:
+    def recall(
+        self, query: str, *, limit: int = 10, max_distance: float | None = None
+    ) -> list[Fact]:
         """Return live facts nearest to a local query embedding.
 
         Deleted or stale vector IDs are skipped, preserving index/store
         independence while preventing dead entries from leaking to callers.
+
+        ``max_distance`` drops matches further away than that. Without it a
+        nearest-neighbour search always returns *something*: ask "what is the
+        boiling point of water" and the index hands back "Ali is 19 years old
+        and studying Economics" at distance 1.037, simply because it was the
+        least-unrelated row in the store. A caller that pastes that into a
+        prompt as "remembered context" has just told the model a fact about the
+        user in answer to a physics question. Measured on this laptop's own
+        store, 9 Sep 2026: a near-duplicate scores 0.0-0.52, a genuinely
+        related fact 0.7-0.9, and unrelated rows 1.0 and up.
         """
         _validate_text("query", query)
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
@@ -100,6 +112,9 @@ class MemoryService:
             fact_id = _match_fact_id(match)
             if fact_id is None or fact_id in seen_ids:
                 continue
+            if max_distance is not None and _match_distance(match) > max_distance:
+                # Nearest-first, so everything after this is further still.
+                break
             seen_ids.add(fact_id)
             fact = self._store.get(fact_id)
             if fact is not None:
@@ -118,6 +133,20 @@ def _one_embedding(provider: EmbeddingProvider, text: str) -> list[float]:
 def _validate_text(name: str, value: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-empty string")
+
+
+def _match_distance(match: object) -> float:
+    """The distance half of an index match, or ``inf`` if it has no shape we know.
+
+    ``inf`` rather than ``0`` on purpose: an unreadable match must fail the
+    distance test, not sail through it.
+    """
+    if isinstance(match, (tuple, list)) and len(match) >= 2:
+        try:
+            return float(match[1])
+        except (TypeError, ValueError):
+            return float("inf")
+    return float("inf")
 
 
 def _match_fact_id(match: object) -> str | None:

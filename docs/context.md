@@ -8,25 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `5108034 Write this week's handoff` on `main`, 6 ahead, 0 behind origin.
+**HEAD** `ff1098e Mark U18 done: the owner id is set` on `main`, 7 ahead, 0 behind origin.
 
-**Working tree:** 6 changed (plus 19 untracked)
+**Working tree:** 14 changed (plus 19 untracked)
 
 ```
   M CLAUDE.md
-   M README.md
+  M  README.md
    M docs/board/README.md
   M  docs/board/USER-TASKS.md
    M docs/board/tasks/bus-offbox-packaging.md
    M docs/board/tasks/vps-harden-deploy.md
+  M  docs/state.md
+  M  executor/conversation/service.py
+  M  memory/conversation.py
+  M  memory/service.py
+  M  router/routing.py
+  M  tests/executor/test_conversation_service.py
+  ...and 2 more
 ```
 
-**Offline suite:** 1575 passed, 10 deselected in 70.52s (0:01:10) _(recorded 2026-09-09)_
+**Offline suite:** 1604 passed, 10 deselected in 96.96s (0:01:36) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `ff1098e` Mark U18 done: the owner id is set  _(2026-09-09)_
 - `5108034` Write this week's handoff  _(2026-09-09)_
 - `ca95383` Ask both questions in one call, behind a flag that stays off  _(2026-09-09)_
 - `673636a` Check who is actually messaging before answering them  _(2026-09-09)_
@@ -34,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `305a2eb` Stop paying the same 1.2 seconds on every message  _(2026-09-09)_
 - `d7c19ef` Give the router a deadline it can actually hit  _(2026-09-09)_
 - `14cdbd0` Say where the seconds went, instead of guessing  _(2026-09-09)_
-- `9598d37` Pull the reply brain out of the WhatsApp closure  _(2026-09-09)_
 
 <!-- END GENERATED -->
 

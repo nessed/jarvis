@@ -18,6 +18,9 @@ from types import SimpleNamespace
 import pytest
 
 from executor.conversation.service import (
+    DEFAULT_HISTORY_TURNS,
+    HISTORY_TURNS_ENV,
+    history_turns,
     SINGLE_CALL_ENV,
     single_call_enabled,
     NOT_THE_OWNER_REPLY,
@@ -32,7 +35,6 @@ from executor.conversation.service import (
     ReplyResult,
 )
 from executor.handlers.command_intent import (
-    MAX_COMMAND_LENGTH,
     CONVERSATION,
     MAX_COMMAND_LENGTH,
     CommandVerdict,
@@ -138,7 +140,14 @@ def _action(**overrides) -> CommandVerdict:
 
 
 def _service(
-    *, memory=None, complete=None, classify=None, pending=None, handle_commands=None, owner_id=USER
+    *,
+    memory=None,
+    complete=None,
+    classify=None,
+    pending=None,
+    handle_commands=None,
+    owner_id=USER,
+    history_limit=None,
 ):
     # owner_id defaults to USER because the gate is fail-closed: without an
     # owner every one of these tests would be exercising the generic
@@ -153,6 +162,7 @@ def _service(
         open_pending_confirmations=(lambda: pending) if pending is not None else None,
         handle_commands=handle_commands,
         owner_id=owner_id,
+        history_limit=history_limit,
     )
 
 
@@ -915,3 +925,150 @@ class TestSingleCallMode:
         service.reply("hello there", user_id=USER)
 
         assert len(complete.calls) == 2
+
+
+class TestConversationHistory:
+    """The prompt carries what was just said, not only what resembles it."""
+
+    def _memory(self, turns):
+        class HistoricMemory(FakeMemory):
+            def __init__(self, recalled=None):
+                super().__init__(recalled)
+                self.recent_calls = []
+
+            def recent_turns(inner, *, user_id, limit):
+                inner.recent_calls.append((user_id, limit))
+                return list(turns)
+
+        return HistoricMemory()
+
+    def _turn(self, role, text):
+        return SimpleNamespace(text=text, metadata={"role": role})
+
+    def test_prior_turns_reach_the_prompt_in_order_and_with_their_roles(self) -> None:
+        memory = self._memory(
+            [
+                self._turn("user", "turn wifi off"),
+                self._turn("assistant", "On it: turn wifi off. Queued as job 6c6285af."),
+            ]
+        )
+        complete = _completion("Still queued.")
+        service = _service(memory=memory, complete=complete, handle_commands=False)
+
+        service.reply("when will it be done", user_id=USER)
+
+        messages = complete.calls[0][1]
+        assert messages[-3:] == [
+            {"role": "user", "content": "turn wifi off"},
+            {"role": "assistant", "content": "On it: turn wifi off. Queued as job 6c6285af."},
+            {"role": "user", "content": "when will it be done"},
+        ]
+
+    def test_history_is_asked_for_this_sender_and_bounded(self) -> None:
+        memory = self._memory([])
+        service = _service(memory=memory, handle_commands=False, history_limit=4)
+
+        service.reply("hello", user_id=USER)
+
+        assert memory.recent_calls == [(USER, 4)]
+
+    def test_recalled_context_comes_before_the_conversation(self) -> None:
+        # Background first, fenced as data; the live exchange last, so the
+        # model reads a conversation as a conversation.
+        memory = self._memory([self._turn("user", "earlier thing")])
+        memory.recalled = [FakeFact("A remembered fact")]
+        complete = _completion("ok")
+        service = _service(memory=memory, complete=complete, handle_commands=False)
+
+        service.reply("hello", user_id=USER)
+
+        contents = [m["content"] for m in complete.calls[0][1]]
+        fenced = next(i for i, c in enumerate(contents) if "A remembered fact" in c)
+        history = contents.index("earlier thing")
+        assert fenced < history < len(contents) - 1
+
+    def test_zero_disables_history_without_touching_the_store(self) -> None:
+        memory = self._memory([self._turn("user", "earlier")])
+        complete = _completion("ok")
+        service = _service(memory=memory, complete=complete, handle_commands=False, history_limit=0)
+
+        service.reply("hello", user_id=USER)
+
+        assert memory.recent_calls == []
+        assert [m["content"] for m in complete.calls[0][1]] == [SYSTEM_PROMPT, "hello"]
+
+    def test_a_memory_without_recent_turns_simply_gets_none(self) -> None:
+        # Every caller before 9 Sep 2026 was one of these, and the bus's own
+        # Mem0 surface still is.
+        complete = _completion("ok")
+        service = _service(memory=FakeMemory(), complete=complete, handle_commands=False)
+
+        result = service.reply("hello", user_id=USER)
+
+        assert result.reply == "ok"
+
+    def test_a_failing_history_read_loses_continuity_not_the_reply(self) -> None:
+        class BrokenMemory(FakeMemory):
+            def recent_turns(self, *, user_id, limit):
+                raise RuntimeError("sqlite is unhappy")
+
+        complete = _completion("still answered")
+        service = _service(memory=BrokenMemory(), complete=complete, handle_commands=False)
+
+        assert service.reply("hello", user_id=USER).reply == "still answered"
+
+    def test_turns_with_an_unusable_role_or_no_text_are_skipped(self) -> None:
+        memory = self._memory(
+            [
+                self._turn("user", "kept"),
+                self._turn("system", "wrong role"),
+                self._turn("assistant", "   "),
+                SimpleNamespace(text="no metadata at all", metadata=None),
+            ]
+        )
+        complete = _completion("ok")
+        service = _service(memory=memory, complete=complete, handle_commands=False)
+
+        service.reply("hello", user_id=USER)
+
+        history = [
+            m
+            for m in complete.calls[0][1]
+            if m["content"] in {"kept", "wrong role", "no metadata at all"}
+        ]
+        assert history == [{"role": "user", "content": "kept"}]
+
+    def test_the_current_message_is_never_shown_twice(self) -> None:
+        # Normally impossible -- the turn is stored after the reply is sent --
+        # but a retry of a job whose write already landed would repeat it.
+        memory = self._memory([self._turn("user", "hello")])
+        complete = _completion("ok")
+        service = _service(memory=memory, complete=complete, handle_commands=False)
+
+        service.reply("hello", user_id=USER)
+
+        assert [m["content"] for m in complete.calls[0][1]].count("hello") == 1
+
+    def test_history_reaches_the_single_call_prompt_too(self) -> None:
+        memory = self._memory([self._turn("user", "turn wifi off")])
+        complete = _completion(json.dumps({"reply": "Still queued.", "command": None}))
+        service = ConversationService(
+            memory=memory,
+            complete=complete,
+            open_pending_confirmations=FakePendingStore,
+            handle_commands=True,
+            owner_id=USER,
+            single_call=True,
+        )
+
+        service.reply("when will it be done", user_id=USER)
+
+        assert {"role": "user", "content": "turn wifi off"} in complete.calls[0][1]
+
+    def test_the_limit_is_read_from_the_environment(self) -> None:
+        assert history_turns({}) == DEFAULT_HISTORY_TURNS
+        assert history_turns({HISTORY_TURNS_ENV: "4"}) == 4
+        assert history_turns({HISTORY_TURNS_ENV: "0"}) == 0
+        assert history_turns({HISTORY_TURNS_ENV: "-3"}) == 0
+        assert history_turns({HISTORY_TURNS_ENV: "lots"}) == DEFAULT_HISTORY_TURNS
+        assert history_turns({HISTORY_TURNS_ENV: "  "}) == DEFAULT_HISTORY_TURNS

@@ -29,6 +29,10 @@ once in a batched handoff, and only ones that newly became actionable.
   day found none of the five keys present. 2 minutes. Unblocks
   `live-routing-probe`, which is the only thing that proves the new IDs
   serve.
+  **DONE 9 Sep 2026.** The agent set all four model IDs after verifying each
+  against the provider's own live `/models` endpoint. The ladder went from
+  three rungs to six, with Groq leading. See `docs/state.md`, "Provider ladder".
+
 
   **Now measurable, 2 Sep evening.** `router-unresolvable-model-rungs` made
   the router say which rungs it is refusing and why. Against the current

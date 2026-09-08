@@ -5,6 +5,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from memory.conversation import (
+    DEFAULT_RECALL_MAX_DISTANCE,
+    RECALL_MAX_DISTANCE_ENV,
+    recall_max_distance,
     ConversationMemory,
     is_conversation_turn,
     turn_source,
@@ -69,12 +72,14 @@ class FakeService:
         self.store = store
         self.recall_returns: list[Fact] = []
         self.recall_calls: list[tuple[str, int]] = []
+        self.recall_distances: list[float | None] = []
 
     def remember(self, text, source, *, fact_id=None, metadata=None, created_at=None):
         return self.store.remember(text, source, fact_id=fact_id, metadata=metadata, created_at=created_at)
 
-    def recall(self, query, *, limit=10):
+    def recall(self, query, *, limit=10, max_distance=None):
         self.recall_calls.append((query, limit))
+        self.recall_distances.append(max_distance)
         return list(self.recall_returns)
 
 
@@ -127,16 +132,37 @@ class TestRememberTurn:
 
 
 class TestRecall:
-    def test_returns_this_conversations_turns(self, memory: ConversationMemory) -> None:
+    def test_conversation_turns_are_never_recalled_as_context(
+        self, memory: ConversationMemory
+    ) -> None:
+        """Not even this conversation's own. See ConversationMemory.recall.
+
+        Turns belonged here while recall was the only continuity there was.
+        ``recent_turns`` is that now, in order and complete, so leaving turns
+        in recall as well stopped being redundant and became a feedback loop:
+        on 9 Sep 2026 JARVIS recalled *its own* previous answer, repeated it,
+        and then defended it.
+        """
         mine = _turn("my own message", user="mine")
         memory.runtime.service.recall_returns = [mine]
 
-        assert memory.recall("query", user_id="mine") == [mine]
+        assert memory.recall("query", user_id="mine") == []
 
-    def test_excludes_another_conversations_turns(self, memory: ConversationMemory) -> None:
+    def test_another_conversations_turns_are_excluded_too(
+        self, memory: ConversationMemory
+    ) -> None:
         memory.runtime.service.recall_returns = [_turn("someone else's message", user="theirs")]
 
         assert memory.recall("query", user_id="mine") == []
+
+    def test_recall_asks_for_a_distance_cut_off(self, memory: ConversationMemory) -> None:
+        # Without one a nearest-neighbour search always returns *something*:
+        # "what is the boiling point of water" came back with "Ali is 19 years
+        # old and studying Economics" at distance 1.037, purely because it was
+        # the least-unrelated row in the store.
+        memory.recall("query", user_id="mine")
+
+        assert memory.runtime.service.recall_distances == [DEFAULT_RECALL_MAX_DISTANCE]
 
     def test_keeps_non_conversation_facts_regardless_of_user(self, memory: ConversationMemory) -> None:
         # Backfilled notes and distilled Mem0 memories belong to the machine's
@@ -153,7 +179,16 @@ class TestRecall:
         assert memory.recall("query", user_id="mine") == [backfilled]
 
     def test_overfetches_then_truncates_to_the_requested_limit(self, memory: ConversationMemory) -> None:
-        memory.runtime.service.recall_returns = [_turn(f"m{i}", user="mine") for i in range(10)]
+        memory.runtime.service.recall_returns = [
+            Fact(
+                id=f"n{i}",
+                text=f"note {i}",
+                source="notes",
+                created_at=datetime.now(UTC),
+                metadata={},
+            )
+            for i in range(10)
+        ]
 
         result = memory.recall("query", user_id="mine", limit=3)
 
@@ -217,3 +252,17 @@ def test_is_conversation_turn_distinguishes_turns_from_other_facts() -> None:
         )
         is False
     )
+
+
+class TestRecallDistanceSetting:
+    def test_the_cut_off_defaults_and_reads_the_environment(self) -> None:
+        assert recall_max_distance({}) == DEFAULT_RECALL_MAX_DISTANCE
+        assert recall_max_distance({RECALL_MAX_DISTANCE_ENV: "0.5"}) == 0.5
+        assert recall_max_distance({RECALL_MAX_DISTANCE_ENV: "  "}) == DEFAULT_RECALL_MAX_DISTANCE
+        assert recall_max_distance({RECALL_MAX_DISTANCE_ENV: "nonsense"}) == DEFAULT_RECALL_MAX_DISTANCE
+
+    def test_it_can_be_turned_off_entirely(self) -> None:
+        # None restores the old thresholdless behaviour, for anyone who wants
+        # to see what recall would have said.
+        assert recall_max_distance({RECALL_MAX_DISTANCE_ENV: "none"}) is None
+        assert recall_max_distance({RECALL_MAX_DISTANCE_ENV: "OFF"}) is None

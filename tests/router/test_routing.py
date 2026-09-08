@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import json
 from datetime import UTC, datetime
 
@@ -1813,3 +1814,112 @@ def test_a_rung_with_no_model_is_still_skipped_rather_than_failed():
 
     assert result.provider == "two"
     assert router.health["one"].cooldown_until == 0.0
+
+
+# --- picking a model that is actually meant for conversation --------------
+
+
+def test_a_code_model_is_not_chosen_over_a_chat_model():
+    # Live failure, 9 Sep 2026: Mistral's roster comes back code-first, this
+    # took available[0], and JARVIS held a WhatsApp conversation through
+    # codestral-2508. The API's completion_chat flag was true for it -- "can
+    # complete a chat request" is not "is meant for chatting".
+    roster = [
+        "codestral-2508",
+        "codestral-latest",
+        "mistral-code-latest",
+        "mistral-code-fim-latest",
+        "mistral-small-latest",
+        "magistral-small-latest",
+    ]
+    calls = []
+    mistral = Provider(
+        "mistral", "https://mistral.example/v1", "MISTRAL_KEY", 1, None, ("latency",), discover_chat_model=True
+    )
+    client = DiscoveringFakeClient("mistral", {"mistral": {"provider": "mistral"}}, calls, roster)
+    router = ProviderRouter(
+        [mistral], environ={"MISTRAL_KEY": "test-key"}, client_factory=lambda *_: client
+    )
+
+    result = asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert result.model == "mistral-small-latest"
+
+
+@pytest.mark.parametrize(
+    "special",
+    [
+        "codestral-2508",
+        "mistral-code-fim-latest",
+        "mistral-embed",
+        "mistral-ocr-4",
+        "mistral-moderation-2603",
+        "voxtral-mini-tts-latest",
+        "voxtral-mini-transcribe-realtime-2602",
+        "meta-llama/llama-prompt-guard-2-86m",
+        "whisper-large-v3",
+        "some-reranker",
+        "gemini-3-pro-image",
+        "a-vision-model",
+    ],
+)
+def test_special_purpose_models_sort_behind_a_general_one(special):
+    assert routing._conversation_first([special, "a-general-model"]) == [
+        "a-general-model",
+        special,
+    ]
+
+
+def test_a_roster_of_only_special_purpose_models_keeps_the_providers_order():
+    # Deprioritising, not excluding: a rung that only offers special-purpose
+    # models is still better than no rung.
+    roster = ["mistral-embed", "mistral-ocr-4"]
+
+    assert routing._conversation_first(roster) == roster
+
+
+def test_the_discovered_model_is_logged_so_the_choice_is_answerable(caplog):
+    # Nothing anywhere recorded which model a discovering rung settled on, so
+    # "why does it sound like that" could not be answered from the logs.
+    calls = []
+    mistral = Provider(
+        "mistral", "https://mistral.example/v1", "MISTRAL_KEY", 1, None, ("latency",), discover_chat_model=True
+    )
+    client = DiscoveringFakeClient(
+        "mistral", {"mistral": {"provider": "mistral"}}, calls, ["codestral-2508", "mistral-small-latest"]
+    )
+    router = ProviderRouter(
+        [mistral], environ={"MISTRAL_KEY": "test-key"}, client_factory=lambda *_: client
+    )
+
+    with caplog.at_level(logging.INFO, logger="router.routing"):
+        asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert any("mistral-small-latest" in r.getMessage() for r in caplog.records)
+
+
+def test_an_explicit_model_env_still_beats_discovery_entirely():
+    # The env var is how an operator chooses deliberately; discovery is only
+    # the fallback. MISTRAL_DEFAULT_MODEL was set on 9 Sep for exactly this.
+    calls = []
+    mistral = Provider(
+        "mistral",
+        "https://mistral.example/v1",
+        "MISTRAL_KEY",
+        1,
+        None,
+        ("latency",),
+        model_env="MISTRAL_DEFAULT_MODEL",
+        discover_chat_model=True,
+    )
+    client = DiscoveringFakeClient("mistral", {"mistral": {"provider": "mistral"}}, calls, ["codestral-2508"])
+    router = ProviderRouter(
+        [mistral],
+        environ={"MISTRAL_KEY": "test-key", "MISTRAL_DEFAULT_MODEL": "mistral-small-latest"},
+        client_factory=lambda *_: client,
+    )
+
+    result = asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert result.model == "mistral-small-latest"
+    assert client.model_discovery_calls == 0, "no discovery round trip when the model is named"

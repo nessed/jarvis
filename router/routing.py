@@ -87,6 +87,50 @@ DENIAL_STATUSES = frozenset({401, 402, 403})
 COST_CLASS_ORDER = ("free", "trial", "paid")
 DEFAULT_COST_CLASS = "paid"
 
+#: Substrings that mark a model id as built for something other than holding a
+#: conversation. **Not a roster of model names** -- naming specific models is
+#: exactly what ``discover_chat_model`` exists to avoid, and what
+#: ``agents.md`` forbids. These are *purposes*, and a provider that renames its
+#: models keeps working as long as it keeps saying what they are for.
+#:
+#: This exists because of a live failure on 9 Sep 2026. Mistral's roster comes
+#: back code-models-first, ``_discovered_model_for`` took ``available[0]``, and
+#: JARVIS answered a WhatsApp conversation through **codestral-2508** -- a code
+#: completion model. The API's ``completion_chat`` capability flag was true for
+#: it, so the existing filter passed it through: "can complete a chat request"
+#: and "is meant for chatting" are not the same claim.
+#:
+#: Deprioritising, not excluding: if every candidate matches one of these, the
+#: order is left exactly as the provider gave it. A rung that only offers
+#: special-purpose models is still better than no rung.
+NON_CONVERSATIONAL_MODEL_MARKERS = (
+    "code",
+    "embed",
+    "fim",
+    "guard",
+    "image",
+    "moderation",
+    "ocr",
+    "rerank",
+    "transcribe",
+    "tts",
+    "vision",
+    "whisper",
+)
+
+
+def _conversation_first(model_ids: Sequence[str]) -> list[str]:
+    """The same models, with the obviously-special-purpose ones moved to the back."""
+    general = [m for m in model_ids if not _looks_special_purpose(m)]
+    special = [m for m in model_ids if _looks_special_purpose(m)]
+    return general + special
+
+
+def _looks_special_purpose(model_id: str) -> bool:
+    lowered = model_id.lower()
+    return any(marker in lowered for marker in NON_CONVERSATIONAL_MODEL_MARKERS)
+
+
 #: How many recent successful calls a (provider, task_profile) bucket keeps.
 #: Bounded rather than time-decayed on purpose: a decay constant is a number
 #: nobody has specified, and a short window is recent by construction.
@@ -799,8 +843,13 @@ class ProviderRouter:
         available = await discover()
         if not available:
             return None
-        self._discovered_models[provider.name] = available[0]
-        return available[0]
+        chosen = _conversation_first(available)[0]
+        # Said out loud, once: until now nothing anywhere recorded *which*
+        # model a discovering rung had settled on, so "why does it sound like
+        # that" was unanswerable from the logs.
+        logger.info("provider %s discovered chat model %s", provider.name, chosen)
+        self._discovered_models[provider.name] = chosen
+        return chosen
 
     def _in_cooldown(self, provider: Provider) -> bool:
         return self.health[provider.name].cooldown_until > self._clock()

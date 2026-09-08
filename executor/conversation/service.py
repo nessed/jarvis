@@ -79,6 +79,28 @@ VOICE_REPLY_LANGUAGE_NOTE = (
 _CONTEXT_OPEN = "<remembered_context>"
 _CONTEXT_CLOSE = "</remembered_context>"
 
+#: How many of the conversation's own previous messages go into the prompt.
+#: Ten is five exchanges: enough for "when will it be done" and "no, the other
+#: one" to mean something, short enough that it costs little and cannot crowd
+#: out the current message on a small context.
+DEFAULT_HISTORY_TURNS = 10
+HISTORY_TURNS_ENV = "JARVIS_HISTORY_TURNS"
+
+
+def history_turns(environ: Mapping[str, str] | None = None) -> int:
+    """How many prior turns to include. ``0`` disables history entirely."""
+    settings = os.environ if environ is None else environ
+    raw = (settings.get(HISTORY_TURNS_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_HISTORY_TURNS
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; using %s", HISTORY_TURNS_ENV, raw, DEFAULT_HISTORY_TURNS)
+        return DEFAULT_HISTORY_TURNS
+    return max(0, value)
+
+
 #: One model call per message instead of two, behind a flag and **off**.
 #: Q17-D4 owns the decision to flip it; this only makes the numbers gettable.
 SINGLE_CALL_ENV = "JARVIS_SINGLE_CALL_REPLY"
@@ -130,7 +152,12 @@ def warn_once_if_no_owner_is_configured(environ: Mapping[str, str] | None = None
 
 
 class Memory(Protocol):
-    """The two calls this service makes against the turn store."""
+    """The calls this service makes against the turn store.
+
+    ``recent_turns`` is optional: a caller that does not implement it simply
+    gets no conversation history, which is what every caller did before
+    9 Sep 2026. See ``ConversationService._history_messages``.
+    """
 
     def recall(self, query: str, *, user_id: str) -> Any: ...
 
@@ -239,6 +266,7 @@ class ConversationService:
         system_prompt: str = SYSTEM_PROMPT,
         owner_id: str | None = None,
         single_call: bool | None = None,
+        history_limit: int | None = None,
     ) -> None:
         if handle_commands and open_pending_confirmations is None:
             raise ValueError("handle_commands=True needs open_pending_confirmations")
@@ -252,6 +280,7 @@ class ConversationService:
         self._handle_commands = handle_commands
         self._system_prompt = system_prompt
         self._single_call = single_call_enabled() if single_call is None else single_call
+        self._history_limit = history_turns() if history_limit is None else max(0, history_limit)
 
     def reply(self, text: str, *, user_id: str, spoken: bool = False) -> ReplyResult:
         """Classify, recall, route -- and hand back what to say.
@@ -286,7 +315,7 @@ class ConversationService:
             if command is not None:
                 return ReplyResult(reply=command.reply, action=command.action, timings=timings)
 
-        messages = self._build_messages(text, recalled, spoken=spoken)
+        messages = self._build_messages(text, recalled, spoken=spoken, user_id=user_id)
 
         started = perf_counter()
         result = self._complete("latency", messages)
@@ -369,7 +398,9 @@ class ConversationService:
             timings["recall"] = perf_counter() - started
 
             started = perf_counter()
-            result = self._complete("latency", self._merged_messages(text, recalled, spoken=spoken))
+            result = self._complete(
+                "latency", self._merged_messages(text, recalled, spoken=spoken, user_id=user_id)
+            )
             timings["model"] = perf_counter() - started
 
             raw = completion_json(result)
@@ -409,14 +440,16 @@ class ConversationService:
             timings=timings,
         )
 
-    def _merged_messages(self, text: str, recalled: Any, *, spoken: bool) -> list[dict[str, str]]:
+    def _merged_messages(
+        self, text: str, recalled: Any, *, spoken: bool, user_id: str
+    ) -> list[dict[str, str]]:
         """The reply prompt and the command prompt, in one conversation.
 
         Both fences are unchanged: recalled context and the message are still
         data, still stripped of their own markers first, and the merged
         instructions say so a second time in their own words.
         """
-        messages = self._build_messages(text, recalled, spoken=spoken)
+        messages = self._build_messages(text, recalled, spoken=spoken, user_id=user_id)
         messages[0] = {
             "role": "system",
             "content": messages[0]["content"] + merged_command_instructions(),
@@ -516,13 +549,66 @@ class ConversationService:
                 timings["classify"] = perf_counter() - classify_started
         return command, recalled
 
-    def _build_messages(self, text: str, recalled: Any, *, spoken: bool) -> list[dict[str, str]]:
+    def _build_messages(
+        self, text: str, recalled: Any, *, spoken: bool, user_id: str
+    ) -> list[dict[str, str]]:
+        """system prompt, then older recalled facts, then the actual conversation.
+
+        Order matters. Recalled context is *background* and goes first, fenced
+        as untrusted data. The recent turns go after it as real ``user`` and
+        ``assistant`` messages, because that is what they are, and a model
+        reads a conversation far better as a conversation than as a block of
+        quoted text. The live message goes last.
+        """
         system_prompt = self._system_prompt + (VOICE_REPLY_LANGUAGE_NOTE if spoken else "")
         messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
         context = format_recalled_context(recalled)
         if context:
             messages.append({"role": "user", "content": fence_recalled_context(context)})
+        messages.extend(self._history_messages(text, user_id=user_id))
         messages.append({"role": "user", "content": text})
+        return messages
+
+    def _history_messages(self, current_text: str, *, user_id: str) -> list[dict[str, str]]:
+        """The last few turns of this conversation, as chat messages.
+
+        Until 9 Sep 2026 there were none: every message was a cold start, so
+        "when will it be done" and "damn that's creepy" arrived with nothing to
+        refer to and got answered out of whatever semantic recall had surfaced.
+
+        Best-effort by design. A memory object without ``recent_turns``, or a
+        store that raises, yields no history rather than failing the reply --
+        losing continuity is much smaller than losing the answer, and the
+        poller's retry cannot fix a broken read anyway.
+
+        The current message is excluded defensively. It is normally impossible
+        for it to be here (the turn is stored *after* the reply is sent), but a
+        retry of a job whose write already landed would otherwise show the user
+        their own message twice.
+        """
+        if self._history_limit <= 0:
+            return []
+        recent = getattr(self._memory, "recent_turns", None)
+        if recent is None:
+            return []
+        try:
+            turns = recent(user_id=user_id, limit=self._history_limit)
+        except Exception as exc:
+            logger.warning("conversation history unavailable (%s)", type(exc).__name__)
+            return []
+
+        messages: list[dict[str, str]] = []
+        for turn in turns or []:
+            text = getattr(turn, "text", None)
+            if not isinstance(text, str) or not text.strip():
+                continue
+            metadata = getattr(turn, "metadata", None) or {}
+            role = metadata.get("role") if isinstance(metadata, Mapping) else None
+            if role not in {"user", "assistant"}:
+                continue
+            messages.append({"role": role, "content": text.strip()})
+        if messages and messages[-1]["role"] == "user" and messages[-1]["content"] == current_text.strip():
+            messages.pop()
         return messages
 
     def _command_result(self, text: str, *, user_id: str) -> ReplyResult | None:

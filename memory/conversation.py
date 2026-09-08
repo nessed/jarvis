@@ -16,6 +16,7 @@ underrated one; it keeps every byte on loopback exactly as before.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -28,6 +29,28 @@ TURN_SOURCE_PREFIX = "whatsapp"
 # conversation turns and distilled/backfilled facts alike, and nearest-neighbour
 # order does not respect the source split.
 _OVERFETCH = 6
+
+#: How far a match may be and still count as remembered context. Measured on
+#: this laptop's own 286-fact store, 9 Sep 2026: a near-duplicate scores
+#: 0.0-0.52, a genuinely related fact 0.7-0.9, and an unrelated row 1.0 and up.
+#: 0.9 keeps the middle band and drops the "least-unrelated row in the store"
+#: answers that a thresholdless nearest-neighbour search always produces.
+DEFAULT_RECALL_MAX_DISTANCE = 0.9
+RECALL_MAX_DISTANCE_ENV = "JARVIS_RECALL_MAX_DISTANCE"
+
+
+def recall_max_distance(environ: Mapping[str, str] | None = None) -> float | None:
+    """The distance cut-off, or ``None`` for the old thresholdless behaviour."""
+    settings = os.environ if environ is None else environ
+    raw = (settings.get(RECALL_MAX_DISTANCE_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_RECALL_MAX_DISTANCE
+    if raw.lower() in {"none", "off"}:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return DEFAULT_RECALL_MAX_DISTANCE
 
 
 def turn_source(user_id: str) -> str:
@@ -67,19 +90,60 @@ class ConversationMemory:
         )
 
     def recall(self, query: str, *, user_id: str, limit: int = 10) -> list[Fact]:
-        """Return this conversation's turns and any non-conversation facts.
+        """Return remembered *facts* — never raw conversation turns.
 
-        Another conversation's turns are excluded. Facts that are not turns at
-        all — backfilled notes, distilled Mem0 memories — stay eligible,
-        because they are this machine owner's memory regardless of which
-        thread produced them.
+        Turns used to be included, and it was the right call while this was the
+        only continuity mechanism there was. :meth:`recent_turns` is that now,
+        and it does the job properly: in order, recent, and complete. Leaving
+        turns in here as well stopped being redundant and became actively
+        harmful.
+
+        What it did, live on 9 Sep 2026: JARVIS answered "when will it be
+        done" with "The document will be ready by August 26 2026." That reply
+        was stored as a turn. The next question then recalled **its own
+        previous answer** at distance 0.797, pasted it back in as remembered
+        context, and it said the same thing again — then defended it when
+        asked "what document bro". A nearest-neighbour search over a store
+        containing the model's own output is a feedback loop, and the model
+        cannot tell its own stale guess from something it was told.
+
+        So: distilled memories and backfilled notes only. Those are statements
+        *about* the owner, written deliberately by the distill chain, not a
+        transcript of what was said thirty seconds ago.
         """
         if limit <= 0:
             return []
-        mine = turn_source(user_id)
-        matches = self.runtime.service.recall(query, limit=limit * _OVERFETCH)
-        kept = [f for f in matches if not is_conversation_turn(f) or f.source == mine]
+        matches = self.runtime.service.recall(
+            query, limit=limit * _OVERFETCH, max_distance=recall_max_distance()
+        )
+        kept = [fact for fact in matches if not is_conversation_turn(fact)]
         return kept[:limit]
+
+    def recent_turns(self, *, user_id: str, limit: int = 10) -> list[Fact]:
+        """This conversation's most recent turns, oldest first.
+
+        Deliberately **not** :meth:`recall`. Recall is a semantic
+        nearest-neighbour search over every stored turn and every distilled
+        fact, unordered and unbounded in time; it answers "what do I know that
+        resembles this?". This answers "what were we just saying?", which is a
+        different question and the one a conversation actually runs on.
+
+        Confusing the two is what made JARVIS unable to hold a thread. Asked
+        "when will it be done" seconds after queueing a job, it had no idea a
+        job existed -- the prompt carried no prior turns at all -- so it
+        answered out of whatever recall had surfaced, and said "Document ready
+        by August 26, 2026." (live, 9 Sep 2026).
+
+        Ordered by the store's indexed ``created_at``, newest-first, then
+        reversed: the newest N turns are what a conversation needs, but a model
+        needs them in the order they were said.
+        """
+        if limit <= 0:
+            return []
+        newest = self.runtime.store.list_facts(
+            source=turn_source(user_id), limit=limit, oldest_first=False
+        )
+        return list(reversed(newest))
 
     def undistilled_turns(self, *, limit: int | None = None) -> list[Fact]:
         """Turns not yet folded into Mem0 facts, oldest first.

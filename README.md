@@ -53,6 +53,42 @@ Working:
 - Memory distils itself in the background. Conversation turns get folded into
   Mem0 facts by a self-re-enqueuing job chain that yields to live work, so a
   55-second extraction can never sit in front of a reply.
+- Every replied job logs its own per-stage timings — queue wait, classify,
+  recall, model, tts, send — and a tool prints p50/p95/max from the worker
+  logs. The opening cost that used to sit in front of every message (a
+  dimension probe re-run per message) is now paid once per process: recall
+  fell from 1.24s to 0.10s median and runs beside the classifier instead of
+  after it.
+- Outgoing model calls get a real per-call timeout and a whole-cascade
+  deadline instead of the SDK's 600-second default. A hung provider now
+  cools down and falls through to the next rung instead of hanging the
+  reply. The deadline is wall-clock: httpx's own timeouts are per-operation,
+  so a provider dribbling a response out slowly used to sail past them — one
+  call was measured at 92 seconds.
+- **It only answers me.** The webhook's HMAC proves Meta sent a message; it
+  never proved *I* did, and the reply path recalls private memory and queues
+  actions on my laptop. The sender is now checked against an env var before
+  any of that. Fail-closed twice over: unset means *everyone* is a stranger,
+  not everyone is me, and the comparison is exact — no prefix matching, no
+  country-code normalisation. A stranger gets one flat line, no recall, no
+  action, and nothing written into my memory.
+- **It holds a conversation.** The prompt carries the last ten turns, in
+  order, as real user/assistant messages. It didn't before: every message was
+  a cold start, so "when will it be done" arrived with no idea a job had just
+  been queued, and got answered out of whatever semantic search had surfaced.
+- **Recall stopped feeding the model its own output.** Nearest-neighbour
+  search over a store that contains the assistant's own past replies is a
+  feedback loop — it answered a question wrongly once, that reply was stored
+  as a turn, and every similar question afterwards recalled it and repeated
+  it. Recall now returns distilled facts only; the conversation itself comes
+  from the turn history above. Matches beyond a distance threshold are
+  dropped too, because a search with no floor always returns *something*.
+- **A rung's model is chosen for conversation, not taken off the top of the
+  list.** Mistral's roster comes back code-models-first, and discovery took
+  the first entry, so replies were being written by a code-completion model.
+  Special-purpose models — code, embedding, OCR, TTS, transcription,
+  moderation, vision — now sort behind general ones, and the chosen model is
+  logged.
 - **Voice, both directions.** A WhatsApp voice note is downloaded, decoded,
   transcribed locally on this laptop's NPU, and answered with a synthesised
   voice note. Confirmed working on my own phone.
@@ -68,6 +104,10 @@ Working:
 
 Not working yet:
 
+- A single-call reply mode (one model call returning both the reply and any
+  action, instead of a classify call then a reply call) is built and
+  evaluated at 100% agreement against the two-call path on 23 fixtures, but
+  stays off behind a flag until I decide to flip the default.
 - **`flp_sort` still has no producer.** The classifier that turns a message
   into a job deliberately allowlists only `system_control` and
   `zoom_join_meeting`; FL Studio sorting is excluded on purpose, because I
