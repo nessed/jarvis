@@ -8,26 +8,26 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `ca95383 Ask both questions in one call, behind a flag that stays off` on `main`, 5 ahead, 0 behind origin.
+**HEAD** `5108034 Write this week's handoff` on `main`, 6 ahead, 0 behind origin.
 
-**Working tree:** 7 changed (plus 19 untracked)
+**Working tree:** 6 changed (plus 19 untracked)
 
 ```
   M CLAUDE.md
    M README.md
-  M  docs/board/HANDOFF.md
    M docs/board/README.md
+  M  docs/board/USER-TASKS.md
    M docs/board/tasks/bus-offbox-packaging.md
    M docs/board/tasks/vps-harden-deploy.md
-  M  docs/context.md
 ```
 
-**Offline suite:** 1575 passed, 10 deselected in 60.95s (0:01:00) _(recorded 2026-09-09)_
+**Offline suite:** 1575 passed, 10 deselected in 70.52s (0:01:10) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `5108034` Write this week's handoff  _(2026-09-09)_
 - `ca95383` Ask both questions in one call, behind a flag that stays off  _(2026-09-09)_
 - `673636a` Check who is actually messaging before answering them  _(2026-09-09)_
 - `75034ac` Make the router's deadline an actual wall clock  _(2026-09-09)_
@@ -35,7 +35,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `d7c19ef` Give the router a deadline it can actually hit  _(2026-09-09)_
 - `14cdbd0` Say where the seconds went, instead of guessing  _(2026-09-09)_
 - `9598d37` Pull the reply brain out of the WhatsApp closure  _(2026-09-09)_
-- `ddfd7ed` Measure the reply path instead of adding up its parts  _(2026-09-05)_
 
 <!-- END GENERATED -->
 

@@ -196,11 +196,12 @@ once in a batched handoff, and only ones that newly became actionable.
   chat (it is not a secret); the SSH private key never leaves the laptop.
   Unblocks `vps-harden-deploy` → laptop-off replies.
 
-- **U18 — Paste `JARVIS_OWNER_WA_ID` into `.env`** (1 min, after
-  `owner-identity-check` lands). Your own WhatsApp sender id as Meta sends
-  it in the webhook payload — the agent will tell you the exact key name
-  and where to read the value from an existing log line. Until it is set
-  the bot fails closed: generic replies, no recall, no actions.
+- **U18 — Paste `JARVIS_OWNER_WA_ID` into `.env`** — **DONE 9 Sep 2026.**
+  Ali pasted his own WhatsApp sender id in international form (the shape
+  Meta sends in the payload, no leading zero and no `+`). Verified without
+  printing it: the gate recognises the owner, rejects another number, and
+  rejects a near-miss with one extra digit. The startup warning no longer
+  fires. The value stays in `.env` only and appears in no other file.
 
 - **U19 — One-time $10 OpenRouter credit** (Q17-D9, only if you say yes
   to D9). Lifts its free tier from 50 to 1,000 requests/day permanently
