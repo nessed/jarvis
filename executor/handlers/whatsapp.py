@@ -48,6 +48,7 @@ from executor.handlers.command_intent import (
     queued_reply,
 )
 from executor.handlers.outcome import WHATSAPP_OUTCOME_JOB_KIND
+from executor.latency import ReplySpans
 from executor.notify import NOTIFY_FIELD, notify_descriptor
 from memory.conversation import ConversationMemory, open_conversation_memory
 from router import RoutedResult, route_sync
@@ -372,6 +373,7 @@ def build_whatsapp_webhook_handler(
         reply: str,
         message_text: str,
         memory: LazyMemory,
+        spans: ReplySpans,
         *,
         is_voice: bool,
         job_id: str,
@@ -388,9 +390,13 @@ def build_whatsapp_webhook_handler(
         back, not a wall of text it has to open the chat to read.
         """
         if is_voice:
-            voice_sender(to=inbound.sender, audio=voice_synthesizer(reply))
+            with spans.stage("tts"):
+                audio = voice_synthesizer(reply)
+            with spans.stage("send"):
+                voice_sender(to=inbound.sender, audio=audio)
         else:
-            sender(to=inbound.sender, text=reply)
+            with spans.stage("send"):
+                sender(to=inbound.sender, text=reply)
         with open_seen_messages() as seen:
             seen.mark_sent(inbound.message_id)
 
@@ -400,14 +406,16 @@ def build_whatsapp_webhook_handler(
         if not write_memory:
             return
         try:
-            memory.remember_turn(message_text, user_id=inbound.sender, role="user")
-            memory.remember_turn(reply, user_id=inbound.sender, role="assistant")
+            with spans.stage("remember"):
+                memory.remember_turn(message_text, user_id=inbound.sender, role="user")
+                memory.remember_turn(reply, user_id=inbound.sender, role="assistant")
         except Exception as exc:
             logger.warning(
                 "reply sent but memory write failed (job=%s, %s)", job_id, type(exc).__name__
             )
 
     def handle(job: Job) -> None:
+        spans = ReplySpans.for_job(job)
         inbound = parse_inbound_message(job.payload)
         if inbound is None:
             logger.info("whatsapp webhook job carried no inbound message (job=%s)", job.id)
@@ -427,7 +435,8 @@ def build_whatsapp_webhook_handler(
         # silence even though the executor has already claimed their message.
         # It remains best-effort: a Graph API failure must never delay a reply.
         try:
-            typing_indicator(message_id=inbound.message_id)
+            with spans.stage("cue"):
+                typing_indicator(message_id=inbound.message_id)
         except Exception as exc:
             logger.warning("whatsapp typing indicator failed (job=%s, %s)", job.id, type(exc).__name__)
         else:
@@ -442,8 +451,12 @@ def build_whatsapp_webhook_handler(
             # apology reply for a permanently broken NPU build, because that
             # is a deploy problem to notice from the dead-lettered job, not
             # something to paper over per-message.
-            audio_bytes, _mime_type = media_downloader(inbound.audio_media_id)
-            message_text = audio_transcriber(audio_bytes)
+            # Download and transcription are one span: both exist only because
+            # the message arrived as audio, and splitting them would put a
+            # Graph API fetch in a stage named for the NPU.
+            with spans.stage("stt"):
+                audio_bytes, _mime_type = media_downloader(inbound.audio_media_id)
+                message_text = audio_transcriber(audio_bytes)
             if not message_text or not message_text.strip():
                 # Same treatment an empty-body text message already gets in
                 # parse_inbound_message: no text means no message, silently.
@@ -475,6 +488,7 @@ def build_whatsapp_webhook_handler(
                 handle_commands=commands_on,
             )
             result = service.reply(message_text, user_id=inbound.sender, spoken=is_voice)
+            spans.update(result.timings)
 
             if result.action is not None:
                 action_job_id = _enqueue_proposal(result.action, inbound.sender)
@@ -482,6 +496,12 @@ def build_whatsapp_webhook_handler(
             else:
                 reply = result.reply
 
-            _deliver(inbound, reply, message_text, memory, is_voice=is_voice, job_id=job.id)
+            _deliver(inbound, reply, message_text, memory, spans, is_voice=is_voice, job_id=job.id)
+
+        # One line, after the reply is out and the turn is stored, so the
+        # numbers cover the whole path the user waited on. Only a job that
+        # replied gets here: every early return above says nothing, because a
+        # no-op timed at 3 ms would drag every percentile down with it.
+        spans.emit(logger)
 
     return handle

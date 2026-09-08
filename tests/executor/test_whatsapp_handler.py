@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -1114,3 +1115,111 @@ def test_the_default_graph_client_is_built_once_per_handler_not_per_call(monkeyp
     handler(_job(_text_message_payload(message_id="wamid.two")))
 
     assert len(built) == 1, f"expected one client for two messages, built {len(built)}"
+
+
+class TestReplyLatencyLine:
+    """One line per replied job, and none at all for a job that never replies."""
+
+    def _lines(self, caplog) -> list[str]:
+        return [r.getMessage() for r in caplog.records if r.getMessage().startswith("reply-latency")]
+
+    def _handler(self, **kwargs):
+        defaults = dict(
+            handle_commands=False,
+            open_memory=lambda: FakeMemory([]),
+            open_seen_messages=FakeSeenStore,
+            complete=lambda *_: _fake_completion_response("ok"),
+            send_text_message=lambda **_: "wamid.reply",
+            show_typing_indicator=lambda **_: None,
+            write_memory=True,
+        )
+        defaults.update(kwargs)
+        return build_whatsapp_webhook_handler(**defaults)
+
+    def test_a_text_reply_emits_one_line_naming_the_stages_it_ran(self, caplog) -> None:
+        with caplog.at_level(logging.INFO, logger="executor.handlers.whatsapp"):
+            self._handler()(_job(_text_message_payload(message_id="wamid.latency")))
+
+        lines = self._lines(caplog)
+        assert len(lines) == 1
+        line = lines[0]
+        for field in ("job=", "kind=whatsapp_webhook", "total_ms=", "queue_wait_ms=",
+                      "cue_ms=", "recall_ms=", "model_ms=", "send_ms=", "remember_ms="):
+            assert field in line, f"{field!r} missing from {line!r}"
+        # Text, so neither speech stage ran and neither is claimed.
+        assert "stt_ms=" not in line
+        assert "tts_ms=" not in line
+
+    def test_the_line_never_carries_the_message_or_the_reply(self, caplog) -> None:
+        with caplog.at_level(logging.INFO, logger="executor.handlers.whatsapp"):
+            self._handler(
+                complete=lambda *_: _fake_completion_response("a secret answer"),
+            )(_job(_text_message_payload(text="something private", message_id="wamid.private")))
+
+        line = self._lines(caplog)[0]
+        assert "private" not in line
+        assert "secret" not in line
+
+    def test_a_voice_reply_reports_the_speech_stages(self, caplog) -> None:
+        handler = self._handler(
+            download_media=lambda media_id: (b"ogg", "audio/ogg"),
+            transcribe_audio=lambda audio: "spoken words",
+            synthesize_voice_reply=lambda text: b"reply-audio",
+            send_voice_note=lambda **_: "wamid.voice",
+        )
+        with caplog.at_level(logging.INFO, logger="executor.handlers.whatsapp"):
+            handler(_job(_audio_message_payload(message_id="wamid.voice.latency")))
+
+        line = self._lines(caplog)[0]
+        assert "stt_ms=" in line
+        assert "tts_ms=" in line
+
+    def test_a_command_reply_reports_the_classifier_and_no_recall(self, caplog) -> None:
+        handler = self._handler(
+            handle_commands=True,
+            open_pending_confirmations=FakePendingStore,
+            classify=lambda text: _action(),
+            enqueue_action=FakeEnqueuer(),
+        )
+        with caplog.at_level(logging.INFO, logger="executor.handlers.whatsapp"):
+            handler(_job(_text_message_payload(text="turn wifi off", message_id="wamid.cmd.latency")))
+
+        line = self._lines(caplog)[0]
+        assert "classify_ms=" in line
+        assert "recall_ms=" not in line
+        assert "model_ms=" not in line
+
+    def test_a_duplicate_message_is_not_timed(self, caplog) -> None:
+        seen = FakeSeenStore({"wamid.dupe"})
+        with caplog.at_level(logging.INFO, logger="executor.handlers.whatsapp"):
+            self._handler(open_seen_messages=lambda: seen)(
+                _job(_text_message_payload(message_id="wamid.dupe"))
+            )
+
+        assert self._lines(caplog) == []
+
+    def test_a_payload_with_no_message_is_not_timed(self, caplog) -> None:
+        with caplog.at_level(logging.INFO, logger="executor.handlers.whatsapp"):
+            self._handler()(_job(_status_only_payload()))
+
+        assert self._lines(caplog) == []
+
+    def test_a_voice_note_that_transcribed_to_nothing_is_not_timed(self, caplog) -> None:
+        handler = self._handler(
+            download_media=lambda media_id: (b"ogg", "audio/ogg"),
+            transcribe_audio=lambda audio: "   ",
+        )
+        with caplog.at_level(logging.INFO, logger="executor.handlers.whatsapp"):
+            handler(_job(_audio_message_payload(message_id="wamid.silent")))
+
+        assert self._lines(caplog) == []
+
+    def test_a_failed_reply_says_nothing_rather_than_reporting_a_fast_one(self, caplog) -> None:
+        def boom(*_):
+            raise RuntimeError("provider down")
+
+        with caplog.at_level(logging.INFO, logger="executor.handlers.whatsapp"):
+            with pytest.raises(RuntimeError):
+                self._handler(complete=boom)(_job(_text_message_payload(message_id="wamid.boom")))
+
+        assert self._lines(caplog) == []

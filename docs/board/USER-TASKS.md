@@ -183,7 +183,44 @@ once in a batched handoff, and only ones that newly became actionable.
   only way to know whether 4 Sep's connection-reuse and warm-up work is
   felt on the phone rather than only in a probe.
 
-- **U7 is what "deploy" means.** Everything on the agent side of Phase 4 is
-  written and validated (`infra/`, `docs/tasks/phase4-runbook.md`). The
-  Oracle account needs your identity and card; that is the one sitting
-  standing between now and a bus that is up when the laptop is closed.
+- ~~**U7 is what "deploy" means.**~~ Superseded 8 Sep 2026 by U17 — the
+  hosting answer moved from Oracle Always Free to a rented x86 box. The
+  Oracle runbook section stays valid if you ever go that way instead.
+
+- **U17 — The rented server** (one sitting with your brother; Q17-D1).
+  What the agent needs at the end: an Ubuntu 24.04 **x86** box with
+  **2 GB RAM**, region **Mumbai** (`ap-south-1`), your SSH public key
+  installed, and its public IP. Recommended: AWS Lightsail, the 2 GB plan
+  (~$10-12/month); EC2 `t3.small` is the same thing with more knobs. The
+  $5 / 1 GB plan is too tight once memory lives there. Paste the IP into
+  chat (it is not a secret); the SSH private key never leaves the laptop.
+  Unblocks `vps-harden-deploy` → laptop-off replies.
+
+- **U18 — Paste `JARVIS_OWNER_WA_ID` into `.env`** (1 min, after
+  `owner-identity-check` lands). Your own WhatsApp sender id as Meta sends
+  it in the webhook payload — the agent will tell you the exact key name
+  and where to read the value from an existing log line. Until it is set
+  the bot fails closed: generic replies, no recall, no actions.
+
+- **U19 — One-time $10 OpenRouter credit** (Q17-D9, only if you say yes
+  to D9). Lifts its free tier from 50 to 1,000 requests/day permanently
+  and is the overflow lane behind Groq. Card entry is yours; the agent
+  navigates.
+
+- **U20 — One real reply, timed end to end** (5 min, sensory + one env
+  line). `latency-spans` landed the measurement: every replied job now
+  logs one `reply-latency` line, and `tools/reply_latency.py` prints
+  p50/p95 per stage. What is missing is a run through the *real* queue and
+  the *real* Graph API send, which needs two things from you:
+  1. Add `JARVIS_LIVE_WHATSAPP_TO=<your own WhatsApp number, as Meta
+     writes it in a webhook `from` field>` to `.env`. It is deliberately
+     not in the repo — a phone number is personal data and the test file is
+     committed.
+  2. Start the stack (`start-jarvis.bat`) and leave it up for a minute.
+
+  Then the agent runs
+  `.venv\Scripts\python.exe -m pytest -q -m live tests/live/test_text_reply_latency.py -s`,
+  which enqueues one probe job and **sends you one real WhatsApp reply**.
+  That number is the baseline every task in the September latency batch is
+  measured against. Without it the batch's before/after is three replayed
+  samples, not the phone.

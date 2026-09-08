@@ -8,32 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `ddfd7ed Measure the reply path instead of adding up its parts` on `main`, 2 ahead, 0 behind origin.
+**HEAD** `9598d37 Pull the reply brain out of the WhatsApp closure` on `main`, 3 ahead, 0 behind origin.
 
-**Working tree:** 14 changed (plus 23 untracked)
+**Working tree:** 17 changed (plus 22 untracked)
 
 ```
   M CLAUDE.md
    M docs/board/HANDOFF.md
    M docs/board/QUESTIONS.md
    M docs/board/README.md
-   M docs/board/USER-TASKS.md
+  M  docs/board/USER-TASKS.md
    M docs/board/tasks/bus-offbox-packaging.md
-  A  docs/board/tasks/conversation-service-extract.md
+  A  docs/board/tasks/latency-spans.md
    M docs/board/tasks/vps-harden-deploy.md
-   M docs/context.md
   M  docs/state.md
-  A  executor/conversation/__init__.py
-  A  executor/conversation/service.py
-  ...and 2 more
+  M  executor/handlers/whatsapp.py
+  A  executor/latency.py
+  M  executor/poller.py
+  ...and 5 more
 ```
 
-**Offline suite:** 1461 passed, 9 deselected in 56.07s _(recorded 2026-09-09)_
+**Offline suite:** 1503 passed, 10 deselected in 66.69s (0:01:06) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `9598d37` Pull the reply brain out of the WhatsApp closure  _(2026-09-09)_
 - `ddfd7ed` Measure the reply path instead of adding up its parts  _(2026-09-05)_
 - `8b90d89` Stop paying a TLS handshake per call, and start the stack in parallel  _(2026-09-04)_
 - `ca8a767` Bring the README back in line with what the code does  _(2026-09-03)_
@@ -41,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `ba80f71` Keep the commit gate off the internet  _(2026-09-03)_
 - `7647c67` Audit the board, and find backfill blocked on a contradiction  _(2026-09-03)_
 - `ec8ae8e` Let a bare pytest work, and stop two lanes deleting each other's temp files  _(2026-09-03)_
-- `e0609bc` Generate the provider lists instead of typing them  _(2026-09-03)_
 
 <!-- END GENERATED -->
 

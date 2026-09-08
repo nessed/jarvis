@@ -44,6 +44,7 @@ from executor.handlers.distill import (
 )
 from executor.handlers.whatsapp import build_whatsapp_webhook_handler
 from executor.heartbeat import clear as clear_heartbeat, touch as touch_heartbeat
+from executor.latency import mark_claimed
 from executor import notify
 from executor.handlers.outcome import (
     WHATSAPP_OUTCOME_JOB_KIND,
@@ -189,6 +190,12 @@ def poll_once(
             break
     if job is None:
         return None
+
+    # Stamped here rather than at handler entry so ``queue_wait`` means "how
+    # long the job sat in the queue", not "how long until the handler looked".
+    # The checkpoint write below sits between the two -- one Supabase round
+    # trip, and precisely the kind of gap the latency line exists to expose.
+    mark_claimed(job.id)
 
     try:
         registration = _resolve_registration(job, handler=handler, handlers=handlers)
