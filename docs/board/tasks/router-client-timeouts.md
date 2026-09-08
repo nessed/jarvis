@@ -123,3 +123,62 @@ one; a hung rung cooling down with no invented status; three hung rungs
 stopping at two attempts with `RouterDeadlineExceeded`; the same three on
 `batch` walking the whole ladder; the deadline halving when the call timeout
 does; and instant failures not spending the budget.
+
+### 2026-09-09 — follow-up: the deadline was not a wall clock
+
+**How it was found.** Measuring `hotpath-quick-wins` on a worktree at
+`d7c19ef` — which already had everything above — one replay recorded
+`classify_ms=92308`. Ninety-two seconds on a `latency` call whose per-call
+budget is 20 s and whose whole-cascade budget is 40 s.
+
+**Why.** Two gaps, both real.
+
+1. **httpx timeouts are per operation, not per request.** `timeout=20` bounds
+   the connect and each individual read; it does not bound the whole call. A
+   provider that dribbles a response out steadily never trips a read timeout
+   and can run for minutes. `openrouter/free` does exactly this.
+2. **The interaction deadline was only checked before starting a rung.** That
+   stops the router beginning a call it cannot afford. It cannot stop one
+   already running, so a single slow rung walked straight through the budget.
+
+**The fix.** Each rung's whole attempt — model discovery *and* the completion
+— now runs inside `asyncio.wait_for(..., timeout=call_timeout)`, so the
+profile's number is the wall clock it always claimed to be. The attempt body
+moved into `ProviderRouter._attempt` to make that wrapping possible; `None`
+from it still means "this rung cannot name a model", which is a skip, not a
+failure, and still records no cooldown.
+
+`asyncio.wait_for` raises the builtin `TimeoutError`, which
+`TRANSPORT_FAILURE_CLASS_NAMES` already covers, so a cut-off rung cools down
+and the cascade falls through exactly as it does for a read timeout — no new
+error path.
+
+Two smaller things this settled:
+
+- **Model discovery is inside the budget now.** It was a second HTTP request in
+  front of every Mistral completion, bounded only by the client's 120 s
+  default.
+- **`timeout=None` from a caller means "no deadline"**, following the SDK's own
+  convention, and the cascade budget stands down with it. Before, an explicit
+  `None` was silently replaced by the profile default, because the check was
+  `.get("timeout") is None` rather than `"timeout" in request_options`.
+
+**Verification.**
+
+```
+$ .venv/Scripts/python.exe -m pytest -q tests/router --basetemp=.pytest-basetemp-lane-1
+121 passed in 9.03s
+
+$ .venv/Scripts/python.exe -m pytest -q --basetemp=.pytest-basetemp-lane-1
+1540 passed, 10 deselected in 69.73s (0:01:09)
+```
+
+Five new cases: a slow-dripping rung cut off at the call budget and falling
+through on `batch`; the same on `latency`, cut off and then stopped by the
+cascade budget with the rung cooled down; slow model discovery spending the
+same budget as the call, so the rung never reaches a completion at all; an
+explicit `timeout=None` bounding nothing; and a rung with no model still
+skipped rather than failed or timed out.
+
+**Still not fixed, and still not this task's:** `executor/poller.py`'s
+`_run_with_timeout` abandons a timed-out handler thread.

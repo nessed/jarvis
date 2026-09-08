@@ -504,11 +504,15 @@ class ProviderRouter:
 
         # A caller that names its own timeout owns it; the budget below is then
         # measured against the caller's number, not the profile's.
-        call_timeout = request_options.get("timeout")
-        if call_timeout is None:
+        # A caller that names its own timeout owns it, ``None`` included --
+        # that is how a caller says "no deadline", and the wall-clock bound
+        # below stands down with it.
+        if "timeout" in request_options:
+            call_timeout = request_options["timeout"]
+        else:
             call_timeout = _call_timeout_seconds(self._environ, task_profile)
             request_options = {**request_options, "timeout": call_timeout}
-        deadline = self._interaction_deadline(task_profile, float(call_timeout))
+        deadline = None if call_timeout is None else self._interaction_deadline(task_profile, float(call_timeout))
         cascade_started = self._clock()
 
         failures: list[str] = []
@@ -537,19 +541,34 @@ class ProviderRouter:
                     f"stopped at {provider.name}: " + "; ".join(denials)
                 )
             try:
-                client = self._client_for(provider)
-                provider_model = model or await self._model_for(provider, client)
-                if not provider_model:
+                attempt = self._attempt(
+                    provider, task_profile, messages, model=model, request_options=request_options
+                )
+                # The per-call ``timeout=`` above is httpx's, and httpx's
+                # timeouts are per *operation* -- connect, then each read --
+                # not a budget for the whole request. A provider that dribbles
+                # a response out a few bytes at a time never trips a 20 s read
+                # timeout and can run for minutes. Observed 9 Sep 2026 while
+                # measuring something else: a ``latency`` classify call took
+                # **92.3 s** on a tree that already had these deadlines.
+                #
+                # This is the wall clock the profile actually promises. It also
+                # covers ``_model_for``'s discovery round trip, which is inside
+                # the attempt and was otherwise bounded only by the client's
+                # 120 s default.
+                #
+                # ``asyncio.wait_for`` raises the builtin ``TimeoutError``,
+                # which ``_is_transport_failure`` already treats as "this rung
+                # did not answer": the rung cools down and the cascade falls
+                # through, exactly as for a read timeout.
+                if call_timeout is None:
+                    routed = await attempt
+                else:
+                    routed = await asyncio.wait_for(attempt, timeout=float(call_timeout))
+                if routed is None:
                     failures.append(f"{provider.name}: no model configured")
                     continue
-                started = self._clock()
-                response = await client.create_chat_completion(
-                    model=provider_model, messages=messages, **request_options
-                )
-                self._record_latency(provider, task_profile, self._clock() - started)
-                self.health[provider.name].last_status = 200
-                self._record_response_headers(provider, getattr(client, "last_response_headers", {}))
-                return RoutedResult(provider=provider.name, model=provider_model, response=response)
+                return routed
             except Exception as exc:  # SDK exception types intentionally vary by provider.
                 status, headers = _response_metadata(exc)
                 denied = status in DENIAL_STATUSES
@@ -590,6 +609,35 @@ class ProviderRouter:
             # the user can fix, and a 429 is a thing they wait out.
             raise ProviderDenied("all eligible providers failed: " + "; ".join(failures))
         raise NoEligibleProvider("all eligible providers failed: " + "; ".join(failures))
+
+    async def _attempt(
+        self,
+        provider: Provider,
+        task_profile: str,
+        messages: Sequence[Mapping[str, Any]],
+        *,
+        model: str | None,
+        request_options: Mapping[str, Any],
+    ) -> RoutedResult | None:
+        """One rung's whole turn: resolve its model, call it, record what happened.
+
+        ``None`` means the rung could not name a model, which is a skip rather
+        than a failure. Split out of ``route()`` so the wall-clock bound can
+        wrap the model lookup and the completion together -- a rung that spends
+        the budget discovering a model has spent the budget.
+        """
+        client = self._client_for(provider)
+        provider_model = model or await self._model_for(provider, client)
+        if not provider_model:
+            return None
+        started = self._clock()
+        response = await client.create_chat_completion(
+            model=provider_model, messages=messages, **request_options
+        )
+        self._record_latency(provider, task_profile, self._clock() - started)
+        self.health[provider.name].last_status = 200
+        self._record_response_headers(provider, getattr(client, "last_response_headers", {}))
+        return RoutedResult(provider=provider.name, model=provider_model, response=response)
 
     def _interaction_deadline(self, task_profile: str, call_timeout: float) -> float | None:
         """The whole-cascade budget, or ``None`` where there is not one.

@@ -1664,3 +1664,149 @@ def test_rungs_that_fail_instantly_do_not_spend_the_interaction_budget():
 
     assert result.provider == "three"
     assert [name for name, _model in calls] == ["one", "two", "three"]
+
+
+class SlowDripClient(FakeClient):
+    """Answers, eventually, without ever pausing long enough to trip a read timeout.
+
+    This is the shape httpx's per-operation timeouts cannot catch, and the one
+    observed live on 9 Sep 2026 as a 92.3 s ``latency`` classify call: no
+    single read is slow, the whole response is.
+    """
+
+    def __init__(self, provider, outcomes, calls, *, seconds):
+        super().__init__(provider, outcomes, calls)
+        self._seconds = seconds
+
+    async def create_chat_completion(self, *, model, messages, **kwargs):
+        self.calls.append((self.provider, model))
+        await asyncio.sleep(self._seconds)
+        return {"provider": self.provider}
+
+
+class SlowDiscoveryClient(DiscoveringFakeClient):
+    """Spends the whole budget looking up its model, before any completion."""
+
+    def __init__(self, provider, outcomes, calls, models, *, seconds):
+        super().__init__(provider, outcomes, calls, models)
+        self._seconds = seconds
+
+    async def list_chat_models(self):
+        await asyncio.sleep(self._seconds)
+        return await super().list_chat_models()
+
+
+def test_a_slow_dripping_provider_is_cut_off_at_the_call_budget():
+    # httpx's timeouts are per operation, so a response that arrives slowly but
+    # steadily never trips one. This is the wall clock the profile promises.
+    # On `batch`, which has no cascade deadline, so this isolates the per-call
+    # bound from the interaction budget.
+    calls = []
+    slow = SlowDripClient("one", {}, calls, seconds=5)
+    quick = FakeClient("two", {"two": {"provider": "two"}}, calls)
+    router = ProviderRouter(
+        providers(["one", "two"]),
+        environ={
+            "ONE_KEY": "test-key",
+            "TWO_KEY": "test-key",
+            "JARVIS_ROUTER_BATCH_TIMEOUT_SECONDS": "0.05",
+        },
+        client_factory=lambda endpoint, _key: slow if "one" in endpoint else quick,
+    )
+
+    result = asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert result.provider == "two"
+    assert [name for name, _model in calls] == ["one", "two"]
+    assert router.health["one"].cooldown_until > 0
+
+
+def test_a_slow_dripping_latency_call_is_cut_off_and_then_the_budget_stops_it():
+    # The interactive case end to end: the drip is cut at the call budget, the
+    # rung cools down, and the cascade stops rather than spending a second
+    # budget the waiting person does not have.
+    calls = []
+    router = ProviderRouter(
+        providers(["one", "two"]),
+        environ={
+            "ONE_KEY": "test-key",
+            "TWO_KEY": "test-key",
+            "JARVIS_ROUTER_CALL_TIMEOUT_SECONDS": "0.05",
+        },
+        client_factory=lambda endpoint, _key: SlowDripClient(
+            "one" if "one" in endpoint else "two", {}, calls, seconds=5
+        ),
+    )
+
+    with pytest.raises(routing.RouterDeadlineExceeded) as excinfo:
+        asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert [name for name, _model in calls] == ["one"]
+    assert "TimeoutError" in str(excinfo.value)
+    assert router.health["one"].cooldown_until > 0
+
+
+def test_slow_model_discovery_spends_the_same_budget_as_the_call():
+    # Discovery is a second HTTP request in front of the completion, and it was
+    # bounded only by the client's own 120 s default. A rung that spends the
+    # budget finding a model has spent the budget.
+    calls = []
+    mistral = Provider(
+        "mistral", "https://mistral.example/v1", "MISTRAL_KEY", 1, None, ("batch",), discover_chat_model=True
+    )
+    spare = Provider("spare", "https://spare.example/v1", "SPARE_KEY", 2, "spare-model", ("batch",))
+    slow = SlowDiscoveryClient("mistral", {}, calls, ["a-model"], seconds=5)
+    quick = FakeClient("spare", {"spare": {"provider": "spare"}}, calls)
+    router = ProviderRouter(
+        [mistral, spare],
+        environ={
+            "MISTRAL_KEY": "test-key",
+            "SPARE_KEY": "test-key",
+            "JARVIS_ROUTER_BATCH_TIMEOUT_SECONDS": "0.05",
+        },
+        client_factory=lambda endpoint, _key: slow if "mistral" in endpoint else quick,
+    )
+
+    result = asyncio.run(router.route("batch", [{"role": "user", "content": "hi"}]))
+
+    assert result.provider == "spare"
+    # The slow rung never reached a completion at all: discovery ate its budget.
+    assert [name for name, _model in calls] == ["spare"]
+
+
+def test_a_caller_asking_for_no_timeout_gets_no_wall_clock_bound_either():
+    # timeout=None is how a caller says "no deadline", following the SDK's own
+    # convention. The cascade deadline stands down with it rather than cutting
+    # off a call the caller deliberately left unbounded.
+    calls = []
+    slow = SlowDripClient("one", {}, calls, seconds=0.05)
+    router = ProviderRouter(
+        providers(["one"]),
+        environ={"ONE_KEY": "test-key", "JARVIS_ROUTER_CALL_TIMEOUT_SECONDS": "0.001"},
+        client_factory=lambda _endpoint, _key: slow,
+    )
+
+    result = asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}], timeout=None))
+
+    assert result.provider == "one"
+
+
+
+def test_a_rung_with_no_model_is_still_skipped_rather_than_failed():
+    # The skip moved inside _attempt, which now returns None for it. It must
+    # still read as "not this one" and not as a failure or a timeout.
+    calls = []
+    no_model = Provider("one", "https://one.example/v1", "ONE_KEY", 1, None, ("latency",))
+    spare = Provider("two", "https://two.example/v1", "TWO_KEY", 2, "two-model", ("latency",))
+    router = ProviderRouter(
+        [no_model, spare],
+        environ={"ONE_KEY": "test-key", "TWO_KEY": "test-key"},
+        client_factory=lambda endpoint, _key: FakeClient(
+            "one" if "one" in endpoint else "two", {"two": {"provider": "two"}}, calls
+        ),
+    )
+
+    result = asyncio.run(router.route("latency", [{"role": "user", "content": "hi"}]))
+
+    assert result.provider == "two"
+    assert router.health["one"].cooldown_until == 0.0

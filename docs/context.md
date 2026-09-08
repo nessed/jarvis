@@ -8,9 +8,9 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `d7c19ef Give the router a deadline it can actually hit` on `main`, 1 ahead, 0 behind origin.
+**HEAD** `305a2eb Stop paying the same 1.2 seconds on every message` on `main`, 2 ahead, 0 behind origin.
 
-**Working tree:** 19 changed (plus 21 untracked)
+**Working tree:** 10 changed (plus 21 untracked)
 
 ```
   M CLAUDE.md
@@ -18,22 +18,20 @@ the facts in it have stopped being temporary and belong somewhere else.
    M docs/board/QUESTIONS.md
    M docs/board/README.md
    M docs/board/tasks/bus-offbox-packaging.md
-  A  docs/board/tasks/hotpath-quick-wins.md
+  M  docs/board/tasks/router-client-timeouts.md
    M docs/board/tasks/vps-harden-deploy.md
   M  docs/state.md
-  M  executor/conversation/service.py
-  M  memory/embeddings.py
-  M  memory/runtime.py
-  M  tests/executor/test_conversation_service.py
-  ...and 7 more
+  M  router/routing.py
+  M  tests/router/test_routing.py
 ```
 
-**Offline suite:** 1535 passed, 10 deselected in 66.99s (0:01:06) _(recorded 2026-09-09)_
+**Offline suite:** 1540 passed, 10 deselected in 67.76s (0:01:07) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `305a2eb` Stop paying the same 1.2 seconds on every message  _(2026-09-09)_
 - `d7c19ef` Give the router a deadline it can actually hit  _(2026-09-09)_
 - `14cdbd0` Say where the seconds went, instead of guessing  _(2026-09-09)_
 - `9598d37` Pull the reply brain out of the WhatsApp closure  _(2026-09-09)_
@@ -41,7 +39,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `8b90d89` Stop paying a TLS handshake per call, and start the stack in parallel  _(2026-09-04)_
 - `ca8a767` Bring the README back in line with what the code does  _(2026-09-03)_
 - `669b47b` Write this week's handoff  _(2026-09-03)_
-- `ba80f71` Keep the commit gate off the internet  _(2026-09-03)_
 
 <!-- END GENERATED -->
 
