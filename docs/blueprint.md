@@ -209,6 +209,28 @@ language:
 | Error | brief shake/distortion |
 | Finished | quick contraction → idle |
 
+**The circle's palette [ADDED 9 Sep 2026, Ali's call].** One warm amber, on
+near-black. Deliberately *not* cyan: every assistant surface in existence is
+cyan, and the point of this one is that it is his and not a Stark tribute.
+
+| Token | Value | Where |
+|---|---|---|
+| `IDLE_CORE` | `#FFD296` | the lit band itself |
+| `IDLE_GLOW` | `#F08422` | the bloom thrown off it |
+| `GROUND` | `#0A0908` | the near-black behind everything |
+
+The renderer owns the other states' colours; these three are fixed because
+they are what "Jarvis at rest" looks like, and that is the state a person
+sees most.
+
+**The WhatsApp profile picture is this, at this size, in this colour.** Not a
+picture *of* Jarvis — Jarvis idle, which is what it is doing every time the
+avatar is on screen. `tools/render_pfp.py` generates it, so the phone and the
+second monitor cannot drift apart into two different-looking things: change
+the tokens above, re-run the script, and both follow. A ring rather than a
+filled disc, because WhatsApp already crops avatars to a circle and a disc
+inside that reads as a moon rather than as an interface.
+
 The animation must reflect **actual backend agent state**, not play
 arbitrary loops — the runtime exposes a state machine (`IDLE → LISTENING →
 TRANSCRIBING → THINKING → PLANNING → EXECUTING → SPEAKING → IDLE`) and the
