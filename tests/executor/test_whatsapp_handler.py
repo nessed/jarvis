@@ -8,6 +8,7 @@ import pytest
 
 from db.jobs import Job
 from executor.handlers.command_intent import CONVERSATION, CommandVerdict, PendingConfirmation
+from executor.conversation.service import NOT_THE_OWNER_REPLY
 from executor.handlers.whatsapp import (
     SYSTEM_PROMPT,
     VOICE_REPLY_LANGUAGE_NOTE,
@@ -35,6 +36,23 @@ def _job(payload: dict[str, object]) -> Job:
         created_at=now,
         updated_at=now,
     )
+
+
+DEFAULT_SENDER = "15550001111"
+
+
+@pytest.fixture(autouse=True)
+def _the_default_sender_is_the_owner(monkeypatch):
+    """Every payload here comes from DEFAULT_SENDER, so make that the owner.
+
+    The gate is fail-closed, so without this every test in this module would
+    be exercising the generic not-the-owner reply rather than the path it
+    means to test. Set through the environment rather than through the
+    handler's ``owner_id=`` argument on purpose: that is the wiring production
+    uses, and a fixture that bypassed it would leave the wiring untested.
+    ``TestOwnerIdentity`` unsets it again where that is the point.
+    """
+    monkeypatch.setenv("JARVIS_OWNER_WA_ID", DEFAULT_SENDER)
 
 
 def _text_message_payload(
@@ -932,7 +950,12 @@ class TestWhatsAppCommands:
         downstream reads a generic notify descriptor.
         """
         enqueuer, pending, sent = FakeEnqueuer(), FakePendingStore(), []
-        handler = self._handler(_action(), enqueuer=enqueuer, pending=pending, sent=sent)
+        # This message comes from a different number, so that number has to be
+        # the owner for the command to be honoured at all. The point of the
+        # test is unchanged: the descriptor names *this* sender, not a constant.
+        handler = self._handler(
+            _action(), enqueuer=enqueuer, pending=pending, sent=sent, owner_id="923339998888"
+        )
 
         handler(_job(_text_message_payload(text="turn wifi off", sender="923339998888")))
 
@@ -1227,3 +1250,70 @@ class TestReplyLatencyLine:
                 self._handler(complete=boom)(_job(_text_message_payload(message_id="wamid.boom")))
 
         assert self._lines(caplog) == []
+
+
+class TestOwnerIdentity:
+    """A stranger reaching this handler gets nothing back but a flat line."""
+
+    STRANGER = "447700900123"
+
+    def _handler(self, *, sent, enqueuer, memory, **kwargs):
+        defaults = dict(
+            open_memory=lambda: memory,
+            open_seen_messages=FakeSeenStore,
+            open_pending_confirmations=FakePendingStore,
+            classify=lambda text: _action(),
+            enqueue_action=enqueuer,
+            complete=lambda *_: _fake_completion_response("conversational reply"),
+            send_text_message=lambda **kw: sent.append(kw) or "wamid.reply",
+            show_typing_indicator=lambda **_: None,
+            write_memory=True,
+        )
+        defaults.update(kwargs)
+        return build_whatsapp_webhook_handler(**defaults)
+
+    def test_a_stranger_gets_the_flat_line_and_nothing_else_happens(self) -> None:
+        sent, enqueuer, memory = [], FakeEnqueuer(), FakeMemory([])
+        handler = self._handler(sent=sent, enqueuer=enqueuer, memory=memory)
+
+        handler(_job(_text_message_payload(sender=self.STRANGER, text="turn wifi off")))
+
+        assert sent == [{"to": self.STRANGER, "text": NOT_THE_OWNER_REPLY}]
+        assert enqueuer.calls == [], "a stranger must never enqueue a laptop action"
+        assert memory.recall_calls == [], "a stranger must never reach Ali's memory"
+        assert memory.remember_calls == [], "and must never write into it"
+
+    def test_the_owner_is_read_from_the_environment_at_message_time(self, monkeypatch) -> None:
+        # DEFAULT_HANDLERS builds this closure at import, before load_dotenv,
+        # so an owner read at build time would be read from an environment that
+        # does not hold it yet. Build the handler with the wrong owner set,
+        # then set the right one, then send: it must be answered properly.
+        monkeypatch.setenv("JARVIS_OWNER_WA_ID", self.STRANGER)
+        sent, enqueuer, memory = [], FakeEnqueuer(), FakeMemory([])
+        handler = self._handler(sent=sent, enqueuer=enqueuer, memory=memory, handle_commands=False)
+
+        monkeypatch.setenv("JARVIS_OWNER_WA_ID", DEFAULT_SENDER)
+        handler(_job(_text_message_payload(text="hello")))
+
+        assert sent == [{"to": DEFAULT_SENDER, "text": "conversational reply"}]
+
+    def test_an_unset_owner_makes_even_the_real_owner_a_stranger(self, monkeypatch) -> None:
+        monkeypatch.delenv("JARVIS_OWNER_WA_ID", raising=False)
+        sent, enqueuer, memory = [], FakeEnqueuer(), FakeMemory([])
+        handler = self._handler(sent=sent, enqueuer=enqueuer, memory=memory, handle_commands=False)
+
+        handler(_job(_text_message_payload(text="hello")))
+
+        assert sent == [{"to": DEFAULT_SENDER, "text": NOT_THE_OWNER_REPLY}]
+
+    def test_an_explicit_owner_argument_beats_the_environment(self, monkeypatch) -> None:
+        # The seam replay_job's --as-owner uses.
+        monkeypatch.delenv("JARVIS_OWNER_WA_ID", raising=False)
+        sent, enqueuer, memory = [], FakeEnqueuer(), FakeMemory([])
+        handler = self._handler(
+            sent=sent, enqueuer=enqueuer, memory=memory, handle_commands=False, owner_id=DEFAULT_SENDER
+        )
+
+        handler(_job(_text_message_payload(text="hello")))
+
+        assert sent == [{"to": DEFAULT_SENDER, "text": "conversational reply"}]

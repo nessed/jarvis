@@ -291,6 +291,7 @@ def build_replay_handler(
     audio_override: bytes | None = None,
     synthesize: Synthesizer | None = None,
     transcribe: Transcriber | None = None,
+    owner_id: str | None = None,
 ) -> Callable[[Job], None]:
     """Assemble the real WhatsApp handler with only its outbound seams faked.
 
@@ -299,6 +300,13 @@ def build_replay_handler(
     handler *attempted* even when it is being dropped. Turning the handler's
     own flag off would make a dropped write indistinguishable from a handler
     that never tried.
+
+    ``owner_id`` is **not** faked by default. Dedup is reported and then
+    bypassed, because replaying a message that already got a reply is the whole
+    point; the owner check is not the same kind of thing. It is access control,
+    and a diagnostic that silently walks through access control teaches the
+    wrong thing about what production does. ``--as-owner`` is the explicit way
+    to replay a stranger's payload as though it were Ali's.
     """
 
     def open_memory() -> RecordingMemory:
@@ -373,6 +381,7 @@ def build_replay_handler(
         synthesize_voice_reply=synthesize_reply,
         send_voice_note=send_voice,
         write_memory=True,
+        owner_id=owner_id,
     )
 
 
@@ -431,6 +440,21 @@ def _real_memory_opener() -> Any:
     return open_conversation_memory()
 
 
+def _sender_of(payload: Mapping[str, Any]) -> str | None:
+    """The ``from`` field of the payload's first message, or ``None``.
+
+    Only used by ``--as-owner``: it is what the owner check would be comparing
+    against, so replaying with it is replaying as whoever actually sent this.
+    """
+    for entry in payload.get("entry", []) or []:
+        for change in entry.get("changes", []) or []:
+            for message in (change.get("value", {}) or {}).get("messages", []) or []:
+                sender = message.get("from")
+                if isinstance(sender, str) and sender.strip():
+                    return sender.strip()
+    return None
+
+
 def _message_id_of(payload: Mapping[str, Any]) -> str | None:
     from executor.handlers.whatsapp import parse_inbound_message
 
@@ -487,6 +511,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--synthesize",
         action="store_true",
         help="really run Kokoro on a voice reply (default: report the text, skip synthesis)",
+    )
+    parser.add_argument(
+        "--as-owner",
+        action="store_true",
+        help="treat the payload's sender as the owner, so the reply path runs in "
+        "full before JARVIS_OWNER_WA_ID is set (U18)",
     )
     parser.add_argument(
         "--allow-side-effects",
@@ -552,6 +582,7 @@ def run(args: argparse.Namespace, *, job_source: JobSource | None = None) -> int
         audio_override=audio,
         synthesize=_real_synthesizer if args.synthesize else None,
         transcribe=_real_transcriber,
+        owner_id=_sender_of(job.payload) if args.as_owner else None,
     )
     replay(job, handler, trail)
     print(render_trail(trail, respected_dedup=args.respect_dedup))

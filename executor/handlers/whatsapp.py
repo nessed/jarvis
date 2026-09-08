@@ -40,6 +40,7 @@ from executor.conversation.service import (
     VOICE_REPLY_LANGUAGE_NOTE,
     ConversationService,
     LazyMemory,
+    owner_wa_id,
 )
 from executor.handlers.command_intent import (
     CommandVerdict,
@@ -266,6 +267,7 @@ def build_whatsapp_webhook_handler(
     classify: CommandClassifier | None = None,
     enqueue_action: ActionEnqueuer | None = None,
     handle_commands: bool | None = None,
+    owner_id: str | None = None,
 ) -> Callable[[Job], None]:
     """Return a plain ``JobHandler`` closure wiring cue -> service -> send -> remember.
 
@@ -286,6 +288,13 @@ def build_whatsapp_webhook_handler(
     ``1``/``true``/``yes``/``on`` keep writes enabled, so setting it to
     anything else — ``0`` is the documented off switch — turns them off.
     ``recall()`` runs either way.
+
+    ``owner_id`` defaults to ``JARVIS_OWNER_WA_ID``, **read per message rather
+    than here**, for the same reason the Graph token is: ``DEFAULT_HANDLERS``
+    builds this closure at module import, before ``load_dotenv`` has run, so a
+    value read at build time is a value read from an environment that does not
+    hold it yet. A sender who is not the owner gets a fixed generic line, no
+    recall and no action; an unset variable makes that everyone.
     """
 
     def _default_complete(task_profile: str, messages: Sequence[Mapping[str, Any]]) -> RoutedResult:
@@ -377,6 +386,7 @@ def build_whatsapp_webhook_handler(
         *,
         is_voice: bool,
         job_id: str,
+        store_turn: bool,
     ) -> None:
         """Send the reply, dedupe it, and store the turn.
 
@@ -403,7 +413,15 @@ def build_whatsapp_webhook_handler(
         # The reply is already delivered and deduped, so a failure past this
         # point must not fail the job: a retry could not resend it, only repeat
         # the write. Losing one turn is the smaller loss.
-        if not write_memory:
+        #
+        # ``store_turn`` is the owner gate, and it has to be checked *here*
+        # rather than only in the service: this path calls
+        # ``memory.remember_turn`` directly and never goes through
+        # ``ConversationService.remember``, so the service's own gate does not
+        # cover it. Writing is the half that matters most — recall only reads
+        # Ali's memory, while this would put a stranger's words into it, to be
+        # recalled on a later turn as his own remembered context.
+        if not (write_memory and store_turn):
             return
         try:
             with spans.stage("remember"):
@@ -486,7 +504,9 @@ def build_whatsapp_webhook_handler(
                 classify=classifier,
                 open_pending_confirmations=open_pending_confirmations,
                 handle_commands=commands_on,
+                owner_id=owner_id if owner_id is not None else owner_wa_id(),
             )
+            sender_is_owner = service.is_owner(inbound.sender)
             result = service.reply(message_text, user_id=inbound.sender, spoken=is_voice)
             spans.update(result.timings)
 
@@ -496,7 +516,16 @@ def build_whatsapp_webhook_handler(
             else:
                 reply = result.reply
 
-            _deliver(inbound, reply, message_text, memory, spans, is_voice=is_voice, job_id=job.id)
+            _deliver(
+                inbound,
+                reply,
+                message_text,
+                memory,
+                spans,
+                is_voice=is_voice,
+                job_id=job.id,
+                store_turn=sender_is_owner,
+            )
 
         # One line, after the reply is out and the turn is stored, so the
         # numbers cover the whole path the user waited on. Only a job that

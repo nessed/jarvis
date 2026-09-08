@@ -10,12 +10,17 @@ fakes for one interface is how the two suites would quietly drift apart.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import logging
 import threading
 from types import SimpleNamespace
 
 import pytest
 
 from executor.conversation.service import (
+    NOT_THE_OWNER_REPLY,
+    OWNER_ENV,
+    owner_wa_id,
+    warn_once_if_no_owner_is_configured,
     SYSTEM_PROMPT,
     VOICE_REPLY_LANGUAGE_NOTE,
     ActionProposal,
@@ -128,7 +133,13 @@ def _action(**overrides) -> CommandVerdict:
     return CommandVerdict(**base)
 
 
-def _service(*, memory=None, complete=None, classify=None, pending=None, handle_commands=None):
+def _service(
+    *, memory=None, complete=None, classify=None, pending=None, handle_commands=None, owner_id=USER
+):
+    # owner_id defaults to USER because the gate is fail-closed: without an
+    # owner every one of these tests would be exercising the generic
+    # not-the-owner reply instead of the path it means to test. The gate's own
+    # behaviour is TestOwnerIdentity below.
     if handle_commands is None:
         handle_commands = classify is not None or pending is not None
     return ConversationService(
@@ -137,7 +148,108 @@ def _service(*, memory=None, complete=None, classify=None, pending=None, handle_
         classify=classify,
         open_pending_confirmations=(lambda: pending) if pending is not None else None,
         handle_commands=handle_commands,
+        owner_id=owner_id,
     )
+
+
+class TestOwnerIdentity:
+    """The webhook's HMAC proves Meta sent it. It does not prove Ali did."""
+
+    STRANGER = "447700900123"
+
+    def test_the_owner_gets_the_real_path(self) -> None:
+        memory = FakeMemory([FakeFact("The user's dog is named Max")])
+        complete = _completion("Max is a good boy!")
+        service = _service(memory=memory, complete=complete, handle_commands=False, owner_id=USER)
+
+        result = service.reply("How's my dog?", user_id=USER)
+
+        assert result.reply == "Max is a good boy!"
+        assert memory.recall_calls != []
+
+    def test_a_stranger_gets_a_fixed_line_and_touches_nothing(self) -> None:
+        memory = FakeMemory([FakeFact("The user's dog is named Max")])
+        complete = _completion()
+        service = _service(
+            memory=memory,
+            complete=complete,
+            classify=lambda text: _action(),
+            pending=FakePendingStore(),
+            owner_id=USER,
+        )
+
+        result = service.reply("turn wifi off", user_id=self.STRANGER)
+
+        assert result.reply == NOT_THE_OWNER_REPLY
+        assert result.action is None, "a stranger must never propose an action"
+        assert memory.recall_calls == [], "a stranger must never reach Ali's memory"
+        assert complete.calls == [], "a stranger must not even spend a classifier call"
+
+    def test_an_unset_owner_makes_everyone_a_stranger(self) -> None:
+        # Fail closed. The failure this gate prevents is a stranger reaching
+        # private memory and the laptop; a missing config must not be the thing
+        # that opens it.
+        memory = FakeMemory([FakeFact("something")])
+        service = _service(memory=memory, handle_commands=False, owner_id=None)
+
+        result = service.reply("How's my dog?", user_id=USER)
+
+        assert result.reply == NOT_THE_OWNER_REPLY
+        assert memory.recall_calls == []
+
+    def test_a_blank_owner_is_the_same_as_an_unset_one(self) -> None:
+        service = _service(handle_commands=False, owner_id="   ")
+
+        assert service.reply("hello", user_id=USER).reply == NOT_THE_OWNER_REPLY
+
+    def test_the_sender_id_is_compared_exactly(self) -> None:
+        # No prefix matching and no country-code normalisation: nothing that
+        # could make a different number compare equal.
+        service = _service(handle_commands=False, owner_id=USER)
+
+        assert service.reply("hello", user_id=USER + "0").reply == NOT_THE_OWNER_REPLY
+        assert service.reply("hello", user_id="1" + USER).reply == NOT_THE_OWNER_REPLY
+        # Whitespace either side is stripped, so a padded payload still matches.
+        assert service.reply("hello", user_id=f"  {USER} ").reply != NOT_THE_OWNER_REPLY
+
+    def test_a_stranger_never_writes_into_the_owners_memory(self) -> None:
+        # The more important half. Recall only reads; this would write a
+        # stranger's words where a later turn recalls them as Ali's own.
+        memory = FakeMemory()
+        service = _service(memory=memory, handle_commands=False, owner_id=USER)
+
+        service.remember("hello", "hi there", user_id=self.STRANGER)
+        assert memory.remember_calls == []
+
+        service.remember("hello", "hi there", user_id=USER)
+        assert len(memory.remember_calls) == 2
+
+    def test_the_sender_id_is_logged_so_a_stranger_is_visible(self, caplog) -> None:
+        service = _service(handle_commands=False, owner_id=USER)
+
+        with caplog.at_level(logging.INFO, logger="executor.conversation.service"):
+            service.reply("hello", user_id=self.STRANGER)
+
+        assert any(self.STRANGER in record.getMessage() for record in caplog.records)
+
+    def test_an_unset_environment_variable_warns_once_at_startup(self, caplog) -> None:
+        with caplog.at_level(logging.WARNING, logger="executor.conversation.service"):
+            assert warn_once_if_no_owner_is_configured({}) is False
+
+        [record] = caplog.records
+        assert OWNER_ENV in record.getMessage()
+        assert "generic" in record.getMessage()
+
+    def test_a_configured_environment_variable_says_nothing(self, caplog) -> None:
+        with caplog.at_level(logging.WARNING, logger="executor.conversation.service"):
+            assert warn_once_if_no_owner_is_configured({OWNER_ENV: USER}) is True
+
+        assert caplog.records == []
+
+    def test_the_owner_is_read_from_the_environment_and_stripped(self) -> None:
+        assert owner_wa_id({OWNER_ENV: f"  {USER} "}) == USER
+        assert owner_wa_id({OWNER_ENV: "   "}) is None
+        assert owner_wa_id({}) is None
 
 
 class TestConversationalPath:
@@ -387,6 +499,7 @@ class TestCommandPath:
             memory=FakeMemory(),
             complete=complete,
             open_pending_confirmations=FakePendingStore,
+            owner_id=USER,
         )
 
         service.reply("hello there", user_id=USER)
@@ -401,6 +514,7 @@ class TestCommandPath:
             memory=FakeMemory(),
             complete=complete,
             open_pending_confirmations=FakePendingStore,
+            owner_id=USER,
         )
 
         service.reply("x" * (MAX_COMMAND_LENGTH + 1), user_id=USER)

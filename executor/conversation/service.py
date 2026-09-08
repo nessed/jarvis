@@ -28,6 +28,7 @@ job id it gets back.
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -72,6 +73,40 @@ VOICE_REPLY_LANGUAGE_NOTE = (
 
 _CONTEXT_OPEN = "<remembered_context>"
 _CONTEXT_CLOSE = "</remembered_context>"
+
+#: The WhatsApp sender id this assistant belongs to. The value is Ali's to
+#: paste (U18); only the key name lives in the repository.
+OWNER_ENV = "JARVIS_OWNER_WA_ID"
+
+#: What a sender who is not the owner gets. Deliberately dull and identical
+#: for "you are not the owner" and "no owner is configured": a stranger
+#: learning which of those it is learns something about the deployment, and
+#: neither answer is any use to them.
+NOT_THE_OWNER_REPLY = "Sorry, I can't help with that."
+
+
+def owner_wa_id(environ: Mapping[str, str] | None = None) -> str | None:
+    """The configured owner's sender id, or ``None`` if there isn't one."""
+    settings = os.environ if environ is None else environ
+    return (settings.get(OWNER_ENV) or "").strip() or None
+
+
+def warn_once_if_no_owner_is_configured(environ: Mapping[str, str] | None = None) -> bool:
+    """Say out loud, at worker startup, that every reply will be generic.
+
+    Returns whether an owner is configured, so a caller can log and branch in
+    one call. Fail-closed is the right default and a silent one is not: a bot
+    that answers "Sorry, I can't help with that." to its own owner and says
+    nothing about why is indistinguishable from a broken model.
+    """
+    owner = owner_wa_id(environ)
+    if owner is None:
+        logger.warning(
+            "%s is unset, so every sender is treated as not the owner: replies are "
+            "generic, memory is never recalled, and no action is enqueued",
+            OWNER_ENV,
+        )
+    return owner is not None
 
 
 class Memory(Protocol):
@@ -182,9 +217,13 @@ class ConversationService:
         open_pending_confirmations: PendingStoreOpener | None = None,
         handle_commands: bool = True,
         system_prompt: str = SYSTEM_PROMPT,
+        owner_id: str | None = None,
     ) -> None:
         if handle_commands and open_pending_confirmations is None:
             raise ValueError("handle_commands=True needs open_pending_confirmations")
+        # ``None`` means no owner is configured, and that is *not* "anyone".
+        # See ``_is_owner``.
+        self._owner_id = (owner_id or "").strip() or None
         self._memory = memory
         self._complete = complete
         self._classify = classify or (lambda text: classify_command(text, complete=complete))
@@ -201,6 +240,17 @@ class ConversationService:
         into "I don't know".
         """
         timings: dict[str, float] = {}
+
+        # First, before anything reads memory or proposes an action. Astra
+        # §5.1: the webhook's HMAC proves the request came from Meta. It says
+        # nothing about *who messaged the bot*, and this reply path recalls
+        # private memory and enqueues actions on Ali's laptop. What keeps that
+        # from being live-exploitable today is the Meta app sitting in dev mode
+        # with one allow-listed number -- which is exactly the control that
+        # disappears the day the app is published.
+        if not self.is_owner(user_id):
+            logger.info("message from a non-owner sender answered generically (sender=%s)", user_id)
+            return ReplyResult(reply=NOT_THE_OWNER_REPLY, timings=timings)
 
         if not self._handle_commands:
             started = perf_counter()
@@ -220,9 +270,30 @@ class ConversationService:
         return ReplyResult(reply=extract_reply_text(result.response), timings=timings)
 
     def remember(self, message: str, reply: str, *, user_id: str) -> None:
-        """Persist both halves of the turn. Called after the reply is out."""
+        """Persist both halves of the turn. Called after the reply is out.
+
+        Gated on the owner for the same reason ``reply`` is, and it is the more
+        important half: recall only *reads* Ali's memory, while this would
+        write a stranger's words into it, where a later turn would recall them
+        as his own remembered context.
+        """
+        if not self.is_owner(user_id):
+            return
         self._memory.remember_turn(message, user_id=user_id, role="user")
         self._memory.remember_turn(reply, user_id=user_id, role="assistant")
+
+    def is_owner(self, user_id: str) -> bool:
+        """Whether this sender is the one person this assistant answers to.
+
+        Fail-closed twice over. An unset ``JARVIS_OWNER_WA_ID`` makes *every*
+        sender a non-owner rather than every sender the owner: the failure this
+        gate exists to prevent is a stranger reaching private memory and the
+        laptop, and a missing config must not be the thing that opens it. And
+        the comparison is exact on the stripped string -- no prefix matching,
+        no normalisation of country codes, nothing that could make a different
+        number compare equal.
+        """
+        return self._owner_id is not None and user_id.strip() == self._owner_id
 
     # -- internals ---------------------------------------------------------
 

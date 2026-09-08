@@ -130,9 +130,16 @@ def build(
     *,
     reply: str = "hi back",
     already_replied: bool = False,
+    owner_id: str | None = "923001234567",
     **kwargs: Any,
 ):
-    """The handler under test, with every outward seam faked."""
+    """The handler under test, with every outward seam faked.
+
+    ``owner_id`` matches the sender in ``text_payload``: the owner gate is
+    fail-closed, so without it every replay here would stop at the generic
+    not-the-owner reply instead of exercising the path under test. The gate's
+    own behaviour in this tool is the ``--as-owner`` tests below.
+    """
     calls: list[tuple[str, Any]] = []
 
     def completion(task_profile: str, messages: Any) -> FakeRouted:
@@ -144,6 +151,7 @@ def build(
         open_real_memory=lambda: memory,
         real_dedup_verdict=lambda: already_replied,
         completion=completion,
+        owner_id=owner_id,
         **kwargs,
     )
     return handler, calls

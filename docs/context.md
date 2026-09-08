@@ -8,29 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `305a2eb Stop paying the same 1.2 seconds on every message` on `main`, 2 ahead, 0 behind origin.
+**HEAD** `75034ac Make the router's deadline an actual wall clock` on `main`, 3 ahead, 0 behind origin.
 
-**Working tree:** 10 changed (plus 21 untracked)
+**Working tree:** 19 changed (plus 20 untracked)
 
 ```
-  M CLAUDE.md
+  M  .env.example
+   M CLAUDE.md
    M docs/board/HANDOFF.md
    M docs/board/QUESTIONS.md
    M docs/board/README.md
    M docs/board/tasks/bus-offbox-packaging.md
-  M  docs/board/tasks/router-client-timeouts.md
+  A  docs/board/tasks/owner-identity-check.md
    M docs/board/tasks/vps-harden-deploy.md
   M  docs/state.md
-  M  router/routing.py
-  M  tests/router/test_routing.py
+  M  executor/conversation/__init__.py
+  M  executor/conversation/service.py
+  M  executor/handlers/whatsapp.py
+  ...and 7 more
 ```
 
-**Offline suite:** 1540 passed, 10 deselected in 67.76s (0:01:07) _(recorded 2026-09-09)_
+**Offline suite:** 1556 passed, 10 deselected in 60.56s (0:01:00) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `75034ac` Make the router's deadline an actual wall clock  _(2026-09-09)_
 - `305a2eb` Stop paying the same 1.2 seconds on every message  _(2026-09-09)_
 - `d7c19ef` Give the router a deadline it can actually hit  _(2026-09-09)_
 - `14cdbd0` Say where the seconds went, instead of guessing  _(2026-09-09)_
@@ -38,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `ddfd7ed` Measure the reply path instead of adding up its parts  _(2026-09-05)_
 - `8b90d89` Stop paying a TLS handshake per call, and start the stack in parallel  _(2026-09-04)_
 - `ca8a767` Bring the README back in line with what the code does  _(2026-09-03)_
-- `669b47b` Write this week's handoff  _(2026-09-03)_
 
 <!-- END GENERATED -->
 

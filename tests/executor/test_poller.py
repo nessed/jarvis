@@ -468,6 +468,31 @@ def test_cli_only_the_background_worker_seeds_the_distill_chain(monkeypatch):
     assert seeded == [True]
 
 
+def test_cli_warns_at_startup_when_no_owner_is_configured(monkeypatch, caplog) -> None:
+    # An operator should learn that every reply will be generic from the
+    # startup log, not by messaging the bot and being brushed off by their own
+    # assistant.
+    monkeypatch.delenv("JARVIS_OWNER_WA_ID", raising=False)
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "poll_once", lambda **_: None)
+    monkeypatch.setattr(poller, "_warm_tts_in_background", lambda: None)
+
+    assert poller.main(["--once", "--kind", "whatsapp_webhook", "--no-heartbeat"]) == 0
+
+    assert any("JARVIS_OWNER_WA_ID" in record.getMessage() for record in caplog.records)
+
+
+def test_cli_says_nothing_about_the_owner_when_one_is_configured(monkeypatch, caplog) -> None:
+    monkeypatch.setenv("JARVIS_OWNER_WA_ID", "15550001111")
+    monkeypatch.setattr(poller, "load_dotenv", lambda: None)
+    monkeypatch.setattr(poller, "poll_once", lambda **_: None)
+    monkeypatch.setattr(poller, "_warm_tts_in_background", lambda: None)
+
+    assert poller.main(["--once", "--kind", "whatsapp_webhook", "--no-heartbeat"]) == 0
+
+    assert not any("JARVIS_OWNER_WA_ID" in record.getMessage() for record in caplog.records)
+
+
 def test_cli_logs_transient_errors_by_type_then_keeps_polling(monkeypatch, caplog):
     attempts = 0
     sleeps: list[float] = []
@@ -486,7 +511,9 @@ def test_cli_logs_transient_errors_by_type_then_keeps_polling(monkeypatch, caplo
 
     assert poller.main(["--interval", "0.25"]) == 0
     assert sleeps == [0.25]
-    assert [record.getMessage() for record in caplog.records] == [
+    # This module's own records: main() also warns about an unset
+    # JARVIS_OWNER_WA_ID, which is not what this test is about.
+    assert [r.getMessage() for r in caplog.records if r.name == "executor.poller"] == [
         "executor poll failed (RuntimeError)"
     ]
     assert "sensitive job payload" not in caplog.text

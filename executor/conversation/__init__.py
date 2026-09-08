@@ -13,6 +13,8 @@ from executor.conversation.service import (
     ActionProposal,
     ConversationService,
     LazyMemory,
+    NOT_THE_OWNER_REPLY,
+    OWNER_ENV,
     ReplyResult,
 )
 
@@ -22,5 +24,7 @@ __all__ = [
     "ActionProposal",
     "ConversationService",
     "LazyMemory",
+    "NOT_THE_OWNER_REPLY",
+    "OWNER_ENV",
     "ReplyResult",
 ]

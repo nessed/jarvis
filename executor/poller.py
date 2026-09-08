@@ -50,6 +50,7 @@ from executor.handlers.outcome import (
     WHATSAPP_OUTCOME_JOB_KIND,
     build_whatsapp_outcome_handler,
 )
+from executor.conversation.service import warn_once_if_no_owner_is_configured
 from executor.system_control.handler import build_system_control_handler
 from router import RoutedResult, current_shared_router, route
 from router.health_report import material_state, write as write_provider_health
@@ -440,6 +441,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     seeds_distill = kinds is None or DISTILL_JOB_KIND in kinds
     if not args.once and seeds_distill:
         _seed_distill_chain()
+    if kinds is None or WHATSAPP_JOB_KIND in kinds:
+        # Here rather than at handler-build time, and for the same reason
+        # assert_timeouts_ordered() is here: DEFAULT_HANDLERS is built at
+        # import, before load_dotenv. An operator should learn that every
+        # reply will be generic from the startup log, not by messaging the bot
+        # and getting a brush-off from their own assistant. Unlike the TTS
+        # warm-up below, this is not skipped for ``--once``: a diagnostic run
+        # that quietly answers every message generically is exactly the
+        # confusion this line exists to prevent.
+        warn_once_if_no_owner_is_configured()
     if not args.once and (kinds is None or WHATSAPP_JOB_KIND in kinds):
         _warm_tts_in_background()
 
