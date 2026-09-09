@@ -197,3 +197,15 @@ Never. Log entry per pass; status stays `ready`.
     task files. This pass trusted today's five Logs (written this session,
     each citing its own commands) and left the pre-9-Sep ones as the 2/3
     Sep passes already verified them.
+
+- **9 Sep 2026, quick follow-up (CORE, lane-1):** the loop's stop hook
+  correctly flagged this task as still `ready` (it always is — recurring,
+  never `done`) minutes after the pass above. Nothing landed in between
+  except `live-routing-probe` itself and its handoff commit, both already
+  accounted for in that pass's own Log. Checked anyway rather than
+  no-op'd: no new `blocked-on` references `live-routing-probe`, no new
+  `QUESTIONS.md` answers, no new stale gate. One real gap found:
+  `docs/context.md`'s "Now" section still described `live-routing-probe`
+  as newly-unblocked rather than done-and-verified — updated. Nothing else
+  to fix; this Log entry is the evidence a real pass ran rather than a
+  rubber stamp.
