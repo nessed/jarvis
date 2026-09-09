@@ -1,0 +1,32 @@
+# Server-side "brain" dependencies: what bus/, router/, db/, memory/ and the
+# handful of executor/ modules the conversation service imports actually need.
+#
+# Every version here is copied verbatim from the repo's requirements.txt. If
+# one drifts, the container runs a different library from the tests that vetted
+# it, which is the whole failure mode this comment exists to prevent. Diff the
+# two when either changes.
+#
+# Deliberately absent: torch, torchaudio, kokoro, openwakeword, pipecat-ai,
+# silero-vad, sounddevice, soundfile, onnxruntime, pyflp, psutil, pywinauto,
+# comtypes, psycopg. All executor-side (voice, FLP, desktop control, DB
+# migrations) and none importable from anything this image copies --
+# tests/infra/test_image_contents.py asserts it by grepping the copied files.
+#
+# mem0ai is here even though extraction never runs on this box (JARVIS_DISTILL=0
+# in compose.yaml, and no worker container exists to run distill_memory at
+# all): memory/__init__.py imports memory.mem0_wrapper unconditionally, so
+# `import memory.conversation` needs mem0ai importable regardless of whether
+# its extraction path is ever called. Its own base install (no 'llms' or
+# 'vector-stores' extras) pulls qdrant-client and sqlalchemy, not torch --
+# checked with `python -c "import importlib.metadata as m; print(m.requires('mem0ai'))"`.
+# The `ollama` package itself is not needed: OllamaEmbeddingProvider
+# (memory/embeddings.py) talks to Ollama over plain httpx, not that client.
+
+fastapi==0.116.1
+uvicorn==0.35.0
+httpx==0.28.1
+supabase==2.18.1
+openai==1.99.9
+python-dotenv==1.1.1
+sqlite-vec==0.1.9
+mem0ai==2.0.19

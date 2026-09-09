@@ -1,12 +1,16 @@
-# The bus, on the VPS. One service.
+# The brain, on the VPS: the bus plus a local Ollama sidecar for embeddings.
 #
 # Build context is the repo root, so run it from there:
 #     docker compose -f infra/docker/compose.yaml up -d --build
 #
-# Deliberately one service and not three. The blueprint's Phase 4 sketch has a
-# web UI container as well; that stays unbuilt on purpose -- see PARKED.md's
-# ambient-circle entry, where "no UI until UI is necessary" is the standing
-# decision. The executor is not here either: it is the laptop, by definition.
+# Deliberately two services and not three or four. The blueprint's Phase 4
+# sketch has a web UI container as well; that stays unbuilt on purpose --
+# see PARKED.md's ambient-circle entry, where "no UI until UI is necessary"
+# is the standing decision. The executor's action/voice/distill workers are
+# not here either: they are the laptop, by definition (CLAUDE.md #3,
+# extraction stays on infrastructure Ali owns and administers, and today
+# that is specifically the laptop for the extraction half even though the
+# rented box now qualifies for recall/remember).
 
 services:
   bus:
@@ -15,6 +19,11 @@ services:
       dockerfile: infra/docker/Dockerfile
     image: jarvis-bus:latest
     restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
 
     # Bound to loopback, not 0.0.0.0. cloudflared runs on the host and reaches
     # it here; nothing on the internet can, even if ufw were ever flushed.
@@ -30,12 +39,34 @@ services:
 
     environment:
       JARVIS_WEBHOOK_DEDUP_DB_PATH: /app/state/webhook.seen-messages.db
+      MEMORY_DB_PATH: /app/state/memory.db
+      # The compose network's own DNS name for the sidecar below --
+      # memory/embeddings.py's loopback guard accepts this one literal
+      # hostname alongside localhost/127.0.0.1/::1, because both containers
+      # live on the same rented box (CLAUDE.md #3, amended 8 Sep 2026): see
+      # validate_ollama_loopback_url and COMPOSE_OLLAMA_SIDECAR_HOSTNAME.
+      OLLAMA_BASE_URL: http://ollama:11434
+      # Same model the laptop's Ollama has pulled -- the embedding dimension
+      # is baked into every stored vector, so the box and the laptop must
+      # agree on it if a memory database is ever copied between them.
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text
+      # No extraction on this box. There is no worker container here to run
+      # distill_memory even without this line -- the bus is the only
+      # process -- but it is set explicitly rather than left implicit, so a
+      # later container added to this file does not silently inherit
+      # extraction by omission. Extraction stays on the laptop (Q17's
+      # performance note: Mem0's 8B-model extraction is the reason the
+      # laptop suffers, and moving it to a 2 GB box makes that worse, not
+      # better).
+      JARVIS_DISTILL: "0"
 
     volumes:
-      # Meta redelivers a webhook it did not get a fast 200 for. Losing this
-      # file on redeploy makes every redelivery look new, which means duplicate
-      # replies to messages already answered.
-      - bus-state:/app/state
+      # Meta redelivers a webhook it did not get a fast 200 for, and
+      # conversation-inline-reply means recall/remember now happen in this
+      # process too. Losing this on redeploy means either a redelivery looks
+      # new (duplicate replies) or Ali's memory resets, not a crash either
+      # way, but both are worth surviving a `docker compose up --build`.
+      - brain-state:/app/state
 
     healthcheck:
       # /status is bearer-protected, so an unauthenticated probe gets a 401 --
@@ -53,5 +84,46 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  ollama:
+    # Official image, CPU only -- the 2 GB box has no GPU to pass through,
+    # and embedding a short turn is not where this stack's latency lives
+    # (recall p50 is 0.10s on the laptop's own CPU-bound Ollama; see
+    # docs/state.md's "Per-message opening cost" row).
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    # Not published to the host or the internet -- only `bus` on this
+    # compose network can reach it, at the DNS name `ollama` the loopback
+    # guard above allows.
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # One-shot: pulls nomic-embed-text into the `ollama-models` volume, then
+  # exits. `docker compose up` starts it alongside the other two; it is not
+  # `restart: unless-stopped` because there is nothing to keep restarting --
+  # a model already pulled makes `ollama pull` a fast no-op, not an error,
+  # so re-running this on every `up` is safe and cheap after the first time.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["ollama", "pull", "nomic-embed-text"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+
 volumes:
-  bus-state:
+  brain-state:
+  ollama-models:

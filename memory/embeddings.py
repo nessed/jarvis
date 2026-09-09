@@ -1,7 +1,10 @@
 """Local embedding providers used by the personal-memory subsystem.
 
-This module deliberately talks only to a loopback Ollama endpoint.  It has no
-provider keys and should never send personal-memory text to a hosted service.
+This module deliberately talks only to a loopback Ollama endpoint, or to the
+named `ollama` sidecar on the same docker-compose network as the bus
+(``bus-offbox-packaging``) -- both are a host Ali controls, never a
+third-party provider. It has no provider keys and should never send
+personal-memory text off that host.
 """
 
 from __future__ import annotations
@@ -117,14 +120,29 @@ class OllamaEmbeddingConfig:
         validate_ollama_loopback_url(self.base_url)
 
 
+#: The docker-compose sidecar's DNS name (``bus-offbox-packaging``,
+#: ``infra/docker/compose.yaml``). Not a loopback address by TCP/IP's
+#: definition, but CLAUDE.md #3 was amended 8 Sep 2026 (Q17) from "the
+#: laptop" to "a host Ali controls": inside that compose network the only
+#: two containers are the bus and this sidecar, both on the same rented box,
+#: so a request to this name never crosses onto infrastructure Ali does not
+#: administer. It is a fixed literal, not a pattern -- accepting arbitrary
+#: hostnames here would turn a memory-safety check into one string away from
+#: a hosted provider.
+COMPOSE_OLLAMA_SIDECAR_HOSTNAME = "ollama"
+
+_ALLOWED_OLLAMA_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1", COMPOSE_OLLAMA_SIDECAR_HOSTNAME})
+
+
 def validate_ollama_loopback_url(base_url: str) -> None:
-    """Reject every non-loopback Ollama endpoint before memory text can leave disk."""
+    """Reject every Ollama endpoint except loopback or the compose sidecar."""
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise EmbeddingError("OLLAMA_BASE_URL must be a valid local HTTP URL.", cause="invalid_url")
-    if parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}:
+    if parsed.hostname.lower() not in _ALLOWED_OLLAMA_HOSTNAMES:
         raise EmbeddingError(
-            "Ollama embeddings must use a loopback URL so memory text stays local.",
+            "Ollama embeddings must use a loopback URL, or the compose 'ollama' "
+            "sidecar, so memory text never leaves a host Ali controls.",
             cause="non_loopback_url",
         )
 

@@ -25,16 +25,33 @@
 *.mem0-history.db
 .executor-heartbeat
 
-# Executor-side and laptop-only. Nothing the bus imports lives here.
+# Executor-side and laptop-only. Nothing the bus/router/db/memory image
+# copies lives here.
 voice/
-executor/
 ingest/
-memory/
 tools/
 tests/
 docs/
 infra/terraform/
 scripts/
+
+# executor/ and memory/ are no longer blanket-excluded: bus-offbox-packaging
+# (9 Sep 2026) made the Dockerfile COPY memory/ in full (recall/remember run
+# in the bus process now) and a named handful of executor/ modules
+# (conversation/, handlers/command_intent.py, handlers/outcome.py,
+# handlers/whatsapp.py, latency.py, notify.py, __init__.py) -- an ignored
+# parent directory here would make those COPY lines fail outright, since the
+# daemon never receives an ignored path as build context at all. What stays
+# excluded is what the Dockerfile never names and never should: the modules
+# with a heavy or platform-specific import surface, kept out even though the
+# Dockerfile's own selective COPY already would not touch them, because two
+# guards catch what one guard misses.
+executor/flp/
+executor/system_control/
+executor/app_automation/
+executor/heartbeat.py
+executor/poller.py
+executor/handlers/distill.py
 
 # Build artifacts and logs
 *.log

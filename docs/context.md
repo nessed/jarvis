@@ -8,32 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `0ff9639 Write the idle circle's colour down, and make it reproducible` on `main`, in sync with origin.
+**HEAD** `ca34952 Answer text messages right away; only voice still queues` on `main`, 1 ahead, 0 behind origin.
 
-**Working tree:** 13 changed (plus 18 untracked)
+**Working tree:** 19 changed (plus 18 untracked)
 
 ```
-  M CLAUDE.md
-  A  bus/conversation_runner.py
-  M  bus/main.py
+  M  .dockerignore
+   M CLAUDE.md
    M docs/board/README.md
-   M docs/board/tasks/bus-offbox-packaging.md
-  A  docs/board/tasks/conversation-inline-reply.md
+  M  docs/board/tasks/bus-offbox-packaging.md
    M docs/board/tasks/vps-harden-deploy.md
-  M  docs/context.md
   M  docs/state.md
-  M  executor/latency.py
-  A  tests/bus/test_conversation_runner.py
-  M  tests/executor/test_latency.py
-  ...and 1 more
+  M  docs/tasks/phase4-runbook.md
+  M  infra/README.md
+  M  infra/docker/Dockerfile
+  M  infra/docker/compose.yaml
+  A  infra/docker/requirements-brain.txt
+  D  infra/docker/requirements-bus.txt
+  ...and 7 more
 ```
 
-**Offline suite:** 1620 passed, 10 deselected in 97.05s (0:01:37) _(recorded 2026-09-09)_
+**Offline suite:** 1661 passed, 10 deselected in 56.51s _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `ca34952` Answer text messages right away; only voice still queues  _(2026-09-09)_
 - `0ff9639` Write the idle circle's colour down, and make it reproducible  _(2026-09-09)_
 - `7f97f58` Stop JARVIS answering like it has amnesia  _(2026-09-09)_
 - `ff1098e` Mark U18 done: the owner id is set  _(2026-09-09)_
@@ -41,7 +42,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `ca95383` Ask both questions in one call, behind a flag that stays off  _(2026-09-09)_
 - `673636a` Check who is actually messaging before answering them  _(2026-09-09)_
 - `75034ac` Make the router's deadline an actual wall clock  _(2026-09-09)_
-- `305a2eb` Stop paying the same 1.2 seconds on every message  _(2026-09-09)_
 
 <!-- END GENERATED -->
 

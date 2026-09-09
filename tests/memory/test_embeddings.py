@@ -45,6 +45,22 @@ def test_config_requires_explicit_model_and_stays_loopback():
     assert config.model == "chosen-by-user"
 
 
+def test_the_compose_ollama_sidecar_hostname_is_accepted_as_this_host():
+    """bus-offbox-packaging: the bus and this sidecar share one compose
+    network on the same rented box, so this is not a third-party host."""
+    config = OllamaEmbeddingConfig(model="a-local-model", base_url="http://ollama:11434")
+
+    assert config.base_url == "http://ollama:11434"
+
+
+def test_a_lookalike_hostname_is_still_rejected():
+    """``ollama`` is a fixed literal, not a suffix or prefix match."""
+    with pytest.raises(EmbeddingError, match="loopback"):
+        OllamaEmbeddingConfig(model="a-local-model", base_url="http://ollama.example.com:11434")
+    with pytest.raises(EmbeddingError, match="loopback"):
+        OllamaEmbeddingConfig(model="a-local-model", base_url="http://not-ollama:11434")
+
+
 def test_embed_supports_legacy_single_vector_response():
     provider = OllamaEmbeddingProvider(
         OllamaEmbeddingConfig(model="chosen"),
