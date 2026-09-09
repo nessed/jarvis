@@ -750,5 +750,17 @@ Provider rungs / Open blockers sections, dated 8-9 Sep); these four are
   the choice — recorded on `hosted-urdu-tts`'s blocked task already — just a
   drift-prevention note so the blueprint doesn't read as though Kokoro
   covers both languages.
+- **§"Phase 4 — Always-on split" (4.1-4.4) still walks through the Oracle
+  path, not the AWS one this section already answered** (D1: "AWS via your
+  brother... taken as the working answer"). Found by `board-audit`,
+  9 Sep 2026, after `bus-offbox-packaging` made the drift concrete: 4.1
+  says "Oracle signup"; 4.2 says "one A1 instance at exactly 2 OCPU/12GB"
+  and "Deploy bus + router **+ web UI** as containers" — no Terraform
+  module or A1 sizing applies to AWS, and the web UI container is the
+  standing "no UI until necessary" decision (`PARKED.md`), not something
+  either box runs. This isn't a new decision, just this section's text not
+  yet reflecting the one already made — flagged rather than rewritten,
+  since blueprint edits stop and ask first regardless of how settled the
+  underlying decision is.
 
 **Answer:** _pending_

@@ -209,3 +209,18 @@ Never. Log entry per pass; status stays `ready`.
   as newly-unblocked rather than done-and-verified — updated. Nothing else
   to fix; this Log entry is the evidence a real pass ran rather than a
   rubber stamp.
+
+- **9 Sep 2026, second follow-up (CORE, lane-1):** the stop hook fired
+  again, expected — board-audit stays `ready` by design, and the hook has
+  no way to know two passes just ran. Did the thing the first full pass
+  skipped, rather than re-checking what changed in the last two minutes: a
+  real, narrow blueprint-vs-tree spot check. **Found:**
+  `docs/blueprint.md`'s "Phase 4 — Always-on split" (4.1-4.4) still walks
+  through Oracle signup, Terraform, exact A1 sizing, and a
+  bus+router+web-UI container deploy — none of which matches the tree
+  after today's `bus-offbox-packaging` (AWS, amd64, no web UI,
+  bus+router+memory+conversation-service). Not a new decision — Q17.2-D1
+  already answered AWS — just text that never caught up. Appended to
+  Q17.3 rather than edited directly, same as this session's other three
+  blueprint deltas. `tools/context_status.py --check` passes; nothing
+  else changed this pass.

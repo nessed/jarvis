@@ -8,22 +8,23 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `ff59739 Write this evening's handoff` on `main`, 7 ahead, 0 behind origin.
+**HEAD** `0aebf8b Board audit: quick follow-up, context.md was one commit behind` on `main`, 8 ahead, 0 behind origin.
 
 **Working tree:** 3 changed (plus 15 untracked)
 
 ```
   M CLAUDE.md
+  M  docs/board/QUESTIONS.md
   M  docs/board/tasks/board-audit.md
-  M  docs/context.md
 ```
 
-**Offline suite:** 1679 passed, 16 deselected in 86.18s (0:01:26) _(recorded 2026-09-09)_
+**Offline suite:** 1679 passed, 16 deselected in 88.89s (0:01:28) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `0aebf8b` Board audit: quick follow-up, context.md was one commit behind  _(2026-09-09)_
 - `ff59739` Write this evening's handoff  _(2026-09-09)_
 - `0f9df38` Prove the new provider IDs actually serve, live  _(2026-09-09)_
 - `bb68c9a` Board audit: unblock live-routing-probe, narrow three stale gates  _(2026-09-09)_
@@ -31,7 +32,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `138f07f` Absorb Fable review's 8 Sep provider/speech fact corrections  _(2026-09-09)_
 - `9e47b7e` Package the brain, not just the inbox, for the rented x86 box  _(2026-09-09)_
 - `ca34952` Answer text messages right away; only voice still queues  _(2026-09-09)_
-- `0ff9639` Write the idle circle's colour down, and make it reproducible  _(2026-09-09)_
 
 <!-- END GENERATED -->
 
