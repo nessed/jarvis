@@ -8,27 +8,24 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `8738c4a Measure Qwen3-4B/llama.cpp against llama3.1:8b for local extraction` on `main`, 4 ahead, 0 behind origin.
+**HEAD** `bb68c9a Board audit: unblock live-routing-probe, narrow three stale gates` on `main`, 5 ahead, 0 behind origin.
 
-**Working tree:** 8 changed (plus 15 untracked)
+**Working tree:** 4 changed (plus 15 untracked)
 
 ```
   M CLAUDE.md
-  M  docs/board/README.md
-  M  docs/board/tasks/board-audit.md
-  M  docs/board/tasks/cloud-routine-wire.md
-  A  docs/board/tasks/live-latency-acceptance.md
   M  docs/board/tasks/live-routing-probe.md
-  M  docs/board/tasks/vps-harden-deploy.md
-  M  docs/context.md
+  M  docs/state.md
+  A  tests/live/test_routing.py
 ```
 
-**Offline suite:** 1679 passed, 10 deselected in 81.36s (0:01:21) _(recorded 2026-09-09)_
+**Offline suite:** 1679 passed, 16 deselected in 86.17s (0:01:26) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `bb68c9a` Board audit: unblock live-routing-probe, narrow three stale gates  _(2026-09-09)_
 - `8738c4a` Measure Qwen3-4B/llama.cpp against llama3.1:8b for local extraction  _(2026-09-09)_
 - `138f07f` Absorb Fable review's 8 Sep provider/speech fact corrections  _(2026-09-09)_
 - `9e47b7e` Package the brain, not just the inbox, for the rented x86 box  _(2026-09-09)_
@@ -36,7 +33,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `0ff9639` Write the idle circle's colour down, and make it reproducible  _(2026-09-09)_
 - `7f97f58` Stop JARVIS answering like it has amnesia  _(2026-09-09)_
 - `ff1098e` Mark U18 done: the owner id is set  _(2026-09-09)_
-- `5108034` Write this week's handoff  _(2026-09-09)_
 
 <!-- END GENERATED -->
 

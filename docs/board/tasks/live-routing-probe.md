@@ -1,6 +1,6 @@
 ---
 id: live-routing-probe
-status: ready
+status: done
 lane: AUTO
 priority: 2
 phase: 0
@@ -72,4 +72,71 @@ with today's date and the probe on disk to re-run any time.
 
 ## Log
 
-_(empty)_
+### 2026-09-09 — done (lane-1)
+
+**Gate re-verified before starting** (see the Gate section above, updated
+in the same pass by `board-audit`): U2 is genuinely done, checked by key
+name only.
+
+**`tests/live/test_routing.py`** (new, 6 tests). Each test builds its own
+single-provider `ProviderRouter(providers=[...])` rather than going
+through `shared_router()`, so a working `groq` cannot mask a broken
+`gemini` by sorting first — the point is "does this rung work", not "which
+rung does the full ladder pick today."
+
+**All four "should serve" rungs served, real HTTP 200s:**
+
+```
+$ .venv/Scripts/python.exe -m pytest -q -m live tests/live/test_routing.py -s
+groq: model='openai/gpt-oss-120b' status=200 reply='pong'
+  rate-limit headers: {'x-ratelimit-limit-requests': '1000', 'x-ratelimit-limit-tokens': '8000', ...}
+gemini: model='gemini-3.6-flash' status=200 reply='pong'
+openrouter: model='openrouter/free' status=200 reply='pong'
+deepseek: model='deepseek-v4-flash' status=200 reply='pong'
+mistral: denied (NoEligibleProvider: ... HTTP 429), last_status=429
+6 passed in 14.70s
+```
+
+Groq's rate-limit headers match the documented free-lane caps exactly
+(`docs/state.md`'s Provider rungs prose: 30 RPM/1K RPD/8K TPM) — the
+`-limit-requests: 1000` and `-limit-tokens: 8000` headers are the same
+numbers read back from the provider itself, not just from a pricing page.
+
+**Cerebras confirmed excluded for the right reason, not by accident.**
+`unroutable_reasons()["cerebras"]` names a model-resolution reason;
+asserted it is *not* "no API key" (which is present) — proves the blank
+`CEREBRAS_DEFAULT_MODEL` (Q6) is what excludes it, matching the deliberate
+design rather than a coincidental misconfiguration.
+
+**Mistral denied — HTTP 429, not the previously-reported 403 (U9).** Ran
+three times across this session's debugging; 429 every time. Reported as
+uncertain in `state.md` rather than as "the failure mode changed": this
+session made several calls to Mistral's API while debugging the test
+itself, and a self-inflicted rate limit from repeated testing is at least
+as likely an explanation as an account-side change. U9 stays open.
+
+**Real bug found while writing the probe, not in the router itself.**
+Groq's `openai/gpt-oss-120b` and DeepSeek's `deepseek-v4-flash` are both
+reasoning models: with `max_tokens=5` or `20`, both returned
+`finish_reason: "length"` and an **empty** `content` — the budget was
+spent entirely on the `reasoning` field before either model reached its
+actual answer. Looks exactly like a broken rung from the response shape
+alone; only `finish_reason` gives it away. `max_tokens=300` was enough for
+both to complete. `docs/state.md` names this explicitly so the next
+person who writes a tiny-budget live probe against either model doesn't
+lose the same twenty minutes.
+
+**`docs/state.md` updated** with a new `live-routing-probe` row (all of
+the above, dated) directly under the Provider ladder row it verifies.
+
+**Full offline suite** (the live tests are `-m live`-marked and excluded
+by default; confirms nothing broke and the new file is correctly
+deselected):
+
+```
+$ .venv/Scripts/python.exe -m pytest -q --basetemp=.pytest-basetemp-lane-1
+1679 passed, 16 deselected in 66.13s (0:01:06)
+```
+
+10 -> 16 deselected: the 6 new `-m live` tests, correctly excluded from
+the default run.
