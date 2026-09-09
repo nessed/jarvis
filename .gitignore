@@ -13,6 +13,13 @@ memory.db-*
 *.seen-messages.db
 *.pending-actions.db
 
+# Downloaded, prebuilt third-party binaries (extraction-model-spike, 9 Sep
+# 2026): the llama.cpp Vulkan/CPU build fetched from its GitHub releases page
+# for the local-extraction-model comparison. Never built from source here,
+# never committed -- re-fetch with the exact release tag cited in
+# docs/tasks/extraction-model-spike-report.md if this needs reproducing.
+.tools/
+
 # Written by whichever executor process routes; read by the bus for /status.
 .provider-health.json
 

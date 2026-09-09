@@ -8,25 +8,29 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `9e47b7e Package the brain, not just the inbox, for the rented x86 box` on `main`, 2 ahead, 0 behind origin.
+**HEAD** `138f07f Absorb Fable review's 8 Sep provider/speech fact corrections` on `main`, 3 ahead, 0 behind origin.
 
-**Working tree:** 6 changed (plus 17 untracked)
+**Working tree:** 9 changed (plus 16 untracked)
 
 ```
-  M CLAUDE.md
-  M  docs/board/QUESTIONS.md
+  M  .gitignore
+   M CLAUDE.md
    M docs/board/README.md
-  A  docs/board/tasks/state-facts-refresh.md
+  A  docs/board/tasks/extraction-model-spike.md
    M docs/board/tasks/vps-harden-deploy.md
   M  docs/state.md
+  A  docs/tasks/extraction-model-spike-report.md
+  A  tests/tools/test_bench_extraction.py
+  A  tools/bench_extraction.py
 ```
 
-**Offline suite:** 1661 passed, 10 deselected in 55.74s _(recorded 2026-09-09)_
+**Offline suite:** 1679 passed, 10 deselected in 84.74s (0:01:24) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `138f07f` Absorb Fable review's 8 Sep provider/speech fact corrections  _(2026-09-09)_
 - `9e47b7e` Package the brain, not just the inbox, for the rented x86 box  _(2026-09-09)_
 - `ca34952` Answer text messages right away; only voice still queues  _(2026-09-09)_
 - `0ff9639` Write the idle circle's colour down, and make it reproducible  _(2026-09-09)_
@@ -34,7 +38,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `ff1098e` Mark U18 done: the owner id is set  _(2026-09-09)_
 - `5108034` Write this week's handoff  _(2026-09-09)_
 - `ca95383` Ask both questions in one call, behind a flag that stays off  _(2026-09-09)_
-- `673636a` Check who is actually messaging before answering them  _(2026-09-09)_
 
 <!-- END GENERATED -->
 

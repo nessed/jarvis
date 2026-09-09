@@ -234,9 +234,14 @@ review §3 — corrections, not proposals, same precedent as Q10a):
 - **Local fact extraction**: Ollama cannot see this laptop's Radeon 860M on
   Windows (upstream bug #14562), so `llama3.1:8b` is CPU-only here, and
   Llama 3.x does not list Urdu among its trained languages anyway.
-  Qwen3-4B-Instruct-2507 on llama.cpp with Vulkan and JSON-schema grammar is
-  the credible local alternative — `extraction-model-spike` is the task that
-  produces the numbers, not this row.
+  **Measured 9 Sep 2026, and it is not the win expected**: `llama3.1:8b` on
+  CPU via Ollama beat Qwen3-4B-Instruct-2507 on llama.cpp+Vulkan at every
+  chunk size tested, and the candidate hit a real bug along the way —
+  Qwen3's chat template forces a `<think>` prefix that deadlocks
+  JSON-schema-grammar decoding through both `llama-server` and `llama-cli`'s
+  chat mode (a raw-completion workaround exists). No model switch made.
+  Full numbers, the bug, and what wasn't tried:
+  `docs/tasks/extraction-model-spike-report.md`.
 
 ## Open blockers
 
