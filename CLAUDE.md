@@ -36,9 +36,14 @@ opening them as an optional first step.
 
 1. Secrets are never printed, echoed, logged, committed, or requested.
 2. No personal corpus is read or ingested without explicit opt-in.
-3. Memory extraction and embeddings are loopback-only and fail closed. No
-   hosted fallback — NIM is geo-blocked from Pakistan and Gemini's free tier
-   may train on prompts; neither may see private content.
+3. Memory extraction and embeddings run only on infrastructure Ali owns and
+   administers — the laptop, or a rented server he controls — reached over
+   loopback on that host, and fail closed. Never a third-party model
+   provider, including ones marketed as zero-retention: a contractual
+   promise not to retain is weaker than private content never leaving his
+   own machines. NIM is geo-blocked from Pakistan and Gemini's free tier may
+   train on prompts; neither may see private content. (Amended 8 Sep 2026,
+   Q17: "loopback-only" widened from "the laptop" to "a host Ali controls".)
 4. No silent model or embedding-dimension drift.
 5. Every completion claim cites the command that produced it and its output. A
    subagent that returns nothing is a failed verification, not a result.
