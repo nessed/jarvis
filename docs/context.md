@@ -8,32 +8,26 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `ca34952 Answer text messages right away; only voice still queues` on `main`, 1 ahead, 0 behind origin.
+**HEAD** `9e47b7e Package the brain, not just the inbox, for the rented x86 box` on `main`, 2 ahead, 0 behind origin.
 
-**Working tree:** 19 changed (plus 18 untracked)
+**Working tree:** 6 changed (plus 17 untracked)
 
 ```
-  M  .dockerignore
-   M CLAUDE.md
+  M CLAUDE.md
+  M  docs/board/QUESTIONS.md
    M docs/board/README.md
-  M  docs/board/tasks/bus-offbox-packaging.md
+  A  docs/board/tasks/state-facts-refresh.md
    M docs/board/tasks/vps-harden-deploy.md
   M  docs/state.md
-  M  docs/tasks/phase4-runbook.md
-  M  infra/README.md
-  M  infra/docker/Dockerfile
-  M  infra/docker/compose.yaml
-  A  infra/docker/requirements-brain.txt
-  D  infra/docker/requirements-bus.txt
-  ...and 7 more
 ```
 
-**Offline suite:** 1661 passed, 10 deselected in 56.51s _(recorded 2026-09-09)_
+**Offline suite:** 1661 passed, 10 deselected in 55.74s _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `9e47b7e` Package the brain, not just the inbox, for the rented x86 box  _(2026-09-09)_
 - `ca34952` Answer text messages right away; only voice still queues  _(2026-09-09)_
 - `0ff9639` Write the idle circle's colour down, and make it reproducible  _(2026-09-09)_
 - `7f97f58` Stop JARVIS answering like it has amnesia  _(2026-09-09)_
@@ -41,7 +35,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `5108034` Write this week's handoff  _(2026-09-09)_
 - `ca95383` Ask both questions in one call, behind a flag that stays off  _(2026-09-09)_
 - `673636a` Check who is actually messaging before answering them  _(2026-09-09)_
-- `75034ac` Make the router's deadline an actual wall clock  _(2026-09-09)_
 
 <!-- END GENERATED -->
 

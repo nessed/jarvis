@@ -718,4 +718,37 @@ safe to answer now.** 17.1's two questions are the actual bottleneck: every
 other line in both reviews' plans (hosting size, budget, what week 1
 delivers) branches on where memory ends up living.
 
+**Blueprint deltas from `state-facts-refresh` (9 Sep 2026), for one blanket
+yes** — `docs/state.md` absorbed everything correctable there (see its
+Provider rungs / Open blockers sections, dated 8-9 Sep); these four are
+`docs/blueprint.md`'s own text and are not edited without your say-so per
+`agents.md`:
+
+- **Cerebras context is 65K free / 131K paid, not 8K.** Blueprint §"Cerebras"
+  and the routing-pattern paragraph both hardcode 8K (lines naming it: the
+  Cerebras section's own text, and "Cerebras is 8K context, Groq TPM is
+  tight" under DeepSeek's overflow-valve note). Both should read 65K/131K
+  free, higher paid.
+- **NVIDIA NIM should drop out of blueprint §1 and the Phase 4 API-key list
+  as a routing/VPS candidate.** Confirmed geo-blocked from Pakistan (+92
+  absent from phone verification) plus a per-org 404 gate on the API — this
+  is stronger than the existing "geo-blocked from Pakistan for private
+  memory content" carve-out (CLAUDE.md #3, blueprint 1.3), which only
+  excludes it from *extraction*. It cannot be reached at all, from here, for
+  anything.
+- **Hetzner CX22 (~PKR 1,240/mo) is not currently a real fallback.** Every
+  cost-optimised plan shows "currently unavailable" as of 8 Sep 2026. The
+  blueprint names it as the paid fallback in three places (the routing
+  section, the Oracle-signup step, and the budget line). Superseded anyway
+  by U17's AWS answer, but the text should stop pointing at a plan that
+  cannot currently be bought.
+- **Kokoro as "the voice" is unchanged as a decision** (Ali picked it by
+  ear, 29 Aug 2026) **but the blueprint should say plainly that it has no
+  Urdu voice**, rather than leaving that discoverable only from
+  `docs/state.md`'s WhatsApp voice wiring row and
+  `executor/conversation/service.py`'s own comment. Not a request to revisit
+  the choice — recorded on `hosted-urdu-tts`'s blocked task already — just a
+  drift-prevention note so the blueprint doesn't read as though Kokoro
+  covers both languages.
+
 **Answer:** _pending_

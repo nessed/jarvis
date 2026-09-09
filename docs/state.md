@@ -73,7 +73,7 @@ Phases 4 and 5 have not started.
 | Local speech-to-text | **Working on the NPU.** `amd/whisper.cpp` built with `-DWHISPER_VITISAI=ON`, Whisper large-v3, running on this laptop's XDNA NPU — independently re-verified by CORE, not just reported: `VITISAI = 1`, `whisper_init_state: Vitis AI model loaded`, `whisper_vitisai_encode: ... completed`, `XRT build version: 2.21.0`, correct transcript. A `WHISPER_USE_VITISAI` build **aborts** if the encoder graph will not load, so there is no silent CPU fallback to mistake for success. NPU encoder is **12.4x faster than CPU** (87.5s -> 7.1s per pass); whole-clip CPU-only 186.8s vs 32.4s. `voice/try_stt.py` records and transcribes in one command (`--language`, `--compare`). ~2.9x real time unoptimised; most of that is model reload per invocation. **Measured with the server resident, 4 Sep 2026: 11.2-17.6 s for a 7.6 s clip (`en`), 13.8 s (`ur`), at 53-89 % CPU across all 8 cores** — the NPU runs only the encoder, the 32-layer decoder runs on the CPU (`no GPU found` in `whisper-server.out.log`), and that is the laptop lag Ali reports. Which Whisper answers, and where, is **Q15**; `stt-latency-decision` is gated on it. `whisper-server` (keeps the model resident, avoiding that reload) is now wired via `voice/whisper/server_client.py` — see "WhatsApp voice wiring" below. **Language default: forced Urdu (`ur`), decided 30 Aug 2026.** Ali confirmed he code-switches Urdu/English mid-sentence, so `DEFAULT_WHISPER_LANGUAGE` in `voice/config.py` was changed from `auto` to `ur` — `auto` was silently dropping the Urdu half of mixed clips, which is worse than `-l ur`'s degraded pure-English case. See `docs/history/voice-urdu-language-detection.md` for the tradeoff data; the retry-heuristic alternative sketched there was not built |
 | Text encoding on this machine | **State an encoding explicitly whenever a transcript crosses a process or terminal boundary.** The locale codec here is cp1252 and cannot represent Urdu or Arabic script. This bit twice on 29 Aug 2026 in the same hour: `subprocess.run(text=True)` raised `UnicodeDecodeError` on a *successful* Urdu transcription and reported `(nothing recognised)`, and after that was fixed `print()` raised `UnicodeEncodeError` on the recovered text. Both runners now pass `encoding="utf-8", errors="replace"`; `voice/try_stt.py` reconfigures stdout/stderr. A bug of this shape looks exactly like model failure and cost a wrong conclusion about Urdu quality before it was found. **Now regression-pinned on both halves, 1 Sep 2026.** The write half is asserted against a real `cp1252` `TextIOWrapper` (with a control test proving an unreconfigured stream genuinely still raises); the read half against a real `sys.executable -c` child emitting UTF-8 Urdu bytes through `LocalWhisperBackend._run`, plus a direct assertion on the `encoding`/`errors` kwargs that every other test in `tests/voice/test_local_backend.py` bypassed via its `FakeRunner`. The pins were verified to bite, not just to pass: reverting the `reconfigure(...)` line reproduced the original `UnicodeEncodeError` in 3 tests |
 | Bus logging | uvicorn's access log redacts the verify token, matching **both** `hub.verify_token` and `hub_verify_token`. A live Meta handshake carried both spellings and only the dotted one was caught, so the value reached `tools/bus.out.log` in plaintext. Logs are gitignored, so it was never committed. `hub[._]challenge` is deliberately left alone: a public nonce, not a credential |
-| Cloud STT fallback | **Live-verified 2 Sep 2026** (Q8 = A). `voice/stt_fallback.py` — voice owns a small Groq client (`whisper-large-v3-turbo`, `JARVIS_GROQ_STT_MODEL` overrides because Groq retires IDs on weeks of notice); the provider router is untouched and stays chat-completions-only. Local NPU first, always, because it is the only path where a voice note never leaves the machine. The fallback fires when the local tier is *unavailable* — `/health` silent, or accepted-then-failed — and **never** because a transcript came back empty: an empty transcript is the correct result for a silent clip, and re-running it in the cloud would be double-transcription plus audio sent off the laptop for a message with no words in it. One clip, at most one backend. Both failing raises `SttFallbackError` naming each tier, which is louder than what it replaced — a dead whisper-server used to read as a blank transcript and a spoken message got silence back. Every transition logs at INFO, so "did it quietly send my voice to a third party" is answerable from a log. `JARVIS_STT_CLOUD_FALLBACK=0` restores the old silent behaviour. 24 offline tests. Live: with whisper-server genuinely down, a Kokoro-synthesised OGG/Opus clip decoded through the handler's own `to_transcribable_wav` came back from `api.groq.com` as `Testing the cloud speech fallback for JARVIS.` — word-perfect. **Open, and Ali's:** the same clip under the production `ur` language hint came back as garbage. That is `voice/config.py`'s documented trade (pure-English degrades under forced Urdu) on a clip that misrepresents how he speaks, so the default was left alone; U11 asks for one real code-switched note to settle it |
+| Cloud STT fallback | **Live-verified 2 Sep 2026** (Q8 = A). `voice/stt_fallback.py` — voice owns a small Groq client (`whisper-large-v3-turbo`, `JARVIS_GROQ_STT_MODEL` overrides because Groq retires IDs on weeks of notice); the provider router is untouched and stays chat-completions-only. **Limits, verified 8 Sep 2026**: 20 RPM, 2K RPD, 28,800 audio-seconds/day free; $0.04/hr paid; cannot stream. Local NPU first, always, because it is the only path where a voice note never leaves the machine. The fallback fires when the local tier is *unavailable* — `/health` silent, or accepted-then-failed — and **never** because a transcript came back empty: an empty transcript is the correct result for a silent clip, and re-running it in the cloud would be double-transcription plus audio sent off the laptop for a message with no words in it. One clip, at most one backend. Both failing raises `SttFallbackError` naming each tier, which is louder than what it replaced — a dead whisper-server used to read as a blank transcript and a spoken message got silence back. Every transition logs at INFO, so "did it quietly send my voice to a third party" is answerable from a log. `JARVIS_STT_CLOUD_FALLBACK=0` restores the old silent behaviour. 24 offline tests. Live: with whisper-server genuinely down, a Kokoro-synthesised OGG/Opus clip decoded through the handler's own `to_transcribable_wav` came back from `api.groq.com` as `Testing the cloud speech fallback for JARVIS.` — word-perfect. **Open, and Ali's:** the same clip under the production `ur` language hint came back as garbage. That is `voice/config.py`'s documented trade (pure-English degrades under forced Urdu) on a clip that misrepresents how he speaks, so the default was left alone; U11 asks for one real code-switched note to settle it |
 | WhatsApp voice wiring | **Live-verified, 30 Aug 2026.** An inbound voice note gets a spoken reply, not silence: `executor/handlers/whatsapp.py` downloads it (`WhatsAppClient.download_media()`, Meta's id-then-URL two-step), decodes OGG/Opus to 16 kHz mono PCM WAV (`voice/audio.py`, linear-interpolation resample if the source isn't already 16 kHz), transcribes it (`voice/whisper/server_client.py` against a warm `whisper-server`, language forced to `ur`), routes the transcript through the same recall/route pipeline a text message uses, and replies with a synthesised **English** voice note — Kokoro has no Urdu voice, so a voice reply's system prompt carries an explicit English-only instruction that a text reply's does not. A blank transcript is a silent no-op, same as an empty-body text message. `tools/start_jarvis.py` spawns `whisper-server.exe` as an **optional** managed process (`Supervisor.spawn(..., optional=True)`): its death or a missing NPU build degrades to text-only, it no longer takes bus/tunnel/workers down with it. Two bugs (wrong binary, a fatal-instead-of-optional child death) surfaced and were fixed on the first live pass: `docs/history/voice-whatsapp-live-verification.md`. Every seam is dependency-injected and covered with fakes for the offline suite |
 | Router cooldown ledger | **Process-lifetime since 2 Sep 2026** (Q10c). `router.shared_router()` builds one `ProviderRouter` per process on first use, behind a lock, and `route()` uses it. Before that, `route()` built a router per call: every call re-read the manifest and started from a blank `health` map, so a provider that had just returned 429 with a `retry-after` was retried on the very next message — the cooldown died with the router that recorded it. Not persisted to disk, deliberately: a file would tell a fresh process to keep avoiding a provider that recovered hours ago. `current_shared_router()` asks whether one exists without building one; `reset_shared_router()` is the test seam. **Live-verified**: two real `route()` calls in one process, a 429 + `retry-after: 60` recorded between them via the same `_record_cooldown` the real 429 branch calls, and call 2 went to a genuinely different provider over real HTTP (`openrouter/free` → `mistral/codestral-2508`) with the cooled rung gone from the eligible order |
 | Router denial surfacing (401/402/403) | **Built 2 Sep 2026**, closing blueprint §3.3's clause: "A rung that returns 401/402/403 enters cooldown and surfaces the denial. It does not silently fall through to paid work." Three things changed. **(1)** The cooldown carve-out was literally `provider.name == "mistral"`, so every other provider's auth denial cooled down nothing and every subsequent job re-probed a key that could not work; it now applies to all of them. **(2)** 401/403 no longer abort the cascade — they cool down and fall through like 429/402/5xx, which *gains* a live reply where one used to be lost. **(3)** The new part: a denial recorded during a request bars the cascade from crossing into a rung marked `paid_overflow` or `capped`; at that boundary it raises `ProviderDenied` instead, naming the denying rung. Raising **is** the surfacing — inside one cascade there is no other channel, because a request cannot both continue onto the paid rung and have surfaced the denial that preceded it. The bar is **per request, not sticky**: the cooldown ledger already handles repetition, and a persistent bar would let one bad key disable paid overflow indefinitely. `emergency=True` may still cross it, per §3.3's adjacent bullet that urgency promotes a paid rung "explicitly and per-job" — a caller's flag is the opposite of silent. `ProviderDenied` subclasses `NoEligibleProvider`, and nothing upstream catches that type specially (`executor/poller.py` catches bare `Exception`), so retry/dead-letter behaviour is unchanged. The reading was settled before the control flow changed: `docs/consults/2026-09-02-router-denial-surfacing-reading/` (verdict B, confidence high). The other half of "surfaces" was already there — `/status` carries `last_status` per provider. **Known behaviour change:** a 402 on a free rung no longer reaches `deepseek`. Narrow in practice, since `deepseek` is peak-gated and `claude_api` is `emergency_only`. **Not built:** a `denied: true` flag on `/status`, which would say it in words rather than leaving a reader to know that 402 is a denial; `last_status` meets the task's bar without it |
@@ -109,12 +109,14 @@ the block is how a reader judges its age.
 
 <!-- BEGIN GENERATED: tools/provider_status.py. Do not edit by hand. -->
 
-_Generated by `tools/provider_status.py` on 2026-09-02._
+_Generated by `tools/provider_status.py` on 2026-09-09._
 
 **Routable**
 
 | Rung | Cost class | State |
 |---|---|---|
+| `groq` | free | never verified — no request has reached it in this reporting window |
+| `gemini` | free | never verified — no request has reached it in this reporting window |
 | `openrouter` | free | never verified — no request has reached it in this reporting window |
 | `mistral` | free | never verified — no request has reached it in this reporting window |
 | `deepseek` | paid | never verified — no request has reached it in this reporting window |
@@ -123,12 +125,10 @@ _Generated by `tools/provider_status.py` on 2026-09-02._
 
 | Rung | Cost class | Reason | As of |
 |---|---|---|---|
-| `groq` | free | no model: its default_model placeholder is unset in .env | 2026-09-02 |
-| `cerebras` | trial | no model: its default_model placeholder is unset in .env | 2026-09-02 |
-| `nvidia_nim` | free | no API key in NVIDIA_API_KEY | 2026-09-02 |
-| `gemini` | free | no model: its default_model placeholder is unset in .env | 2026-09-02 |
-| `claude_max` | paid | not a router target | 2026-09-02 |
-| `claude_api` | paid | no endpoint configured | 2026-09-02 |
+| `cerebras` | trial | no model: its default_model placeholder is unset in .env | 2026-09-09 |
+| `nvidia_nim` | free | no API key in NVIDIA_API_KEY | 2026-09-09 |
+| `claude_max` | paid | not a router target | 2026-09-09 |
+| `claude_api` | paid | no endpoint configured | 2026-09-09 |
 
 <!-- END GENERATED: tools/provider_status.py -->
 
@@ -169,6 +169,74 @@ any snapshot:
 - **Cerebras authenticates and returns `402 payment_required` on chat.** Its
   open free tier became a one-time $5 credit in mid-2026, which is why its
   cost class is `trial` rather than `free`.
+
+**More facts verified 8 Sep 2026** (`state-facts-refresh`, absorbing Fable's
+review §3 — corrections, not proposals, same precedent as Q10a):
+
+- **Groq gpt-oss-120b free lane**: 30 RPM, 1K RPD, 8K TPM, 200K TPD; ~476
+  tok/s, TTFT 0.73s (secondary source). Groq's own Llama rungs have been dead
+  since 16 Aug 2026 — this is the replacement, not an addition.
+- **Cerebras context is 65K free / 131K paid, not 8K** — the blueprint's own
+  8K figure is wrong (delta appended to `QUESTIONS.md` Q17.3 for Ali's
+  sign-off; not hand-edited there directly).
+- **Gemini**: free-tier numeric limits are unpublished (~20 RPD reported on
+  3.8 Flash); free-tier content is used to improve products with human
+  review, but the **paid tier explicitly does not train**. Paid 2.5
+  Flash-Lite: $0.10/$0.40 per M tokens, TTFT 0.29-0.38s.
+- **OpenRouter**: 50 RPD free; a one-time $10 credit lifts it to 1,000 RPD
+  *permanently* (this is **U19**'s payoff). DeepSeek V4-Flash via OpenRouter
+  is cheaper than direct ($0.05/$0.16) and sidesteps the Pakistani-card
+  problem on DeepSeek's own checkout.
+- **DeepSeek V4-Flash has thinking on by default** — the pricing and peak
+  windows this repo already tracked are otherwise confirmed exactly.
+- **Claude**: the weekly-limit promo runs to 13 Sep 2026, then a permanent
+  +25% from 14 Sep (secondary source). `claude -p` remains on the
+  subscription (support article unchanged). Claude Code Remote Control is a
+  human UI over a session already running on the laptop — not scriptable, no
+  webhook, laptop must stay on; **not** an always-on primitive. Cloud
+  Routines' HTTP trigger (`POST /v1/claude_code/routines/{id}/fire`, bearer
+  token) runs on Anthropic's infra and **bills the Max subscription**;
+  whether it needs a GitHub repo and the per-plan daily cap are still
+  unknown. Codex (`codex exec`) works headless on plan auth, included in
+  ChatGPT plans, with no HTTP trigger for cloud tasks.
+- **Zero-data-retention hosted inference**: Groq (contractual no-training,
+  no retention by default, self-serve ZDR toggle) and Fireworks (ZDR
+  default) are the two that qualify. Anthropic's API trains on nothing but
+  retains 30 days and gates ZDR behind sales; Gemini's free tier and
+  DeepSeek direct are disqualified outright. None of this changes
+  CLAUDE.md #3 — extraction/embeddings still never leave a host Ali
+  controls, ZDR or not.
+- **Hosting fallbacks, re-priced**: Oracle Always Free's 2 OCPU/12 GB is
+  confirmed, but instances idle-reclaimed after 7 days under 20% CPU/network/
+  memory utilization at p95 — a quiet webhook box can trip this, which is
+  one more reason U17 moved the plan to AWS. Hetzner CX22 (~PKR 1,240/mo,
+  the blueprint's named fallback) shows "currently unavailable" on every
+  cost-optimised plan as of 8 Sep — not a real fallback today (delta also
+  appended to Q17.3). AWS Lightsail's $5/mo tier is 2 vCPU/1 GB/40 GB
+  (verified separately from the $10-12/mo 2 GB plan U17 actually asks for);
+  its free tier is now $200 of credits over 6 months, then the account
+  closes unless converted. Fly.io: $2.02/mo (256 MB) or $3.32/mo (512 MB),
+  no free tier. Cloudflare Durable Objects are now on the **free** plan
+  (SQLite-backed, 100k req/day) if that's ever relevant to the state feed.
+- **Speech vendor menu for Urdu** (feeds `hosted-urdu-tts` and
+  `extraction-model-spike`, not yet built against): every 2026 open ASR
+  model (Parakeet v3, Qwen3-ASR, Voxtral) omits Urdu the same way Kokoro
+  omits it for TTS; Faster-Whisper paths are all large-v3-turbo, and AMD's
+  NPU turbo cache swap is one file (4 decoder layers vs 32). For hosted STT
+  with Urdu and streaming: only Deepgram Nova-3 (Urdu, $0.0048/min, $200
+  free credit) and Speechmatics — no vendor supports Urdu/English
+  code-switching in one stream. For hosted TTS with Urdu: Inworld TTS-2
+  (<100ms, from $5/M chars), Cartesia Sonic, Azure Neural (**only `ur-PK`
+  voices**: UzmaNeural, AsadNeural), Gemini TTS; ElevenLabs Flash and
+  Deepgram Aura have no Urdu at all. Realtime speech-to-speech with Urdu:
+  only Gemini Live ($0.005/min in, $0.018/min out, auto language
+  switching) — OpenAI's Realtime API publishes no language list.
+- **Local fact extraction**: Ollama cannot see this laptop's Radeon 860M on
+  Windows (upstream bug #14562), so `llama3.1:8b` is CPU-only here, and
+  Llama 3.x does not list Urdu among its trained languages anyway.
+  Qwen3-4B-Instruct-2507 on llama.cpp with Vulkan and JSON-schema grammar is
+  the credible local alternative — `extraction-model-spike` is the task that
+  produces the numbers, not this row.
 
 ## Open blockers
 
