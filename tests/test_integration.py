@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
@@ -149,6 +150,147 @@ def test_webhook_with_no_extractable_message_ids_still_enqueues_unchanged() -> N
     assert response.json() == {"accepted": True, "job_id": "job-1"}
     assert jobs.enqueued == [("whatsapp_webhook", {"entry": [{"id": "event-1"}]})]
     assert dedup.seen == set()
+
+
+def _text_webhook_payload(*, sender: str = "15550001111", text: str = "hi", message_id: str = "wamid.text-1") -> bytes:
+    return json.dumps(
+        {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {"from": sender, "id": message_id, "type": "text", "text": {"body": text}}
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    ).encode()
+
+
+class TestInlineTextReply:
+    """A text message answers in-process instead of enqueueing a job -- see
+    ``bus/conversation_runner.py`` and ``conversation-inline-reply``."""
+
+    def test_a_text_message_schedules_the_inline_task_instead_of_enqueueing(self) -> None:
+        secret = "meta-test-secret"
+        jobs = FakeJobs()
+        answered: list = []
+        body = _text_webhook_payload()
+        client = TestClient(
+            create_app(
+                jobs=jobs,
+                meta_app_secret=secret,
+                meta_verify_token="verify-test-token",
+                bearer_token="bus-test-token",
+                open_webhook_dedup=lambda: FakeSeenWebhookStore(),
+                answer_inline=lambda inbound: answered.append(inbound),
+            )
+        )
+
+        response = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _signature(secret, body)})
+
+        assert response.status_code == 200
+        assert response.json() == {"accepted": True}
+        assert jobs.enqueued == []
+        assert len(answered) == 1
+        assert answered[0].sender == "15550001111"
+        assert answered[0].text == "hi"
+
+    def test_a_redelivered_text_message_is_deduped_before_scheduling_the_task(self) -> None:
+        secret = "meta-test-secret"
+        jobs = FakeJobs()
+        answered: list = []
+        dedup = FakeSeenWebhookStore()
+        body = _text_webhook_payload(message_id="wamid.text-dup")
+        client = TestClient(
+            create_app(
+                jobs=jobs,
+                meta_app_secret=secret,
+                meta_verify_token="verify-test-token",
+                bearer_token="bus-test-token",
+                open_webhook_dedup=lambda: dedup,
+                answer_inline=lambda inbound: answered.append(inbound),
+            )
+        )
+
+        first = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _signature(secret, body)})
+        second = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _signature(secret, body)})
+
+        assert first.json() == {"accepted": True}
+        assert second.json() == {"accepted": True, "duplicate": True}
+        assert len(answered) == 1
+
+    def test_a_voice_note_still_enqueues_instead_of_answering_inline(self) -> None:
+        secret = "meta-test-secret"
+        jobs = FakeJobs()
+        answered: list = []
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "from": "15550001111",
+                                        "id": "wamid.voice-1",
+                                        "type": "audio",
+                                        "audio": {"id": "media-1"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        body = json.dumps(payload).encode()
+        client = TestClient(
+            create_app(
+                jobs=jobs,
+                meta_app_secret=secret,
+                meta_verify_token="verify-test-token",
+                bearer_token="bus-test-token",
+                open_webhook_dedup=lambda: FakeSeenWebhookStore(),
+                answer_inline=lambda inbound: answered.append(inbound),
+            )
+        )
+
+        response = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _signature(secret, body)})
+
+        assert response.status_code == 200
+        assert response.json() == {"accepted": True, "job_id": "job-1"}
+        assert jobs.enqueued == [("whatsapp_webhook", payload)]
+        assert answered == []
+
+    def test_inline_reply_disabled_falls_back_to_enqueueing_text_too(self, monkeypatch) -> None:
+        monkeypatch.setenv("JARVIS_INLINE_REPLY", "0")
+        secret = "meta-test-secret"
+        jobs = FakeJobs()
+        answered: list = []
+        body = _text_webhook_payload(message_id="wamid.text-flagged-off")
+        client = TestClient(
+            create_app(
+                jobs=jobs,
+                meta_app_secret=secret,
+                meta_verify_token="verify-test-token",
+                bearer_token="bus-test-token",
+                open_webhook_dedup=lambda: FakeSeenWebhookStore(),
+                answer_inline=lambda inbound: answered.append(inbound),
+            )
+        )
+
+        response = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _signature(secret, body)})
+
+        assert response.status_code == 200
+        assert response.json() == {"accepted": True, "job_id": "job-1"}
+        assert len(jobs.enqueued) == 1
+        assert answered == []
 
 
 def test_status_is_bearer_protected_and_reports_integrated_shape() -> None:

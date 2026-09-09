@@ -8,25 +8,33 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `7f97f58 Stop JARVIS answering like it has amnesia` on `main`, in sync with origin.
+**HEAD** `0ff9639 Write the idle circle's colour down, and make it reproducible` on `main`, in sync with origin.
 
-**Working tree:** 6 changed (plus 19 untracked)
+**Working tree:** 13 changed (plus 18 untracked)
 
 ```
   M CLAUDE.md
-  M  docs/blueprint.md
+  A  bus/conversation_runner.py
+  M  bus/main.py
    M docs/board/README.md
    M docs/board/tasks/bus-offbox-packaging.md
+  A  docs/board/tasks/conversation-inline-reply.md
    M docs/board/tasks/vps-harden-deploy.md
-  A  tools/render_pfp.py
+  M  docs/context.md
+  M  docs/state.md
+  M  executor/latency.py
+  A  tests/bus/test_conversation_runner.py
+  M  tests/executor/test_latency.py
+  ...and 1 more
 ```
 
-**Offline suite:** 1604 passed, 10 deselected in 97.72s (0:01:37) _(recorded 2026-09-09)_
+**Offline suite:** 1620 passed, 10 deselected in 97.05s (0:01:37) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `0ff9639` Write the idle circle's colour down, and make it reproducible  _(2026-09-09)_
 - `7f97f58` Stop JARVIS answering like it has amnesia  _(2026-09-09)_
 - `ff1098e` Mark U18 done: the owner id is set  _(2026-09-09)_
 - `5108034` Write this week's handoff  _(2026-09-09)_
@@ -34,21 +42,22 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `673636a` Check who is actually messaging before answering them  _(2026-09-09)_
 - `75034ac` Make the router's deadline an actual wall clock  _(2026-09-09)_
 - `305a2eb` Stop paying the same 1.2 seconds on every message  _(2026-09-09)_
-- `d7c19ef` Give the router a deadline it can actually hit  _(2026-09-09)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-Five board tasks landed 9 Sep: the router got real per-call and cascade
-deadlines, the reply path stopped paying ~1.2s per message on recall, the
-sender is now checked against `JARVIS_OWNER_WA_ID` before any recall or
-action, and one-call classify+reply is built and evaluated behind a flag that
-is still off. `docs/board/HANDOFF.md` is this week's handoff.
+Six board tasks have landed 9 Sep: router deadlines, the ~1.2s/message recall
+cut, owner-id gating on `JARVIS_OWNER_WA_ID`, one-call classify+reply (flag
+still off), and now `conversation-inline-reply` — text replies answer
+in-process from the bus instead of queueing (`JARVIS_INLINE_REPLY`, default
+on); voice still queues. `docs/board/HANDOFF.md` is this week's handoff.
 
-**The bot is refusing everyone until U18 is pasted** — the owner check is
-fail-closed and the variable is unset. Also Ali's: Q17-D4 (the single-call
-table is under it now), U20 (the live latency probe), U17, Q11-Q15.
+**U18 is done** (Ali pasted `JARVIS_OWNER_WA_ID`) — the bot answers him now.
+**U20 is the remaining live gap**: no `reply-latency` line has been read back
+from a real Graph send since the stack went down 4 Sep, for either the queue
+path or the new inline path. Needs `JARVIS_LIVE_WHATSAPP_TO` + the stack up.
+Also Ali's: Q17-D4 (single-call flip), U17, Q11-Q15.
 
 ## Where facts go
 

@@ -104,12 +104,22 @@ class TestSpans:
         spans.update({"model": 1.0})
 
         rendered = spans.render()
-        assert rendered.startswith(f"{LINE_PREFIX} job=job-1 kind=whatsapp_webhook")
+        assert rendered.startswith(f"{LINE_PREFIX} job=job-1 kind=whatsapp_webhook path=queue")
         for token in rendered.split():
             key, _, value = token.partition("=")
-            if key in {LINE_PREFIX, "job", "kind"} or not value:
+            if key in {LINE_PREFIX, "job", "kind", "path"} or not value:
                 continue
             assert value.isdigit(), f"non-numeric field in the latency line: {token}"
+
+    def test_path_defaults_to_queue(self) -> None:
+        assert "path=queue" in _spans(FakeClock()).render()
+
+    def test_for_inline_reply_reports_no_queue_wait_explicitly(self) -> None:
+        spans = ReplySpans.for_inline_reply("wamid.1", "whatsapp_webhook")
+
+        rendered = spans.render()
+        assert "path=inline" in rendered
+        assert "queue_wait_ms=0" in rendered
 
     def test_emit_logs_once_even_if_called_twice(self, caplog) -> None:
         spans = _spans(FakeClock())

@@ -7,9 +7,13 @@ timing on every real job "faster" is a guess someone has to re-measure by
 hand. So each job now emits exactly one structured INFO line when a reply goes
 out:
 
-    reply-latency job=<id> kind=<kind> total_ms=9840 queue_wait_ms=1200 \
+    reply-latency job=<id> kind=<kind> path=queue total_ms=9840 queue_wait_ms=1200 \
         cue_ms=980 classify_ms=2100 recall_ms=520 model_ms=3900 send_ms=1100 \
         remember_ms=40
+
+``path`` is ``queue`` for a job the poller claimed off Supabase and ``inline``
+for a text reply the bus answered in-process
+(``bus/conversation_runner.py``) — see ``conversation-inline-reply``.
 
 ``tools/reply_latency.py`` reads those back and prints p50/p95 per stage.
 
@@ -94,6 +98,7 @@ class ReplySpans:
         job_id: str,
         kind: str,
         *,
+        path: str = "queue",
         created_at: datetime | str | None = None,
         claimed_at: datetime | None = None,
         clock: Any = time.monotonic,
@@ -101,6 +106,7 @@ class ReplySpans:
     ) -> None:
         self.job_id = job_id
         self.kind = kind
+        self.path = path
         self._clock = clock
         self._now = now or (lambda: datetime.now(UTC))
         self._started = clock()
@@ -126,6 +132,18 @@ class ReplySpans:
             claimed_at=take_claimed_at(str(getattr(job, "id", ""))),
             **kwargs,
         )
+
+    @classmethod
+    def for_inline_reply(cls, message_id: str, kind: str, **kwargs: Any) -> "ReplySpans":
+        """Spans for a message answered in-process, with no queue in between.
+
+        ``created_at`` and ``claimed_at`` are set to the same instant rather
+        than left ``None``, so the line reports ``queue_wait_ms=0`` explicitly
+        instead of omitting the field the way a job with no timestamp does --
+        the point is to say "no wait", not "unmeasured".
+        """
+        now = datetime.now(UTC)
+        return cls(message_id, kind, path="inline", created_at=now, claimed_at=now, **kwargs)
 
     def record(self, stage: str, seconds: float) -> None:
         """Add a stage measured somewhere else -- the service's own timings, say."""
@@ -159,7 +177,7 @@ class ReplySpans:
 
     def render(self) -> str:
         parts = [
-            f"{LINE_PREFIX} job={self.job_id} kind={self.kind}",
+            f"{LINE_PREFIX} job={self.job_id} kind={self.kind} path={self.path}",
             f"total_ms={_ms(self.total_seconds())}",
         ]
         named = [s for s in STAGE_ORDER if s in self._stages]

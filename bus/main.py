@@ -6,8 +6,9 @@ from collections.abc import Callable
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
+from bus.conversation_runner import build_inline_reply_task, inline_reply_enabled
 from bus.logging import RequestIDMiddleware, get_logger, redact_verify_token_from_access_log
 from bus.security import BearerAuthMiddleware, enforce_meta_signature, meta_webhook_handshake
 from bus.status import QueueStatusReader, create_status_handler
@@ -17,6 +18,7 @@ from bus.webhook_dedup import (
     open_default_seen_webhook_message_store,
 )
 from db.jobs import JobRepository, SupabaseJobsRepository, enqueue
+from executor.handlers.whatsapp import InboundMessage, parse_inbound_text_message
 from router import ProviderRouter
 from router import health_report
 
@@ -98,12 +100,22 @@ def create_app(
     retry_health: Callable[[], Any] | None = None,
     distill_chain_health: Callable[[], Any] | None = None,
     open_webhook_dedup: Callable[[], SeenWebhookMessageStore] | None = None,
+    answer_inline: Callable[[InboundMessage], None] | None = None,
 ) -> FastAPI:
-    """Build an injectable app; a webhook performs no work beyond enqueueing."""
+    """Build an injectable app.
+
+    A webhook performs no work beyond enqueueing, with one exception: a text
+    message, with inline replies on (``JARVIS_INLINE_REPLY``, default on),
+    schedules ``answer_inline`` as a ``BackgroundTask`` instead of enqueueing
+    a ``whatsapp_webhook`` job — see ``bus/conversation_runner.py``. Voice
+    notes and anything ``parse_inbound_text_message`` cannot read as a plain
+    text message still enqueue exactly as before.
+    """
     redact_verify_token_from_access_log()
     app = FastAPI(title="JARVIS bus")
     logger = get_logger()
     open_dedup_store = open_webhook_dedup or open_default_seen_webhook_message_store
+    inline_reply = answer_inline or build_inline_reply_task()
     active_jobs = jobs if jobs is not None else _default_jobs()
     status_reader = _queue_status_reader(active_jobs)
     app.state.jobs = active_jobs
@@ -120,7 +132,7 @@ def create_app(
         return await meta_webhook_handshake(request, verify_token=meta_verify_token)
 
     @app.post("/webhook")
-    async def receive_webhook(request: Request) -> dict[str, str | bool]:
+    async def receive_webhook(request: Request, background_tasks: BackgroundTasks) -> dict[str, str | bool]:
         await enforce_meta_signature(request, app_secret=meta_app_secret, logger=logger)
         try:
             payload = await request.json()
@@ -132,6 +144,15 @@ def create_app(
             with open_dedup_store() as seen:
                 if all(seen.has_seen(message_id) for message_id in message_ids):
                     return {"accepted": True, "duplicate": True}
+
+        inbound = parse_inbound_text_message(payload) if inline_reply_enabled() else None
+        if inbound is not None:
+            background_tasks.add_task(inline_reply, inbound)
+            if message_ids:
+                with open_dedup_store() as seen:
+                    for message_id in message_ids:
+                        seen.mark_seen(message_id)
+            return {"accepted": True}
 
         repository = request.app.state.jobs
         job = enqueue("whatsapp_webhook", payload, repository=repository)
