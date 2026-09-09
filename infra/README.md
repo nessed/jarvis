@@ -1,12 +1,19 @@
 # infra/ — packaging the brain for a rented box
 
 Written before the Oracle account existed, so U7 day was meant to be
-execution rather than design. **Superseded 8 Sep 2026 (U17): the target is
-now a rented x86 box Ali controls (AWS Lightsail/EC2, 2 GB, Mumbai), not
-Oracle A1.** `terraform/` is kept as the Oracle fallback — nothing in it is
-wrong, only not the current plan; AWS has no Terraform here on purpose (one
-instance, stood up once by hand; see the runbook). **The ordered steps live
-in `docs/tasks/phase4-runbook.md`.** This file is the map.
+execution rather than design. Retargeted twice since (U17, Q17-D1): from
+Oracle A1 (arm64) to AWS on 8 Sep, then to **Azure for Students on Ali's
+own account on 9 Sep** — $100/year of student credit, no card, freeing his
+brother's money for voice/LLM API spend. AWS Lightsail is the fallback,
+Oracle behind it.
+
+**None of that is visible in this directory**, which is the point: the
+image is plain `linux/amd64` and the scripts are provider-agnostic, so the
+cloud is a runbook detail rather than a packaging one. `terraform/` is
+Oracle-only and kept for it; neither Azure nor AWS has a Terraform module
+here on purpose (one instance, stood up once by hand; see the runbook).
+**The ordered steps live in `docs/tasks/phase4-runbook.md`.** This file is
+the map.
 
 ```
 infra/
@@ -31,12 +38,14 @@ infra/
 
 ## Three things worth knowing before reading the files
 
-**The Oracle numbers below describe the fallback, not the plan.** 2 OCPU /
-12 GB and Oracle's Always Free ceiling (4/24 across the tenancy, over-limit
-instances *terminated* since 18 Aug 2026 —
-`docs/audit/blueprint-drift.md`) only matter if AWS capacity or pricing ever
-sends Ali back to it. The AWS box is a plain 2 GB x86 instance with no
-comparable free-tier ceiling to track.
+**The Oracle numbers in `terraform/` describe a fallback two steps back,
+not the plan.** 2 OCPU / 12 GB and Oracle's Always Free ceiling (4/24
+across the tenancy, over-limit instances *terminated* since 18 Aug 2026 —
+`docs/audit/blueprint-drift.md`) only matter if both Azure and AWS ever
+fall through. The Azure box is a plain 2 GB x86 VM (B2s/B1ms). **Its own
+ceiling is the student credit, not a resource cap**: $100/year, about 7
+months at that size, and Azure cancels the subscription rather than
+billing when it runs out — so the thing to watch is a date, not a quota.
 
 **Nothing listens on the public internet except SSH.** The webhook arrives
 through a Cloudflare named tunnel, which dials *outward* from the VPS. Layers

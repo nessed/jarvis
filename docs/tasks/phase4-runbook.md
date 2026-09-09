@@ -1,17 +1,24 @@
 # Phase 4 runbook — moving the brain off the laptop
 
 Written 2 Sep 2026, before the Oracle account exists, so that U7 day was
-execution rather than design. **Superseded 8 Sep 2026 (U17): the target moved
-from Oracle A1 (arm64, Always Free) to a rented x86 box Ali controls — AWS
-Lightsail or EC2, 2 GB, Mumbai.** The AWS section below is the current plan;
-the Oracle section that follows it is kept as the named fallback (the
-blueprint's other one is Hetzner CX22) rather than deleted, since nothing in
-it is wrong, only superseded. `infra/docker/`'s Dockerfile and compose.yaml
-now target `linux/amd64` by default — going back to Oracle would need that
-platform pin changed back, which is one more reason AWS is the plan and not a
-parallel option.
+execution rather than design. Retargeted twice since, and the sections below
+are in current-plan-first order:
 
-**Who does what.** Ali does the signup, identity and card verification, the
+1. **Azure for Students** — the plan, chosen 9 Sep 2026. $100/year of
+   student credit on Ali's own account, no card, so his brother's money goes
+   to voice/LLM API spend instead of a fixed monthly box. Q17-D1 carries the
+   reasoning and the ~7-month credit cliff.
+2. **AWS Lightsail/EC2** — the fallback, and the plan from 8 Sep until the
+   Azure credit was found. Nothing in it is wrong.
+3. **Oracle A1** — the original arm64 Always Free target, superseded 8 Sep,
+   kept because its Terraform module and reasoning still stand if capacity
+   and the idle-reclaim rule ever look attractive again.
+
+`infra/docker/`'s Dockerfile and compose.yaml target `linux/amd64`, which
+Azure and AWS both run natively; only the Oracle path would need that
+platform pin changed back.
+
+**Who does what.** Ali does the signup, identity verification, the
 region choice, the Cloudflare dashboard clicks, and the final Meta webhook
 save. An agent does everything else. That split is `agents.md`'s, not a
 suggestion.
@@ -23,7 +30,63 @@ system is still running where it was this morning.
 
 ---
 
-## AWS Lightsail/EC2 — the current plan (U17)
+## Azure for Students — the current plan (U17, 9 Sep 2026)
+
+**Why this and not AWS:** Ali's GitHub Student Pack carries Azure for
+Students — $100/year, renewable while enrolled, no credit card — and his
+brother's willingness to pay is better spent on voice/LLM API costs, which
+scale with use, than on a fixed ~$10/mo box. Q17-D1 records the full
+reasoning and the caveat: the credit is ~7 months of runway at this VM
+size, and Azure **cancels the subscription** at exhaustion rather than
+billing, so a lapse is an outage rather than a surprise charge.
+
+Terraform is out of scope here for the same reason it is for AWS below: one
+instance, stood up once by hand, carries none of Oracle's A1-capacity retry
+problem that justified Terraform there.
+
+### Z1. Provision — Ali, console clicks (~20 min)
+
+Activate **Azure for Students** (`azure.microsoft.com/free/students`) with
+the student email, no card. Then **Create a Virtual Machine**:
+
+- Image: **Ubuntu Server 24.04 LTS**, x64
+- Size: **B2s** or **B1ms** — 2 GB RAM. **Not** B1s (1 GB): too tight once
+  the memory stack and the `ollama` sidecar share the box
+- Region: **Central India** (nearest; South India is the alternative)
+- Authentication: **SSH public key**, pasting `~/.ssh/id_ed25519.pub` from
+  the laptop
+- Inbound ports: **SSH (22) only**. The webhook arrives through a
+  Cloudflare tunnel dialling outward, so nothing else opens
+
+What the agent needs at the end is the **public IP** (not a secret) and
+confirmation the key pair is the one whose private half is on the laptop.
+
+**Azure specifics worth knowing before the SSH steps below:** the default
+admin user is whatever was typed at creation (commonly `azureuser`), not
+`ubuntu` — substitute it wherever the Oracle steps say `ubuntu@<ip>`. The
+VM's public IP is dynamic by default; either set it to **Static** in the
+portal, or accept that a reboot can move it (the Cloudflare tunnel dials
+outward and does not care, but the agent's SSH target does).
+
+### Z2. Harden, secrets, bring the brain up, tunnel, cut over — agent
+
+Identical to steps 3-7 below, substituting this box's IP and admin user.
+`harden.sh` and `install-cloudflared.sh` are provider-agnostic — they know
+nothing about which cloud they are on. `docker compose -f
+infra/docker/compose.yaml up -d --build` builds the same `linux/amd64`
+image Azure runs natively; no `--platform` override, no rebuild.
+
+`docker compose ... ps` should show three entries, with `ollama-pull`
+`exited (0)` rather than running.
+
+**Watch the credit.** `vps-harden-deploy` should record the provisioning
+date in `docs/state.md` so the ~7-month cliff is a known date rather than a
+surprise outage. Azure's portal has a credit-remaining view; a monthly
+glance at it is the whole maintenance burden.
+
+---
+
+## AWS Lightsail/EC2 — the fallback (superseded 9 Sep 2026, still valid)
 
 Terraform is out of scope for AWS (`bus-offbox-packaging`, 9 Sep 2026): one
 instance, stood up once by hand, does not carry Oracle's A1-capacity retry
@@ -33,7 +96,7 @@ runbook below are unchanged by provider once `public_ip` exists — Ubuntu is
 Ubuntu, `harden.sh` and `install-cloudflared.sh` do not know which cloud they
 are on — so they are referenced rather than duplicated.
 
-### A1. Provision — console clicks are Ali's/his brother's, per U17
+### A1. Provision — console clicks are Ali's brother's, on his account
 
 **Lightsail** (recommended — simpler console, predictable price): New
 instance → **Linux/Unix**, blueprint **OS Only → Ubuntu 24.04 LTS** → the

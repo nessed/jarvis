@@ -8,21 +8,27 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `fbc434f Board audit: blueprint's Phase 4 text still describes Oracle, not AWS` on `main`, 9 ahead, 0 behind origin.
+**HEAD** `f74c4b5 Board audit: claim hygiene check, no new findings` on `main`, 10 ahead, 0 behind origin.
 
-**Working tree:** 2 changed (plus 15 untracked)
+**Working tree:** 7 changed (plus 15 untracked)
 
 ```
   M CLAUDE.md
-  M  docs/board/tasks/board-audit.md
+  M  docs/board/QUESTIONS.md
+  M  docs/board/USER-TASKS.md
+  M  docs/board/tasks/vps-harden-deploy.md
+  M  docs/state.md
+  M  docs/tasks/phase4-runbook.md
+  M  infra/README.md
 ```
 
-**Offline suite:** 1679 passed, 16 deselected in 87.64s (0:01:27) _(recorded 2026-09-09)_
+**Offline suite:** 1679 passed, 16 deselected in 157.52s (0:02:37) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `f74c4b5` Board audit: claim hygiene check, no new findings  _(2026-09-09)_
 - `fbc434f` Board audit: blueprint's Phase 4 text still describes Oracle, not AWS  _(2026-09-09)_
 - `0aebf8b` Board audit: quick follow-up, context.md was one commit behind  _(2026-09-09)_
 - `ff59739` Write this evening's handoff  _(2026-09-09)_
@@ -30,7 +36,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `bb68c9a` Board audit: unblock live-routing-probe, narrow three stale gates  _(2026-09-09)_
 - `8738c4a` Measure Qwen3-4B/llama.cpp against llama3.1:8b for local extraction  _(2026-09-09)_
 - `138f07f` Absorb Fable review's 8 Sep provider/speech fact corrections  _(2026-09-09)_
-- `9e47b7e` Package the brain, not just the inbox, for the rented x86 box  _(2026-09-09)_
 
 <!-- END GENERATED -->
 

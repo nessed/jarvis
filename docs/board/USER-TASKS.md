@@ -191,13 +191,39 @@ once in a batched handoff, and only ones that newly became actionable.
   hosting answer moved from Oracle Always Free to a rented x86 box. The
   Oracle runbook section stays valid if you ever go that way instead.
 
-- **U17 — The rented server** (one sitting with your brother; Q17-D1).
-  What the agent needs at the end: an Ubuntu 24.04 **x86** box with
-  **2 GB RAM**, region **Mumbai** (`ap-south-1`), your SSH public key
-  installed, and its public IP. Recommended: AWS Lightsail, the 2 GB plan
-  (~$10-12/month); EC2 `t3.small` is the same thing with more knobs. The
-  $5 / 1 GB plan is too tight once memory lives there. Paste the IP into
-  chat (it is not a secret); the SSH private key never leaves the laptop.
+- **U17 — The box. Now Azure, on your own account, not your brother's AWS**
+  (Q17-D1, re-answered 9 Sep 2026). You have the GitHub Student Pack, so
+  **Azure for Students** gives you $100/year of credit with **no credit
+  card**, and your brother's money goes to voice/LLM API costs instead.
+
+  **What to do** (~20 min, all yours — signup and card-free verification
+  can't be delegated):
+  1. Activate **Azure for Students** at
+     `azure.microsoft.com/free/students` with your student email. No card.
+  2. Create a **Virtual Machine**: Ubuntu **24.04 LTS**, size **B2s or
+     B1ms** (2 GB RAM — do not take the 1 GB B1s, it is too tight once
+     memory lives on the box), region **Central India** (nearest to you;
+     `South India` is the alternative).
+  3. Authentication: **SSH public key**. Paste in the contents of
+     `~/.ssh/id_ed25519.pub` from this laptop — the agent can print that
+     one for you, it is public by definition. If it does not exist yet, ask
+     and the agent generates it.
+  4. Networking: allow **SSH (22) only**. Nothing else needs to be open —
+     the webhook arrives through a Cloudflare tunnel that dials outward.
+  5. Paste the VM's **public IP** into chat. It is not a secret. The SSH
+     *private* key never leaves this laptop.
+
+  **The cliff, so it does not surprise you:** $100 is ~7 months at this VM
+  size, and Azure **cancels the subscription** when the credit runs out
+  rather than charging you. That means JARVIS goes offline, not that you
+  get a bill. Renew the student credit annually, or convert to pay-as-you-go
+  before it lapses.
+
+  **Fallback, unchanged and still valid:** your brother's AWS Lightsail,
+  2 GB plan (~$10-12/month), Ubuntu 24.04 x86, region Mumbai
+  (`ap-south-1`). The runbook keeps both sections and nothing built so far
+  is cloud-specific, so switching costs one provisioning sitting.
+
   Unblocks `vps-harden-deploy` → laptop-off replies.
 
 - **U18 — Paste `JARVIS_OWNER_WA_ID` into `.env`** — **DONE 9 Sep 2026.**

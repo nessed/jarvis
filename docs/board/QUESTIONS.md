@@ -605,6 +605,31 @@ declined; that guarantee doesn't move.
   Mumbai recommendation when it was restated; taken as the working answer.
   The physical step is U17. If he provisions something else, U17 and
   `vps-harden-deploy` adapt — the runbook keeps both sections.*
+
+  **Answered 9 Sep 2026 — Azure, not AWS, and for a reason the D-list did
+  not consider: who pays for what.** Ali has the GitHub Student Pack, which
+  carries **Azure for Students**: $100 credit, no credit card at signup,
+  **renewable each year while enrolled**. His reasoning, in his words: use
+  the free credit for the box and redirect his brother's willingness-to-pay
+  onto **API costs for voice and LLM** instead — the box is a fixed ~$10/mo
+  while API spend scales with actual use, so the brother's money does more
+  there. That is a better allocation than either review proposed, because
+  neither knew a second funding source existed.
+
+  Verified before recording, against Microsoft's own offer page rather than
+  a blog: the credit is real, needs no card, and **cancels the subscription
+  rather than silently billing** when exhausted. **The caveat Ali was told
+  and accepted:** $100 over 12 months is ~$8/month of runway against a
+  ~$12-15/mo 2 GB Linux VM, so it covers roughly **7 months, not a year**,
+  and the box goes offline at the cliff rather than rolling onto a paid
+  card. Renewing annually as a student is the intended path; a lapse is an
+  outage, not a bill.
+
+  **AWS is not deleted, it is demoted to the fallback** — the runbook keeps
+  its section, U17's AWS spec is preserved below its Azure one, and nothing
+  in `infra/docker/` is Azure-specific (the image is plain `linux/amd64`,
+  which both clouds run). Switching back later costs a provisioning sitting,
+  not a rebuild.
 - **D4 — Flip the single-call default.** Both reviews want classify+reply
   merged into one model call (constants still dispose). It is being built
   behind `JARVIS_SINGLE_CALL_REPLY` (default off) by
