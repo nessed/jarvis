@@ -8,23 +8,22 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `bb68c9a Board audit: unblock live-routing-probe, narrow three stale gates` on `main`, 5 ahead, 0 behind origin.
+**HEAD** `0f9df38 Prove the new provider IDs actually serve, live` on `main`, 6 ahead, 0 behind origin.
 
-**Working tree:** 4 changed (plus 15 untracked)
+**Working tree:** 2 changed (plus 15 untracked)
 
 ```
   M CLAUDE.md
-  M  docs/board/tasks/live-routing-probe.md
-  M  docs/state.md
-  A  tests/live/test_routing.py
+  M  docs/board/HANDOFF.md
 ```
 
-**Offline suite:** 1679 passed, 16 deselected in 86.17s (0:01:26) _(recorded 2026-09-09)_
+**Offline suite:** 1679 passed, 16 deselected in 87.17s (0:01:27) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `0f9df38` Prove the new provider IDs actually serve, live  _(2026-09-09)_
 - `bb68c9a` Board audit: unblock live-routing-probe, narrow three stale gates  _(2026-09-09)_
 - `8738c4a` Measure Qwen3-4B/llama.cpp against llama3.1:8b for local extraction  _(2026-09-09)_
 - `138f07f` Absorb Fable review's 8 Sep provider/speech fact corrections  _(2026-09-09)_
@@ -32,7 +31,6 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `ca34952` Answer text messages right away; only voice still queues  _(2026-09-09)_
 - `0ff9639` Write the idle circle's colour down, and make it reproducible  _(2026-09-09)_
 - `7f97f58` Stop JARVIS answering like it has amnesia  _(2026-09-09)_
-- `ff1098e` Mark U18 done: the owner id is set  _(2026-09-09)_
 
 <!-- END GENERATED -->
 

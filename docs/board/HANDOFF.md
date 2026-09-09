@@ -1,101 +1,104 @@
-# Handoff — 9 September 2026
+# Handoff — 9 September 2026 (evening pass)
 
-Five board tasks done. The reply path got measurably faster, gained a real
-deadline, and gained an identity check it did not have.
-
-**One thing needs you before the bot works at all again:** paste
-`JARVIS_OWNER_WA_ID` into `.env` (**U18**). The new owner check is live and
-fail-closed, so until that line exists JARVIS answers every message —
-including yours — with "Sorry, I can't help with that." The worker says so
-once at startup, naming the variable.
+Six more board tasks landed since this morning's handoff. Text replies now
+answer without the queue, the brain is packaged for the rented box, and the
+provider ladder is proven live rather than assumed.
 
 ## What landed
 
 | Commit | Task |
 |---|---|
-| `d7c19ef` | `router-client-timeouts` |
-| `305a2eb` | `hotpath-quick-wins` |
-| `75034ac` | router deadline follow-up |
-| `673636a` | `owner-identity-check` |
-| `ca95383` | `single-call-classify-reply` |
+| `ca34952` | `conversation-inline-reply` |
+| `9e47b7e` | `bus-offbox-packaging` |
+| `138f07f` | `state-facts-refresh` |
+| `8738c4a` | `extraction-model-spike` |
+| `bb68c9a` | `board-audit` |
+| `0f9df38` | `live-routing-probe` |
 
-**Recall stopped costing 1.2 s on every message.** It is 0.10 s now, and it
-runs beside the classifier instead of after it, so on the reply path it costs
-nothing. Measured both sides the same way — a worktree at the pre-change
-commit, same laptop, same prompt, same database. Per-message `recall_ms`
-before: 1333, 1283, 1240, 1211, 1311, 1212. After: 1238, 101, 103, 85, 82. The
-first message in a process pays; nothing after it does.
+**A text message no longer waits on the queue.** The bus answers it
+in-process the moment the webhook verifies it, instead of enqueueing a job
+for a worker to pick up later. Voice notes and anything a message asks the
+laptop to do still queue exactly as before. One env var
+(`JARVIS_INLINE_REPLY`) rolls it back if a crashed process ever loses a
+message in a way that matters in practice.
 
-**The router now has a deadline it can actually hit.** The OpenAI SDK was on
-its defaults — two retries and a 600 s timeout, which is twice the worker's own
-job timeout, so it could never be the thing that fired. Now: no SDK retries,
-20 s per call on the interactive path, and a whole-cascade budget of one
-attempt plus one fallback.
+**The brain — not just the inbox — is packaged for the box your brother is
+renting.** The old image shipped only the webhook; this one carries memory
+too, so a text reply can be answered entirely off the laptop once it's
+deployed. Nothing is deployed yet — `vps-harden-deploy` is that step, and
+it is still waiting on the box existing (**U17**).
 
-**JARVIS checks who is messaging it.** The webhook signature proved Meta sent
-the request; it never proved you did, and that path recalls your private
-memory and enqueues actions on your laptop. A stranger now gets one flat line,
-no recall, no action, and nothing written into memory.
+**Every provider your `.env` names now has a real call behind it, this
+afternoon.** Groq, Gemini, OpenRouter and DeepSeek all answered live;
+Cerebras confirmed excluded on purpose (Q6's blank model, not a mistake).
+Mistral was denied — an HTTP 429 this time, not the 403 you've seen before,
+which is more likely this session's own repeated testing than anything
+having changed on Mistral's side.
 
-**One model call instead of two is built, evaluated, and still off.**
+**A model swap was tested and rejected, with numbers.** The blueprint hoped
+a smaller local model on the laptop's GPU would beat the current one on
+CPU. Measured: it doesn't, at every size tried, and it hit a real
+compatibility bug along the way (a thinking-mode chat template that fights
+JSON-schema-constrained output). Nothing was switched.
 
 ## What needs you
 
-- **U18 — paste `JARVIS_OWNER_WA_ID`.** One line. Everything else on the
-  reply path is blocked behind it in practice, because the bot is currently
-  refusing you.
-- **Q17-D4 — flip the single-call default?** The evaluation table you asked
-  for is now pasted under D4 in `QUESTIONS.md`. 23 fixtures, both modes,
-  against the live router: **100% agreement on every axis** — action, refusal,
-  and confirm-first. Your bar was ≥95% on the first two. Recommend flipping
-  it; it is a one-line default change plus a test.
-- **U20 — the live latency probe.** Two tasks now have a deferred half
-  waiting on it. It needs the stack up and a recipient number, and it sends a
-  real WhatsApp message, so it is yours to trigger.
+- **U20 — the live latency probe.** Unchanged from this morning: add
+  `JARVIS_LIVE_WHATSAPP_TO=<your number>` to `.env`, start the stack for a
+  minute, and the agent runs the probe and sends you one real reply. Two
+  tasks are waiting on this number specifically to close out their live
+  citation.
+- **U17 — the rented box.** Once it exists, `vps-harden-deploy` deploys
+  today's packaging work onto it. Nothing else in this batch is behind it.
+- **Q17-D4 — flip the single-call default?** Still open from this morning;
+  the evaluation table is under D4 in `QUESTIONS.md`, 100% agreement, your
+  bar was 95%.
+- **Q17.3's blueprint deltas** — four small corrections `state-facts-refresh`
+  found today (Cerebras' real context size, NIM dropping out entirely,
+  Hetzner's plan being unbuyable right now, Kokoro's missing Urdu stated
+  plainly) — one blanket yes covers all four.
 
-Everything else outstanding is unchanged in `USER-TASKS.md` and `QUESTIONS.md`.
-Nothing there was silently answered.
+Everything else outstanding is unchanged in `USER-TASKS.md` and
+`QUESTIONS.md`. Nothing there was silently answered.
 
 ## What was found along the way, and not asked about
 
-Three things turned up mid-task that were fixed or recorded rather than
-raised as questions:
-
-- **A timeout used to abort the whole provider cascade.** It carries no HTTP
-  status, so `route()` read it as a malformed request. Survivable while the
-  SDK retried internally; with retries off it would have made things worse.
-- **The deadline was not a wall clock.** A `latency` call was measured at
-  **92.3 s** on a tree that already had the new deadlines: httpx timeouts are
-  per-operation, so a slow-dripping response never trips one. Each attempt is
-  now bounded for real (`75034ac`).
-- **A stranger's words could still be written into your memory.** The owner
-  check in the service did not cover the WhatsApp path, which calls
-  `remember_turn` directly. Both call sites now ask the same predicate.
+- **Two stale claims in `docs/state.md` and the runbook said U18 was still
+  unpasted.** It's done — checked, not assumed. Corrected in place.
+- **Three board task gates were half-stale.** Two named `bus-offbox-packaging`
+  as a co-blocker after it had landed; one named `latency-spans` the same
+  way. Narrowed to their one real remaining gate.
+- **`live-routing-probe` had been sitting blocked on an already-cleared
+  gate for a while**, unnoticed because the board hadn't been audited since
+  3 Sep. That's what today's audit pass exists to catch, and it's why it's
+  in this batch at all rather than still waiting.
+- **A tiny `max_tokens` budget makes a working provider look broken.** Two
+  of the four live-tested models spend their token budget on internal
+  reasoning before writing an actual answer; a small cap returns an empty
+  reply that reads exactly like a dead rung. Noted in `state.md` so nobody
+  loses time to it again.
 
 ## What was deliberately not done
 
-- **The sqlite handles are still opened per message.** The task asked for them
-  to be cached. Measured: the Ollama probe is 463-674 ms and both sqlite opens
-  are 7 ms, and caching a connection would need `check_same_thread=False` plus
-  a lock in two modules the task does not own, in the path of the poller's
-  known abandoned-thread bug. Consulted before deciding, not after —
-  `docs/consults/2026-09-09-jarvis-board-task-hotpath-quick-wins`.
-- **The single-call default was not flipped.** That is D4, and D4 is yours.
-- **No live probe was run.** It sends a real WhatsApp message and needs a
-  number that is not in the environment. That is U20, and it is named in both
-  affected task logs rather than quietly skipped.
-- **The poller still abandons a timed-out handler thread.** The router
-  deadlines make it far less likely to fire and do not fix it. Recorded in
-  `router-client-timeouts`' log as the remaining gap.
+- **No model switch.** The extraction spike's numbers argue against it
+  today; switching is still yours to decide if a later llama.cpp release
+  fixes the compatibility bug found.
+- **No live citation for the new inline-reply path.** It needs the same
+  `JARVIS_LIVE_WHATSAPP_TO` as U20 above, and Ali's phone number isn't
+  something to guess at.
+- **No full re-verification of every task on the board.** Today's audit
+  checked what changed today and the four gates that looked stale; a full
+  pass across all 45 task files is due again once the board has drifted
+  further, not this pass.
 
 ## Verification
 
 ```
 $ .venv/Scripts/python.exe -m pytest -q --basetemp=.pytest-basetemp-lane-1
-1575 passed, 10 deselected in 60.02s (0:01:00)
+1679 passed, 16 deselected in 86.17s (0:01:26)
 ```
 
-Every commit went through the pre-commit gate, which runs the same full suite
-and refuses a red tree. Per-task evidence, including the before/after latency
-tables and the two-mode evaluation, is in each task's `## Log` under
-`docs/board/tasks/`.
+Every commit went through the pre-commit gate, which runs the same full
+suite and refuses a red tree. Per-task evidence — the full provider tables,
+the extraction benchmark numbers, and the routing probe's live output — is
+in each task's `## Log` under `docs/board/tasks/`.
