@@ -224,3 +224,15 @@ Never. Log entry per pass; status stays `ready`.
   Q17.3 rather than edited directly, same as this session's other three
   blueprint deltas. `tools/context_status.py --check` passes; nothing
   else changed this pass.
+
+- **9 Sep 2026, third follow-up (CORE, lane-1):** stop hook's third
+  handoff of this task this session, as its own message predicted. Not
+  marking this task `blocked` — nothing gates it, it is recurring by
+  design (see "Done when" above), and a false `blocked` status would
+  mislead the next reader more than a repeated Log entry does. Checked
+  claim hygiene instead, the thing not yet checked this session:
+  `work_board_claim.py list` shows only this pass's own claim (no orphaned
+  claims from a crashed lane), `inbox` is empty (no unread peer messages),
+  and a spot check of `PARKED.md` found nothing this session's six tasks
+  contradicted. No new findings. Board state after six task commits plus
+  four audit passes: `blocked 14, done 31, ready 1` (this task).
