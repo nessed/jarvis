@@ -96,47 +96,58 @@ Whoever receives answers (in chat or as edits to `QUESTIONS.md`):
 
 ## NEXT — priority order
 
-Rewritten 2 Sep 2026 by `board-audit`, from the task files themselves rather
-than by hand. Seven tasks landed that day — `action-worker`,
-`enqueue-classifier`, `router-cooldown-ledger`, `blueprint-corrections`,
-`stt-groq-fallback` and, from the parallel lanes, `replay-harness`,
-`facts-check-tool`, `pyflp-parse-failures`, `phase4-prep`,
-`wakeword-fp-monitor` and `agent-harness` — and seven new ones were filed
-from what they found.
-
-Phase 2's producer/consumer gap is closed: WhatsApp text becomes real action
-jobs and a worker claims them — and since `action-outcome-reply` landed the
-evening of 2 Sep, an action says how it went rather than only that it queued.
-Memory is closed too: `distill-chain-stall` landed the same evening and the
-distill chain has completed seven live jobs since. Everything still `ready` is
-the **router** — four tasks implementing Ali's §3.3, which the blueprint states
-and the code does not yet do.
+Rewritten 9 Sep 2026 (`board-audit`) after nine of the 8 Sep list's eleven
+"ready now" tasks landed in one day across two sessions and its blocked
+list had drifted (two gates half-cleared without being narrowed, one
+cleared entirely). The 8 Sep list's own framing still holds: memory may
+live on a rented server Ali controls (CLAUDE.md #3 amended), extraction
+stays on the laptop, conversation answers right away instead of waiting on
+the queue, hosting is a rented x86 box (U17). The goal for September is
+the felt problem — ~10 s text replies, 25-50 s voice, a laptop that
+suffers — measured before and after every step.
 
 Ready now:
 
-1. `board-audit` — recurring; the fallback when nothing else is ready
+1. `live-routing-probe` — **unblocked this pass**: U2 is done (`.env` has
+   `GROQ_DEFAULT_MODEL`/`GEMINI_DEFAULT_MODEL`; Cerebras/NIM blank is
+   intentional, not a gap). Proves the new model IDs actually serve;
+   claims `provider-account` (spends real allowance, keep calls tiny)
+2. `board-audit` — recurring; the fallback when nothing else is ready
 
 Blocked, in the order they'll matter once unblocked:
 
-0. `stt-latency-decision` — **Q15**. Whisper large-v3's CPU decoder is 11-18 s
-   per clip at up to 89 % CPU; Groq-primary is one env var, local turbo is
-   an evening. Filed 4 Sep from `docs/history/infra-audit-2026-09-04.md`,
-   which also closed `client-connection-reuse`, `tts-pipeline-cache` and
-   `launcher-fast-start` the same day
-2. `db-maintenance` — **U12**. Runner, ledger and `0003` are built, tested and committed;
-   `SUPABASE_DB_PASSWORD` is an empty placeholder so the DDL cannot be applied
-3. `voice-loop` — **Q12** — drop Pipecat from the desk loop? Recommendation filed
-4. `router-eligibility-window` — **Q11** — how long the verification window is
-5. `live-routing-probe` — **U2**. Now costing something measurable: the ladder collapses to
-    `openrouter/free`, which answered a JSON prompt with `User Safety: safe`
-    on two of four probes
-6. `voice-command-ingress` — waits on `voice-loop`, so behind Q12
-7. `vps-harden-deploy` — **U7**, after `phase4-prep` (done)
-8. `bus-offbox-packaging` — after `vps-harden-deploy`
-9. `cloud-routine-wire` — **U8**, after `bus-offbox-packaging`
-10. `backfill-run` — **Q14**. It was missing from this list entirely until the 3 Sep audit.
-    Blocked on a blocker whose recommended fix contradicts Ali's own Q10a
-    blueprint amendment, filed 49 minutes after it
+1. `vps-harden-deploy` — **U17** (the rented box). `bus-offbox-packaging`
+   landed 9 Sep, so this is the only remaining gate. Laptop shut, phone
+   gets a reply with `path=inline`
+2. `laptop-thin-service` — after 1: laptop runs only the action poller;
+   no Ollama/whisper/tunnel at boot
+3. `conversation-inline-reply` — **U20**: mechanism landed 9 Sep
+   (`JARVIS_INLINE_REPLY`, default on), but no `reply-latency` line has
+   been read back from a real Graph send since the stack went down 4 Sep.
+   Needs `JARVIS_LIVE_WHATSAPP_TO` + the stack up; same gate as 4 below
+4. `live-latency-acceptance` — **Q17-D13**. `latency-spans` landed 8 Sep,
+   so this is the only remaining gate. Turn the targets into `tests/live`
+   assertions
+5. `claude-task-executor` — **Q17-D7**: `claude -p` as the general laptop
+   executor; the biggest capability lever, highest blast radius
+6. `stt-latency-decision` — **Q15** (both reviews independently say A:
+   Groq turbo primary, NPU fallback). One env var
+7. `hosted-urdu-tts` — **Q17-D6**: Kokoro cannot speak Urdu. Vendor menu
+   (Deepgram/Speechmatics STT, Inworld/Azure `ur-PK`/Gemini TTS) is in
+   `docs/state.md`, not yet built against
+8. `provider-roster-cleanup` — **Q17-D9** (+ U19, the $10 OpenRouter
+   credit)
+9. `db-maintenance` — **U12**. Runner, ledger and `0003` are built and
+   tested; `SUPABASE_DB_PASSWORD` is empty
+10. `voice-loop` — **Q12** (Astra says one more Pipecat spike, Fable says
+    drop; Ali's call); `voice-command-ingress` behind it
+11. `router-eligibility-window` — **Q11**
+12. `cloud-routine-wire` — **U8**. `bus-offbox-packaging` landed 9 Sep, so
+    this is the only remaining gate
+13. `backfill-run` — **Q14**; `extraction-model-spike` landed 9 Sep
+    (`llama3.1:8b`/CPU beat the Qwen3-4B/llama.cpp candidate at every size
+    tested — no model switch), so its numbers are available for whoever
+    answers Q14, not still pending
 
 USER items live in `USER-TASKS.md`. Decisions live in `QUESTIONS.md`.
 Deliberately-not-being-done items live in `PARKED.md` — read it before

@@ -1,10 +1,10 @@
 ---
 id: live-routing-probe
-status: blocked
+status: ready
 lane: AUTO
 priority: 2
 phase: 0
-blocked-on: U2
+blocked-on: none — U2 done 9 Sep 2026
 files: tests/live/test_routing.py, docs/state.md
 resources: provider-account (spends real allowance)
 ---
@@ -13,21 +13,21 @@ resources: provider-account (spends real allowance)
 
 ## Gate
 
-**Answered 1 Sep 2026 — values given, but U2 is NOT done. Still blocked.**
-Ali said "pasted" and supplied the five lines, but a key-name check of the
-repo-root `.env` on 1 Sep found **none of the five keys present** (file
-exists, 1271 bytes; names checked, no values read):
+**Cleared 9 Sep 2026 (board-audit).** U2 is done: `GROQ_DEFAULT_MODEL` and
+`GEMINI_DEFAULT_MODEL` are both present in `.env` (checked by key name
+only, no value read), matching `docs/state.md`'s "Provider ladder" row and
+`USER-TASKS.md`'s U2 entry ("DONE 9 Sep 2026"). `CEREBRAS_DEFAULT_MODEL`
+and `NVIDIA_DEFAULT_MODEL` remain absent, which is **not** a gap: Q6
+deliberately leaves Cerebras blank so its rung is skipped rather than
+402ing, and NIM has no routing role at all (geo-blocked, CLAUDE.md #3).
+`CLAUDE_API_DEFAULT_MODEL` is also absent and not required for this probe
+— `claude_api` is not one of the four rungs `routing-pattern` currently
+puts traffic through.
 
-```
-GROQ_DEFAULT_MODEL         present=False
-CEREBRAS_DEFAULT_MODEL     present=False
-NVIDIA_DEFAULT_MODEL       present=False
-GEMINI_DEFAULT_MODEL       present=False
-CLAUDE_API_DEFAULT_MODEL   present=False
-```
-
-Re-check that before starting. Running the probe now would only re-prove
-the known gap, which is exactly what this gate exists to prevent.
+**Before this session's earlier check (1 Sep 2026), values were given but
+not present.** Ali said "pasted" and supplied the five lines, but a
+key-name check of the repo-root `.env` that day found none of the five
+keys present. Superseded by the 9 Sep check above.
 
 When it does land, three values differ
 from what `state.md` researched on 28 Aug, so this probe is now the only
@@ -40,9 +40,6 @@ thing that establishes whether they serve:
 
 Report those three by name in the result, and update `state.md`'s model-ID
 table to Ali's values rather than the researched ones.
-
-U2 (the five `*_DEFAULT_MODEL` lines in `.env`). Before that, the probe
-can only re-prove the known gap.
 
 ## Goal
 

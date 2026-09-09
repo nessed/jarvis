@@ -147,3 +147,53 @@ Never. Log entry per pass; status stays `ready`.
     swept a file another lane held. This pass stages explicit paths. `git add
     -A` was used earlier in this session for the seven task commits, which was
     the same hazard and got away with it only because no peer lane was alive.
+
+- **9 Sep 2026 (post-integration pass, CORE, lane-1):** ran after five tasks
+  landed in one session — `conversation-inline-reply`, `bus-offbox-packaging`,
+  `state-facts-refresh`, `extraction-model-spike`, and this pass itself. No
+  live peer at any point (`work_board_claim.py status` checked before
+  starting and before this commit).
+  - **`live-routing-probe` was blocked on an already-cleared gate.** Its
+    frontmatter said `blocked-on: U2`, dated from a 1 Sep check that found
+    none of the five `*_DEFAULT_MODEL` keys present. Re-checked by key name
+    (no values read): `GROQ_DEFAULT_MODEL` and `GEMINI_DEFAULT_MODEL` are
+    now present, matching `state.md`'s "Provider ladder" row and
+    `USER-TASKS.md`'s U2 entry ("DONE 9 Sep 2026"). `CEREBRAS_DEFAULT_MODEL`
+    and `NVIDIA_DEFAULT_MODEL` staying absent is Q6/geo-block by design, not
+    a gap. Flipped to `ready`; this is the finding this task exists to
+    catch, and it went four days unnoticed because the audit hadn't run
+    since 3 Sep.
+  - **Three more gates were half-stale**, the same shape 3 Sep's pass fixed
+    once already: `vps-harden-deploy` and `cloud-routine-wire` both listed
+    `bus-offbox-packaging` as a co-gate, which landed this session;
+    `live-latency-acceptance` listed `latency-spans`, which landed 8 Sep.
+    All three narrowed to their one real remaining gate (U17, U8, Q17-D13
+    respectively) rather than left to look more blocked than they are.
+  - **`README.md`'s NEXT list rewritten wholesale** — nine of the 8 Sep
+    version's eleven "ready now" entries were `done` in their own task
+    files, one moved to `blocked` (`conversation-inline-reply`, on U20),
+    and the blocked list carried the three stale gates above plus one
+    outright-cleared one. Now: two ready (`live-routing-probe`,
+    `board-audit`), thirteen blocked, each citing today's date for anything
+    that changed under it.
+  - **`docs/context.md`'s "Now" section** was rewritten mid-session (twice)
+    to track the day's landings and was still one task behind by the time
+    this pass started (missing `bus-offbox-packaging`/`state-facts-refresh`/
+    `extraction-model-spike`). Refreshed; 15 lines, at the budget line
+    rather than over it. `tools/context_status.py --check` passes.
+  - `QUESTIONS.md`: no unprocessed answers — every `**Answer:**` marker
+    still reads `_pending_`. Q17.3 gained the blueprint-deltas list earlier
+    this session (`state-facts-refresh`), which is itself now the only
+    "answered but not yet acted on by Ali" item on the board, correctly
+    left pending rather than acted on unilaterally.
+  - **`facts_check` is current**: newest report `2026-09-02.md`, 7 days old
+    against the 30-day trigger. Not re-run.
+  - **No fresh blueprint-vs-tree diff run.** `state-facts-refresh` already
+    did the Fable-review half of this today (four deltas filed under
+    Q17.3); a full independent sample was judged lower value than the gate
+    and NEXT-list fixes above given how much landed today. Worth a real
+    pass next time nothing else is ready and it has been a few days.
+  - Not touched: a full done-task evidence re-verification across all 45
+    task files. This pass trusted today's five Logs (written this session,
+    each citing its own commands) and left the pre-9-Sep ones as the 2/3
+    Sep passes already verified them.

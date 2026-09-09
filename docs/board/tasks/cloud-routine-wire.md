@@ -4,7 +4,7 @@ status: blocked
 lane: AUTO
 priority: 3
 phase: 4
-blocked-on: U8, bus-offbox-packaging
+blocked-on: U8 — bus-offbox-packaging landed 9 Sep 2026
 files: bus/main.py (hot), bus/routines.py (new), tests/bus/, tests/router/test_routing.py (area-hot, only if the router is touched)
 resources: none until live
 ---

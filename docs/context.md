@@ -8,28 +8,28 @@ the facts in it have stopped being temporary and belong somewhere else.
 
 <!-- BEGIN GENERATED: tools/context_status.py. Do not edit by hand. -->
 
-**HEAD** `138f07f Absorb Fable review's 8 Sep provider/speech fact corrections` on `main`, 3 ahead, 0 behind origin.
+**HEAD** `8738c4a Measure Qwen3-4B/llama.cpp against llama3.1:8b for local extraction` on `main`, 4 ahead, 0 behind origin.
 
-**Working tree:** 9 changed (plus 16 untracked)
+**Working tree:** 8 changed (plus 15 untracked)
 
 ```
-  M  .gitignore
-   M CLAUDE.md
-   M docs/board/README.md
-  A  docs/board/tasks/extraction-model-spike.md
-   M docs/board/tasks/vps-harden-deploy.md
-  M  docs/state.md
-  A  docs/tasks/extraction-model-spike-report.md
-  A  tests/tools/test_bench_extraction.py
-  A  tools/bench_extraction.py
+  M CLAUDE.md
+  M  docs/board/README.md
+  M  docs/board/tasks/board-audit.md
+  M  docs/board/tasks/cloud-routine-wire.md
+  A  docs/board/tasks/live-latency-acceptance.md
+  M  docs/board/tasks/live-routing-probe.md
+  M  docs/board/tasks/vps-harden-deploy.md
+  M  docs/context.md
 ```
 
-**Offline suite:** 1679 passed, 10 deselected in 84.74s (0:01:24) _(recorded 2026-09-09)_
+**Offline suite:** 1679 passed, 10 deselected in 81.36s (0:01:21) _(recorded 2026-09-09)_
 
 **Live acceptance suite:** 1 passed, 1 warning in 34.04s _(recorded 2026-09-03)_
 
 **Recent commits**
 
+- `8738c4a` Measure Qwen3-4B/llama.cpp against llama3.1:8b for local extraction  _(2026-09-09)_
 - `138f07f` Absorb Fable review's 8 Sep provider/speech fact corrections  _(2026-09-09)_
 - `9e47b7e` Package the brain, not just the inbox, for the rented x86 box  _(2026-09-09)_
 - `ca34952` Answer text messages right away; only voice still queues  _(2026-09-09)_
@@ -37,22 +37,23 @@ the facts in it have stopped being temporary and belong somewhere else.
 - `7f97f58` Stop JARVIS answering like it has amnesia  _(2026-09-09)_
 - `ff1098e` Mark U18 done: the owner id is set  _(2026-09-09)_
 - `5108034` Write this week's handoff  _(2026-09-09)_
-- `ca95383` Ask both questions in one call, behind a flag that stays off  _(2026-09-09)_
 
 <!-- END GENERATED -->
 
 ## Now
 
-Six board tasks have landed 9 Sep: router deadlines, the ~1.2s/message recall
-cut, owner-id gating on `JARVIS_OWNER_WA_ID`, one-call classify+reply (flag
-still off), and now `conversation-inline-reply` — text replies answer
-in-process from the bus instead of queueing (`JARVIS_INLINE_REPLY`, default
-on); voice still queues. `docs/board/HANDOFF.md` is this week's handoff.
+Nine board tasks have landed 9 Sep, most recently: the brain is packaged for
+the AWS box (`bus-offbox-packaging`, amd64, memory/ + conversation service
+in the image, `ollama` sidecar); Fable's provider/speech fact corrections
+absorbed into `state.md`; a local-extraction spike found `llama3.1:8b`/CPU
+still beats Qwen3-4B/llama.cpp on this hardware (no model switch). U2 is
+done, which just unblocked `live-routing-probe` (board-audit). `HANDOFF.md`
+is this week's handoff.
 
-**U18 is done** (Ali pasted `JARVIS_OWNER_WA_ID`) — the bot answers him now.
-**U20 is the remaining live gap**: no `reply-latency` line has been read back
-from a real Graph send since the stack went down 4 Sep, for either the queue
-path or the new inline path. Needs `JARVIS_LIVE_WHATSAPP_TO` + the stack up.
+**U20 is the remaining live gap**: no `reply-latency` line has been read
+back from a real Graph send since the stack went down 4 Sep, for either the
+queue or the new inline path (`JARVIS_INLINE_REPLY`, default on; voice still
+queues). Needs `JARVIS_LIVE_WHATSAPP_TO` + the stack up.
 Also Ali's: Q17-D4 (single-call flip), U17, Q11-Q15.
 
 ## Where facts go
